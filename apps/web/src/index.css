@@ -1,0 +1,175 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Backgrounds */
+    --bg-primary-rgb: 255 255 255;
+    --bg-secondary-rgb: 248 248 251;
+    --bg-tertiary-rgb: 240 240 245;
+    --bg-elevated-rgb: 255 255 255;
+    --bg-hover-rgb: 232 232 239;
+
+    /* Text */
+    --text-primary-rgb: 24 24 27;
+    --text-secondary-rgb: 82 82 91;
+    --text-muted-rgb: 161 161 170;
+
+    /* Borders & Accents */
+    --border-color-rgb: 228 228 231;
+    --accent-rgb: 124 58 237;        /* #7c3aed */
+    --accent-hover-rgb: 109 40 217;   /* #6d28d9 */
+
+    /* Status */
+    --success-rgb: 5 150 105;
+    --warning-rgb: 217 119 6;
+    --error-rgb: 220 38 38;
+
+    /* Canvas & Sidebar */
+    --canvas-bg-rgb: 250 250 250;
+    --canvas-grid-rgb: 232 232 239;
+    --sidebar-bg-rgb: 248 248 251;
+    --panel-bg-rgb: 255 255 255;
+
+    /* Legacy hex vars (for non-Tailwind usage) */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f8f8fb;
+    --accent: #7c3aed;
+  }
+
+  .dark {
+    /* Backgrounds */
+    --bg-primary-rgb: 10 10 15;
+    --bg-secondary-rgb: 17 17 24;
+    --bg-tertiary-rgb: 26 26 36;
+    --bg-elevated-rgb: 34 34 46;
+    --bg-hover-rgb: 42 42 56;
+
+    /* Text */
+    --text-primary-rgb: 241 241 244;
+    --text-secondary-rgb: 161 161 170;
+    --text-muted-rgb: 113 113 122;
+
+    /* Borders & Accents */
+    --border-color-rgb: 39 39 47;
+    --accent-rgb: 139 92 246;         /* #8b5cf6 */
+    --accent-hover-rgb: 124 58 237;    /* #7c3aed */
+
+    /* Status */
+    --success-rgb: 16 185 129;
+    --warning-rgb: 245 158 11;
+    --error-rgb: 239 68 68;
+
+    /* Canvas & Sidebar */
+    --canvas-bg-rgb: 12 12 20;
+    --canvas-grid-rgb: 26 26 40;
+    --sidebar-bg-rgb: 17 17 24;
+    --panel-bg-rgb: 22 22 31;
+
+    /* Legacy hex vars */
+    --bg-primary: #0a0a0f;
+    --accent: #8b5cf6;
+  }
+
+  * {
+    @apply border-resonance-border;
+  }
+
+  body {
+    @apply bg-resonance-bg-primary text-resonance-text-primary font-sans antialiased;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+
+  ::selection {
+    background-color: var(--accent);
+    color: white;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--text-muted-rgb));
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--text-secondary-rgb));
+  }
+}
+
+@layer components {
+  .glass-panel {
+    background-color: rgba(var(--bg-elevated-rgb), 0.8);
+    backdrop-filter: blur(24px);
+    border: 1px solid rgb(var(--border-color-rgb));
+  }
+
+  .btn-primary {
+    @apply px-4 py-2 bg-resonance-accent text-white rounded-lg font-medium
+    hover:bg-resonance-accent-hover transition-all duration-200
+    active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 bg-resonance-bg-tertiary text-resonance-text-primary rounded-lg font-medium
+    hover:bg-resonance-bg-hover transition-all duration-200
+    active:scale-95 border border-resonance-border;
+  }
+
+  .btn-ghost {
+    @apply px-4 py-2 text-resonance-text-secondary rounded-lg font-medium
+    hover:bg-resonance-bg-hover hover:text-resonance-text-primary
+    transition-all duration-200 active:scale-95;
+  }
+
+  .input-field {
+    @apply w-full px-4 py-2.5 bg-resonance-bg-secondary border border-resonance-border rounded-lg
+    text-resonance-text-primary placeholder-resonance-text-muted
+    focus:outline-none focus:ring-2 focus:ring-resonance-accent/50 focus:border-resonance-accent
+    transition-all duration-200;
+  }
+
+  .card {
+    @apply bg-resonance-bg-elevated border border-resonance-border rounded-xl
+    hover:border-resonance-accent/30 transition-all duration-200;
+  }
+
+  .sidebar-item {
+    @apply flex items-center gap-3 px-3 py-2 rounded-lg text-resonance-text-secondary
+    hover:bg-resonance-bg-hover hover:text-resonance-text-primary
+    transition-all duration-200 cursor-pointer;
+  }
+
+  .sidebar-item.active {
+    @apply bg-resonance-accent/10 text-resonance-accent;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-resonance-accent to-purple-400;
+  }
+
+  .animate-enter {
+    animation: enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes enter {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
