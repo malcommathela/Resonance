@@ -1,68 +1,74 @@
+import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
+import helmet from 'helmet'
+import rateLimit from 'express-rate-limit'
+import passport from 'passport'
+import { prisma } from './lib/db.js'
+import { redis } from './lib/redis.js'
+import authRoutes from './routes/auth.js'
+import designRoutes from './routes/designs.js'
+import simulationRoutes from './routes/simulations.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
 
-app.use(cors())
-app.use(express.json())
+// Security middleware
+app.use(helmet())
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  credentials: true,
+}))
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+})
+app.use('/api/', limiter)
+
+app.use(express.json({ limit: '10mb' }))
+app.use(passport.initialize())
 
 // Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'resonance-api', version: '1.0.0' })
-})
-
-// Auth routes
-app.post('/auth/github', (req, res) => {
-  // Mock GitHub OAuth
+app.get('/health', async (req, res) => {
+  const dbHealthy = await prisma.$queryRaw`SELECT 1`.then(() => true).catch(() => false)
+  const redisHealthy = await redis.ping().then(() => true).catch(() => false)
+  
   res.json({
-    token: 'mock_jwt_token_' + Date.now(),
-    user: {
-      id: 'usr_' + Math.random().toString(36).substr(2, 9),
-      name: 'Alex Chen',
-      email: 'alex@example.com',
-      avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Alex',
-      githubId: 'alexchen',
-      tier: 'free',
-    }
+    status: dbHealthy && redisHealthy ? 'ok' : 'degraded',
+    service: 'resonance-api',
+    version: '1.0.0',
+    database: dbHealthy ? 'connected' : 'error',
+    redis: redisHealthy ? 'connected' : 'error',
   })
 })
 
-// Designs routes
-app.get('/designs', (req, res) => {
-  res.json([
-    {
-      id: 'des_1',
-      name: 'E-Commerce Platform',
-      description: 'Microservices architecture for online store',
-      status: 'active',
-      blocks: 8,
-      simulations: 12,
-      updatedAt: '2026-05-19T14:22:00Z',
-    }
-  ])
-})
+// Routes
+app.use('/auth', authRoutes)
+app.use('/designs', designRoutes)
+app.use('/simulations', simulationRoutes)
 
-app.post('/designs', (req, res) => {
-  const design = {
-    id: 'des_' + Math.random().toString(36).substr(2, 9),
-    ...req.body,
-    status: 'draft',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  }
-  res.status(201).json(design)
-})
-
-// Simulation routes
-app.post('/simulations', (req, res) => {
-  res.json({
-    id: 'sim_' + Math.random().toString(36).substr(2, 9),
-    status: 'running',
-    ...req.body,
+// Error handling
+app.use((err, req, res, next) => {
+  console.error(err)
+  res.status(err.status || 500).json({
+    error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message,
   })
+})
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, shutting down gracefully')
+  await prisma.$disconnect()
+  await redis.quit()
+  process.exit(0)
 })
 
 app.listen(PORT, () => {
   console.log(`🚀 Resonance API running on http://localhost:${PORT}`)
+  console.log(`📊 Database: ${process.env.DATABASE_URL?.split('@')[1] || 'not configured'}`)
+  console.log(`🔴 Redis: ${process.env.REDIS_URL || 'not configured'}`)
 })

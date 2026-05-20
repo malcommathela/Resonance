@@ -32,10 +32,10 @@ export const Login = () => {
     }
   }, [isAuthenticated, navigate])
 
-  const handleGitHubLogin = async () => {
-    await login('github')
-    navigate('/dashboard')
-  }
+  const handleGitHubLogin = () => {
+  // Redirect to backend OAuth endpoint
+  window.location.href = `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/auth/github`
+}
 
   const features = [
     { icon: Layers, title: 'Visual Architecture', desc: 'Design systems with drag-and-drop blocks' },

@@ -138,3 +138,12 @@ export const DOCKER_COMPOSE_TEMPLATE = (blocks, connections) => {
     volumes: volumes.reduce((acc, v) => ({ ...acc, [v]: {} }), {}),
   };
 };
+
+
+export const CONNECTION_TYPE_META = {
+  http: { label: 'HTTP/REST', color: '#3b82f6', icon: 'Globe' },
+  grpc: { label: 'gRPC', color: '#10b981', icon: 'ArrowRightLeft' },
+  websocket: { label: 'WebSocket', color: '#8b5cf6', icon: 'Wifi' },
+  event: { label: 'Event', color: '#f59e0b', icon: ' Zap' },
+  db: { label: 'Database', color: '#ef4444', icon: 'Database' },
+}

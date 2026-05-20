@@ -11,6 +11,7 @@ import {
 import { SimulationControls } from './SimulationControls'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { useCanvasStore } from '@/stores/canvasStore'
 
 export const TopToolbar = ({
   designName,
@@ -21,8 +22,11 @@ export const TopToolbar = ({
   onShare,
   simulationRunning,
   onRunSimulation,
-  simulationProgress,
 }) => {
+  const { undo, redo, historyIndex, history } = useCanvasStore()
+  const canUndo = historyIndex > 0
+  const canRedo = historyIndex < history.length - 1
+
   const tabs = [
     { id: 'editor', label: 'Editor' },
     { id: 'simulation', label: 'Simulation' },
@@ -31,17 +35,13 @@ export const TopToolbar = ({
 
   return (
     <div className="h-12 border-b border-resonance-border bg-resonance-bg-secondary flex items-center justify-between px-4 shrink-0">
-      {/* Left: Design info */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
           <GitBranch size={16} className="text-resonance-accent" />
           <span className="font-semibold text-resonance-text-primary text-sm">{designName}</span>
           <Badge variant="draft">Draft</Badge>
         </div>
-
         <div className="h-5 w-px bg-resonance-border" />
-
-        {/* Tabs */}
         <div className="flex items-center gap-1">
           {tabs.map(tab => (
             <button
@@ -59,51 +59,35 @@ export const TopToolbar = ({
         </div>
       </div>
 
-      {/* Center: History controls */}
       <div className="flex items-center gap-1">
-        <button className="p-1.5 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted hover:text-resonance-text-secondary transition-colors">
+        <button
+          onClick={undo}
+          disabled={!canUndo}
+          className="p-1.5 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted hover:text-resonance-text-secondary transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          title="Undo (Ctrl+Z)"
+        >
           <Undo2 size={16} />
         </button>
-        <button className="p-1.5 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted hover:text-resonance-text-secondary transition-colors">
+        <button
+          onClick={redo}
+          disabled={!canRedo}
+          className="p-1.5 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted hover:text-resonance-text-secondary transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          title="Redo (Ctrl+Shift+Z)"
+        >
           <Redo2 size={16} />
         </button>
       </div>
 
-      {/* Right: Actions */}
       <div className="flex items-center gap-2">
-        <Button
-          variant="secondary"
-          size="sm"
-          icon={Save}
-          onClick={onSave}
-        >
-          Save
-        </Button>
-
-        <SimulationControls
-          onRun={onRunSimulation}
-          isRunning={simulationRunning}
-          progress={simulationProgress}
-        />
-
+        <Button variant="secondary" size="sm" icon={Save} onClick={onSave}>Save</Button>
+        <SimulationControls onRun={onRunSimulation} isRunning={simulationRunning} />
         <div className="h-5 w-px bg-resonance-border mx-1" />
-
-        <button
-          onClick={onExport}
-          className="p-2 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-secondary hover:text-resonance-text-primary transition-colors"
-          title="Export"
-        >
+        <button onClick={onExport} className="p-2 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-secondary hover:text-resonance-text-primary transition-colors" title="Export">
           <Download size={16} />
         </button>
-
-        <button
-          onClick={onShare}
-          className="p-2 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-secondary hover:text-resonance-text-primary transition-colors"
-          title="Share"
-        >
+        <button onClick={onShare} className="p-2 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-secondary hover:text-resonance-text-primary transition-colors" title="Share">
           <Share2 size={16} />
         </button>
-
         <button className="p-2 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-secondary hover:text-resonance-text-primary transition-colors">
           <MoreHorizontal size={16} />
         </button>

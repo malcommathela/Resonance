@@ -1,29 +1,35 @@
-version: '3.8'
-
 services:
-  web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-    ports:
-      - "80:80"
-    depends_on:
-      - api
-    networks:
-      - resonance-network
-
-  api:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
-    ports:
-      - "3001:3001"
+  postgres:
+    image: postgres:16-alpine
+    container_name: resonance-postgres
     environment:
-      - NODE_ENV=production
-      - PORT=3001
-    networks:
-      - resonance-network
+      POSTGRES_USER: resonance
+      POSTGRES_PASSWORD: resonance_dev_password
+      POSTGRES_DB: resonance
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U resonance"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
-networks:
-  resonance-network:
-    driver: bridge
+  redis:
+    image: redis:7-alpine
+    container_name: resonance-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:

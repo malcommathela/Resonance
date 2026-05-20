@@ -1,0 +1,142 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  avatar    String?
+  githubId  String?  @unique
+  tier      String   @default("free")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  designs      Design[]
+  simulations  Simulation[]
+  sessions     Session[]
+  teamMembers  TeamMember[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model Team {
+  id         String @id @default(cuid())
+  name       String
+  ownerId    String
+  maxMembers Int    @default(5)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  members TeamMember[]
+  designs Design[]
+
+  @@map("teams")
+}
+
+model TeamMember {
+  id     String @id @default(cuid())
+  teamId String
+  userId String
+  role   String @default("member")
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@map("team_members")
+}
+
+model Design {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  status      String   @default("draft")
+  repoUrl     String?
+  repoBranch  String?  @default("main")
+  thumbnail   String?
+  ownerId     String
+  teamId      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner       User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  team        Team?         @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  blocks      Block[]
+  edges       Edge[]
+  simulations Simulation[]
+
+  @@map("designs")
+}
+
+model Block {
+  id        String   @id @default(cuid())
+  designId  String
+  type      String
+  label     String
+  x         Float
+  y         Float
+  color     String
+  config    Json     @default("{}")
+  metrics   Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  design      Design @relation(fields: [designId], references: [id], onDelete: Cascade)
+  sourceEdges Edge[] @relation("SourceBlock")
+  targetEdges Edge[] @relation("TargetBlock")
+
+  @@map("blocks")
+}
+
+model Edge {
+  id             String  @id @default(cuid())
+  designId       String
+  sourceId       String
+  targetId       String
+  connectionType String  @default("http")
+  animated       Boolean @default(true)
+  label          String?
+
+  design      Design @relation(fields: [designId], references: [id], onDelete: Cascade)
+  sourceBlock Block  @relation("SourceBlock", fields: [sourceId], references: [id], onDelete: Cascade)
+  targetBlock Block  @relation("TargetBlock", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@map("edges")
+}
+
+model Simulation {
+  id             String   @id @default(cuid())
+  designId       String
+  userId         String
+  status         String   @default("running")
+  trafficPattern String   @default("steady")
+  rps            Int      @default(100)
+  duration       Int      @default(300)
+  metrics        Json?
+  logs           Json?
+  startedAt      DateTime @default(now())
+  completedAt    DateTime?
+
+  design Design @relation(fields: [designId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("simulations")
+}
