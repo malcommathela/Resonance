@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { AppShell } from '@/components/layout/AppShell'
 import { Login } from '@/pages/Login'
+import { AuthCallback } from '@/pages/AuthCallback'
 import { Dashboard } from '@/pages/Dashboard'
 import { DesignDetail } from '@/pages/DesignDetail'
 import { CanvasEditor } from '@/pages/CanvasEditor'
@@ -22,10 +23,12 @@ const PublicRoute = ({ children }) => {
 
 export default function App() {
   const { init: initTheme } = useThemeStore()
+  const { init: initAuth } = useAuthStore()
 
   useEffect(() => {
     initTheme()
-  }, [initTheme])
+    initAuth()
+  }, [initTheme, initAuth])
 
   return (
     <Routes>
@@ -37,6 +40,7 @@ export default function App() {
           </PublicRoute>
         }
       />
+      <Route path="/auth/callback" element={<AuthCallback />} />
       <Route
         path="/"
         element={
