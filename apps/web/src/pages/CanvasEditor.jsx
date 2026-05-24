@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useState } from 'react'
+import React, { useEffect, useCallback, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ReactFlow,
@@ -27,9 +27,13 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react'
 import { useCanvasStore } from '@/stores/canvasStore'
 import { useDesignStore } from '@/stores/designStore'
+import { useAutoSave } from '@/hooks/useAutoSave'
 import { animations } from '@/lib/anime'
 import { blockIconMap } from '@/lib/iconMap'
 import { BlockLibrary } from '@/components/canvas/BlockLibrary'
@@ -90,7 +94,7 @@ const edgeOptions = {
 function CanvasEditorInner() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { getDesignById } = useDesignStore()
+  const { loadDesign, currentDesign, saveCanvas, saveStatus, isLoading: designLoading } = useDesignStore()
   const {
     nodes: storeNodes,
     edges: storeEdges,
@@ -115,6 +119,8 @@ function CanvasEditorInner() {
     startSimulation,
     stopSimulation,
     setSimulationMetrics,
+    loadDesign: loadCanvasDesign,
+    clearCanvas,
   } = useCanvasStore()
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes)
@@ -124,42 +130,112 @@ function CanvasEditorInner() {
   const [logs, setLogs] = useState([])
   const [simulationProgress, setSimulationProgress] = useState(0)
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false)
+  const [isInitialized, setIsInitialized] = useState(false)
+  const [showSaveNewModal, setShowSaveNewModal] = useState(false)
+  const [newDesignName, setNewDesignName] = useState('')
 
   const { screenToFlowPosition, fitView, zoomIn, zoomOut } = useReactFlow()
 
-  // Sync store → local state
-  useEffect(() => { setNodes(storeNodes) }, [storeNodes, setNodes])
-  useEffect(() => { setEdges(storeEdges) }, [storeEdges, setEdges])
+  // Ref to prevent sync loops
+  const isSyncingFromStore = useRef(false)
+  const isSyncingToStore = useRef(false)
 
-  // Load design
+  // Auto-save hook
+  const { saveStatus: autoSaveStatus } = useAutoSave(id, nodes, edges, id && id !== 'new')
+
+  // Load design from backend
   useEffect(() => {
-    if (id && id !== 'new') {
-      const design = getDesignById(id)
-      if (design?.nodes?.length) {
-        setNodes(design.nodes)
-        setEdges(design.edges || [])
+    const init = async () => {
+      if (id && id !== 'new') {
+        try {
+          // Clear store first to prevent stale data sync
+          clearCanvas()
+          setNodes([])
+          setEdges([])
+
+          const design = await loadDesign(id)
+
+          if (design.nodes?.length > 0 || design.edges?.length > 0) {
+            isSyncingFromStore.current = true
+            setNodes(design.nodes || [])
+            setEdges(design.edges || [])
+            loadCanvasDesign(design)
+            setTimeout(() => { isSyncingFromStore.current = false }, 50)
+          }
+          setIsInitialized(true)
+        } catch (err) {
+          setLogs(prev => [...prev, { type: 'error', message: `Failed to load design: ${err.message}`, timestamp: Date.now() }])
+          setIsInitialized(true)
+        }
+      } else {
+        clearCanvas()
+        setNodes([])
+        setEdges([])
+        setIsInitialized(true)
       }
     }
-  }, [id, getDesignById, setNodes, setEdges])
+    init()
+  }, [id, loadDesign, setNodes, setEdges, loadCanvasDesign, clearCanvas])
+
+  // Sync store → local state (for drag-and-drop from BlockLibrary, undo/redo, etc.)
+  useEffect(() => {
+    if (isSyncingToStore.current) return
+    isSyncingFromStore.current = true
+    setNodes(storeNodes)
+    setTimeout(() => { isSyncingFromStore.current = false }, 0)
+  }, [storeNodes, setNodes])
+
+  useEffect(() => {
+    if (isSyncingToStore.current) return
+    isSyncingFromStore.current = true
+    setEdges(storeEdges)
+    setTimeout(() => { isSyncingFromStore.current = false }, 0)
+  }, [storeEdges, setEdges])
+
+  // Sync local state → store (for auto-save, persistence, etc.)
+  useEffect(() => {
+    if (isSyncingFromStore.current) return
+    isSyncingToStore.current = true
+    setStoreNodes(nodes)
+    setTimeout(() => { isSyncingToStore.current = false }, 0)
+  }, [nodes, setStoreNodes])
+
+  useEffect(() => {
+    if (isSyncingFromStore.current) return
+    isSyncingToStore.current = true
+    setStoreEdges(edges)
+    setTimeout(() => { isSyncingToStore.current = false }, 0)
+  }, [edges, setStoreEdges])
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.metaKey || e.ctrlKey) {
         switch (e.key.toLowerCase()) {
-          case 's': e.preventDefault(); handleSave(); break
-          case 'e': e.preventDefault(); setShowExportModal(true); break
-          case 'k': e.preventDefault(); setShowKeyboardShortcuts(true); break
+          case 's': 
+            e.preventDefault()
+            handleManualSave()
+            break
+          case 'e': 
+            e.preventDefault()
+            setShowExportModal(true)
+            break
+          case 'k': 
+            e.preventDefault()
+            setShowKeyboardShortcuts(true)
+            break
           case 'z':
             e.preventDefault()
             if (e.shiftKey) redo()
             else undo()
             break
-          case 'y': e.preventDefault(); redo(); break
-          case 'a':
-            if (e.shiftKey) break // Let Shift+Ctrl+A pass through
+          case 'y': 
             e.preventDefault()
-            // Select all nodes
+            redo()
+            break
+          case 'a':
+            if (e.shiftKey) break
+            e.preventDefault()
             setSelectedNodes(nodes)
             break
         }
@@ -191,7 +267,7 @@ function CanvasEditorInner() {
     setSelectedNodes([])
   }, [setSelectedNode, setSelectedNodes])
 
-  const onSelectionChange = useCallback(({ nodes, edges }) => {
+  const onSelectionChange = useCallback(({ nodes }) => {
     setSelectedNodes(nodes)
   }, [setSelectedNodes])
 
@@ -231,11 +307,24 @@ function CanvasEditorInner() {
     deletedEdges.forEach(edge => removeEdge(edge.id))
   }, [removeEdge])
 
+  const handleManualSave = async () => {
+    if (!id || id === 'new') {
+      setShowSaveNewModal(true)
+      return
+    }
+    try {
+      await saveCanvas(id, { nodes, edges })
+      setLogs(prev => [...prev, { type: 'success', message: 'Design saved to cloud', timestamp: Date.now() }])
+    } catch (err) {
+      setLogs(prev => [...prev, { type: 'error', message: `Save failed: ${err.message}`, timestamp: Date.now() }])
+    }
+  }
+
   const handleRunSimulation = () => {
     if (simulationRunning) { stopSimulation(); return }
     startSimulation()
     setLogs(prev => [...prev, { type: 'info', message: 'Starting simulation...', timestamp: Date.now() }])
-    
+
     let progress = 0
     const interval = setInterval(() => {
       progress += 5
@@ -268,65 +357,114 @@ function CanvasEditorInner() {
     }, 150)
   }
 
-  const handleSave = () => {
-    setStoreNodes(nodes)
-    setStoreEdges(edges)
-    setLogs(prev => [...prev, { type: 'success', message: 'Design saved', timestamp: Date.now() }])
+  const SaveStatusIndicator = () => {
+    const status = autoSaveStatus || saveStatus
+    if (status === 'idle') return null
+
+    const icons = {
+      saving: <Loader2 size={14} className="animate-spin text-amber-500" />,
+      saved: <CheckCircle2 size={14} className="text-green-500" />,
+      error: <AlertCircle size={14} className="text-red-500" />,
+    }
+
+    const labels = {
+      saving: 'Saving...',
+      saved: 'Saved',
+      error: 'Save failed',
+    }
+
+    return (
+      <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-resonance-bg-elevated/80 backdrop-blur-sm border border-resonance-border">
+        {icons[status]}
+        <span className={`text-xs font-medium ${
+          status === 'saving' ? 'text-amber-500' : 
+          status === 'saved' ? 'text-green-500' : 'text-red-500'
+        }`}>
+          {labels[status]}
+        </span>
+      </div>
+    )
   }
 
-  const design = id && id !== 'new' ? getDesignById(id) : null
+  const handleCreateAndSave = async () => {
+    if (!newDesignName.trim()) return
+    try {
+      const design = await useDesignStore.getState().createDesign({ name: newDesignName })
+      await saveCanvas(design.id, { nodes, edges })
+      navigate(`/design/${design.id}`, { replace: true })
+      setShowSaveNewModal(false)
+      setNewDesignName('')
+      setLogs(prev => [...prev, { type: 'success', message: 'Design created and saved', timestamp: Date.now() }])
+    } catch (err) {
+      setLogs(prev => [...prev, { type: 'error', message: `Failed: ${err.message}`, timestamp: Date.now() }])
+    }
+  }
+
+  if (designLoading && !isInitialized) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-resonance-canvas-bg">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 size={32} className="animate-spin text-resonance-accent" />
+          <p className="text-resonance-text-secondary">Loading design...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="h-screen flex flex-col bg-resonance-canvas-bg">
       <TopToolbar
-        designName={design?.name || 'Untitled Design'}
+        designName={currentDesign?.name || 'Untitled Design'}
         activeTab={activeTab}
         onTabChange={setActiveTab}
-        onSave={handleSave}
+        onSave={handleManualSave}
         onExport={() => setShowExportModal(true)}
         onShare={() => setShowShareModal(true)}
         simulationRunning={simulationRunning}
         onRunSimulation={handleRunSimulation}
+        extraActions={<SaveStatusIndicator />}
       />
 
       <div className="flex-1 flex overflow-hidden">
         <BlockLibrary />
 
-        <div className="flex-1 relative">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={onNodeClick}
-            onPaneClick={onPaneClick}
-            onDragOver={onDragOver}
-            onDrop={onDrop}
-            onNodeDragStop={onNodeDragStop}
-            onNodesDelete={onNodesDelete}
-            onEdgesDelete={onEdgesDelete}
-            onSelectionChange={onSelectionChange}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            defaultEdgeOptions={edgeOptions}
-            fitView
-            attributionPosition="bottom-right"
-            minZoom={0.1}
-            maxZoom={2}
-            proOptions={{ hideAttribution: true }}
-            className="bg-resonance-canvas-bg"
-            deleteKeyCode={['Delete', 'Backspace']}
-            selectionOnDrag={true}
-            multiSelectionKeyCode={['Meta', 'Ctrl']}
-            selectionMode={SelectionMode.Partial}
-            snapToGrid={true}
-            snapGrid={[20, 20]}
-          >
-            <Background color="var(--canvas-grid)" gap={20} size={1} variant="dots" />
-            <Controls className="!bg-resonance-bg-elevated !border-resonance-border !rounded-xl !shadow-lg" showInteractive={false} />
-            <MiniMap className="!bg-resonance-bg-elevated !border-resonance-border !rounded-xl !shadow-lg" nodeColor={(node) => node.data?.color || '#8b5cf6'} maskColor="rgba(0, 0, 0, 0.2)" />
-          </ReactFlow>
+        <div className="flex-1 relative min-h-0">
+          <div className="w-full h-full">
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onNodeClick={onNodeClick}
+              onPaneClick={onPaneClick}
+              onDragOver={onDragOver}
+              onDrop={onDrop}
+              onNodeDragStop={onNodeDragStop}
+              onNodesDelete={onNodesDelete}
+              onEdgesDelete={onEdgesDelete}
+              onSelectionChange={onSelectionChange}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              defaultEdgeOptions={edgeOptions}
+              fitView
+              attributionPosition="bottom-right"
+              minZoom={0.1}
+              maxZoom={2}
+              proOptions={{ hideAttribution: true }}
+              className="bg-resonance-canvas-bg"
+              deleteKeyCode={['Delete', 'Backspace']}
+              selectionOnDrag={true}
+              multiSelectionKeyCode={['Meta', 'Ctrl']}
+              selectionMode={SelectionMode.Partial}
+              snapToGrid={true}
+              snapGrid={[20, 20]}
+            >
+              <Background color="var(--canvas-grid)" gap={20} size={1} variant="dots" />
+              <Controls className="!bg-resonance-bg-elevated !border-resonance-border !rounded-xl !shadow-lg" showInteractive={false} />
+              <MiniMap className="!bg-resonance-bg-elevated !border-resonance-border !rounded-xl !shadow-lg" nodeColor={(node) => node.data?.color || '#8b5cf6'} maskColor="rgba(0, 0, 0, 0.2)" />
+            </ReactFlow>
+          </div>
 
           {/* Zoom Controls */}
           <div className="absolute bottom-20 right-4 z-10 flex flex-col gap-1">
@@ -388,6 +526,26 @@ function CanvasEditorInner() {
               </div>
             </div>
           ))}
+        </div>
+      </Modal>
+
+      {/* Save New Design Modal */}
+      <Modal isOpen={showSaveNewModal} onClose={() => setShowSaveNewModal(false)} title="Save New Design" size="sm">
+        <div className="space-y-4">
+          <p className="text-resonance-text-secondary text-sm">Give your design a name to save it to the cloud.</p>
+          <input
+            type="text"
+            placeholder="e.g., E-Commerce Platform"
+            value={newDesignName}
+            onChange={(e) => setNewDesignName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleCreateAndSave()}
+            className="input-field w-full"
+            autoFocus
+          />
+          <div className="flex justify-end gap-3">
+            <Button variant="ghost" onClick={() => setShowSaveNewModal(false)}>Cancel</Button>
+            <Button onClick={handleCreateAndSave} disabled={!newDesignName.trim()}>Save Design</Button>
+          </div>
         </div>
       </Modal>
     </div>

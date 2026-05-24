@@ -1,7 +1,13 @@
 import { Router } from 'express'
 import { prisma } from '../lib/db.js'
-import { generateToken } from '../middleware/auth.js'
 import { cache } from '../lib/redis.js'
+import { 
+  generateAccessToken, 
+  generateRefreshToken, 
+  setAuthCookies,
+  clearAuthCookies,
+  authMiddleware 
+} from '../middleware/auth.js'
 
 const router = Router()
 
@@ -16,14 +22,14 @@ router.get('/github', (req, res) => {
   }
 
   const state = Buffer.from(Math.random().toString()).toString('base64')
-  
+
   // Store state in Redis for 10 minutes
   cache.set(`github:state:${state}`, { createdAt: Date.now() }, 600)
 
   const params = new URLSearchParams({
     client_id: GITHUB_CLIENT_ID,
     redirect_uri: `${req.protocol}://${req.get('host')}/auth/github/callback`,
-    scope: 'user:email read:user',
+    scope: 'user:email read:user repo',
     state,
   })
 
@@ -82,7 +88,7 @@ router.get('/github/callback', async (req, res) => {
 
     const githubUser = await userRes.json()
 
-    // Fetch emails (primary might be private)
+    // Fetch emails
     const emailsRes = await fetch('https://api.github.com/user/emails', {
       headers: {
         'Authorization': `Bearer ${tokenData.access_token}`,
@@ -94,7 +100,7 @@ router.get('/github/callback', async (req, res) => {
     const emails = await emailsRes.json()
     const primaryEmail = emails.find(e => e.primary)?.email || githubUser.email || `${githubUser.login}@github.com`
 
-    // Find or create user in database
+    // Find or create user
     let user = await prisma.user.findUnique({
       where: { githubId: githubUser.id.toString() }
     })
@@ -110,7 +116,6 @@ router.get('/github/callback', async (req, res) => {
         }
       })
     } else {
-      // Update avatar if changed
       user = await prisma.user.update({
         where: { id: user.id },
         data: {
@@ -120,18 +125,18 @@ router.get('/github/callback', async (req, res) => {
       })
     }
 
-    // Generate JWT
-    const token = generateToken(user.id)
+    // Generate tokens
+    const accessToken = generateAccessToken(user.id)
+    const refreshToken = await generateRefreshToken(user.id)
 
-    // Store session in Redis
-    await cache.set(`session:${token}`, {
-      userId: user.id,
-      githubToken: tokenData.access_token,
-      createdAt: new Date().toISOString()
-    }, 86400)
+    // Store GitHub token by userId (survives JWT refreshes!)
+    await cache.set(`github-token:${user.id}`, tokenData.access_token, 604800) // 7 days
 
-    // Redirect to frontend with token
-    res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}`)
+    // Set HTTP-only cookies
+    setAuthCookies(res, accessToken, refreshToken)
+
+    // Redirect to frontend with success flag (no token in URL!)
+    res.redirect(`${FRONTEND_URL}/auth/callback?success=true`)
 
   } catch (err) {
     console.error('GitHub OAuth error:', err)
@@ -139,19 +144,17 @@ router.get('/github/callback', async (req, res) => {
   }
 })
 
-// Get current user from JWT
-router.get('/me', async (req, res) => {
-  const authHeader = req.headers.authorization
-  if (!authHeader?.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'No token' })
-  }
+// Refresh endpoint
+router.post('/refresh', async (req, res) => {
+  const { refreshTokens } = await import('../middleware/auth.js')
+  await refreshTokens(req, res)
+})
 
+// Get current user
+router.get('/me', authMiddleware, async (req, res) => {
   try {
-    const { verifyToken } = await import('../middleware/auth.js')
-    const decoded = verifyToken(authHeader.slice(7))
-
     const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
+      where: { id: req.user.id },
       select: { id: true, email: true, name: true, avatar: true, tier: true, createdAt: true }
     })
 
@@ -162,12 +165,20 @@ router.get('/me', async (req, res) => {
   }
 })
 
-router.post('/logout', async (req, res) => {
-  const authHeader = req.headers.authorization
-  if (authHeader?.startsWith('Bearer ')) {
-    await cache.del(`session:${authHeader.slice(7)}`)
+// Logout - clear cookies and revoke refresh token
+router.post('/logout', authMiddleware, async (req, res) => {
+  try {
+    // Revoke refresh token from Redis
+    const refreshToken = req.cookies?.refreshToken
+    if (refreshToken && req.user?.id) {
+      await cache.del(`refresh:${req.user.id}:${refreshToken}`)
+    }
+
+    clearAuthCookies(res)
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
   }
-  res.json({ success: true })
 })
 
 export default router

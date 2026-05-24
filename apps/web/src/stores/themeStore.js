@@ -34,6 +34,11 @@ export const useThemeStore = create((set, get) => ({
     const themeVars = THEMES[theme]
     const root = document.documentElement
 
+    if (!themeVars || typeof themeVars !== 'object') {
+      console.warn(`Theme "${theme}" not found in THEMES`, THEMES)
+      return
+    }
+
     Object.entries(themeVars).forEach(([key, value]) => {
       root.style.setProperty(key, value)
     })
@@ -44,6 +49,7 @@ export const useThemeStore = create((set, get) => ({
 
   init: () => {
     const saved = localStorage.getItem('resonance-theme') || 'dark'
+    const validTheme = THEMES[saved] ? saved : 'dark'
     document.documentElement.classList.toggle('dark', saved === 'dark')
     get().applyTheme()
   },

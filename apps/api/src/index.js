@@ -3,12 +3,15 @@ import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
-import passport from 'passport'
 import { prisma } from './lib/db.js'
 import { redis } from './lib/redis.js'
 import authRoutes from './routes/auth.js'
 import designRoutes from './routes/designs.js'
 import simulationRoutes from './routes/simulations.js'
+import githubRoutes from './routes/github.js'
+import reverseEngineRoutes from './routes/reverseEngine.js'
+import optimizeRoutes from './routes/optimize.js'
+import cookieParser from 'cookie-parser'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -22,21 +25,21 @@ app.use(cors({
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
 })
 app.use('/api/', limiter)
 
 app.use(express.json({ limit: '10mb' }))
-app.use(passport.initialize())
+app.use(cookieParser())
 
 // Health check
 app.get('/health', async (req, res) => {
   const dbHealthy = await prisma.$queryRaw`SELECT 1`.then(() => true).catch(() => false)
   const redisHealthy = await redis.ping().then(() => true).catch(() => false)
-  
+
   res.json({
     status: dbHealthy && redisHealthy ? 'ok' : 'degraded',
     service: 'resonance-api',
@@ -50,6 +53,9 @@ app.get('/health', async (req, res) => {
 app.use('/auth', authRoutes)
 app.use('/designs', designRoutes)
 app.use('/simulations', simulationRoutes)
+app.use('/github', githubRoutes)
+app.use('/analyze', reverseEngineRoutes)
+app.use('/optimize', optimizeRoutes)
 
 // Error handling
 app.use((err, req, res, next) => {
@@ -68,7 +74,7 @@ process.on('SIGTERM', async () => {
 })
 
 app.listen(PORT, () => {
-  console.log(`🚀 Resonance API running on http://localhost:${PORT}`)
-  console.log(`📊 Database: ${process.env.DATABASE_URL?.split('@')[1] || 'not configured'}`)
-  console.log(`🔴 Redis: ${process.env.REDIS_URL || 'not configured'}`)
+  console.log(`Resonance API running on http://localhost:${PORT}`)
+  console.log(`Database: ${process.env.DATABASE_URL?.split('@')[1] || 'not configured'}`)
+  console.log(`Redis: ${process.env.REDIS_URL || 'not configured'}`)
 })

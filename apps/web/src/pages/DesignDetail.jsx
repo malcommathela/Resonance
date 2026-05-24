@@ -8,15 +8,12 @@ import {
   Clock,
   Blocks,
   Activity,
-  Share2,
-  MoreVertical,
-  Trash2,
-  Copy,
   ExternalLink,
   Calendar,
-  User,
+  Trash2,
 } from 'lucide-react'
 import { useDesignStore } from '@/stores/designStore'
+import { useToast } from '@/components/ui/Toast'
 import { animations } from '@/lib/anime'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -26,28 +23,61 @@ import { Modal } from '@/components/ui/Modal'
 export const DesignDetail = () => {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { getDesignById, deleteDesign } = useDesignStore()
+  const { addToast } = useToast()
+  const { loadDesign, currentDesign, deleteDesign, isLoading } = useDesignStore()
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [localDesign, setLocalDesign] = useState(null)
 
-  const design = getDesignById(id)
   const containerRef = useRef(null)
 
   useEffect(() => {
-    if (!design) {
-      navigate('/dashboard')
-      return
+    if (id) {
+      loadDesign(id).then(d => {
+        setLocalDesign(d)
+      }).catch(() => {
+        navigate('/dashboard')
+      })
     }
+  }, [id, loadDesign, navigate])
+
+  useEffect(() => {
     if (containerRef.current) {
       animations.fadeInUp(containerRef.current, 0)
     }
-  }, [design, navigate])
+  }, [])
+
+  // Use loaded design from store or local state
+  const design = currentDesign || localDesign
+
+  if (isLoading && !design) {
+    return (
+      <div className="p-6 max-w-5xl mx-auto">
+        <div className="space-y-4">
+          <div className="h-8 w-48 bg-resonance-bg-tertiary rounded-lg animate-pulse" />
+          <div className="h-4 w-64 bg-resonance-bg-tertiary rounded-lg animate-pulse" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
+            {[1, 2, 3, 4].map(i => (
+              <Card key={i} className="p-4 h-24">
+                <div className="h-full bg-resonance-bg-tertiary rounded animate-pulse" />
+              </Card>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (!design) return null
 
-  const handleDelete = () => {
-    deleteDesign(design.id)
-    setShowDeleteModal(false)
-    navigate('/dashboard')
+  const handleDelete = async () => {
+    try {
+      await deleteDesign(design.id)
+      setShowDeleteModal(false)
+      addToast(`Deleted "${design.name}"`, 'warning')
+      navigate('/dashboard')
+    } catch (err) {
+      addToast('Failed to delete design', 'error')
+    }
   }
 
   const getStatusBadge = (status) => {
@@ -62,7 +92,6 @@ export const DesignDetail = () => {
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <div ref={containerRef} style={{ opacity: 0 }}>
-        {/* Header */}
         <div className="flex items-start justify-between mb-8">
           <div>
             <button
@@ -103,7 +132,6 @@ export const DesignDetail = () => {
           </div>
         </div>
 
-        {/* Stats Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           <Card className="p-4">
             <div className="flex items-center gap-3">
@@ -111,7 +139,7 @@ export const DesignDetail = () => {
                 <Blocks size={20} className="text-resonance-accent" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-resonance-text-primary">{design.blocks}</p>
+                <p className="text-2xl font-bold text-resonance-text-primary">{design.blocks || 0}</p>
                 <p className="text-xs text-resonance-text-muted">Blocks</p>
               </div>
             </div>
@@ -122,7 +150,7 @@ export const DesignDetail = () => {
                 <Activity size={20} className="text-green-500" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-resonance-text-primary">{design.simulations}</p>
+                <p className="text-2xl font-bold text-resonance-text-primary">{design.simulations || 0}</p>
                 <p className="text-xs text-resonance-text-muted">Simulations</p>
               </div>
             </div>
@@ -155,7 +183,6 @@ export const DesignDetail = () => {
           </Card>
         </div>
 
-        {/* GitHub Integration */}
         <Card className="p-6 mb-8">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -185,7 +212,6 @@ export const DesignDetail = () => {
           </div>
         </Card>
 
-        {/* Recent Activity */}
         <Card className="p-6">
           <h3 className="text-sm font-semibold text-resonance-text-primary mb-4">Recent Activity</h3>
           <div className="space-y-3">
@@ -212,7 +238,6 @@ export const DesignDetail = () => {
         </Card>
       </div>
 
-      {/* Delete Confirmation */}
       <Modal
         isOpen={showDeleteModal}
         onClose={() => setShowDeleteModal(false)}

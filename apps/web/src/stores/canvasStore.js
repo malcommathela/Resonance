@@ -17,7 +17,7 @@ export const useCanvasStore = create((set, get) => ({
   simulationMetrics: null,
   activeTab: 'editor',
   zoom: 1,
-  
+
   // History
   history: [],
   historyIndex: -1,
@@ -169,19 +169,24 @@ export const useCanvasStore = create((set, get) => ({
   stopSimulation: () => set({ simulationRunning: false }),
   setSimulationMetrics: (metrics) => set({ simulationMetrics: metrics }),
 
+  // Load design from backend (React Flow format)
   loadDesign: (design) => {
     set({
       nodes: design.nodes || [],
       edges: design.edges || [],
       selectedNode: null,
+      selectedNodes: [],
+      selectedEdges: [],
       simulationRunning: false,
       simulationMetrics: null,
+      history: [],
+      historyIndex: -1,
     })
   },
 
   clearCanvas: () => {
     get().saveHistory()
-    set({ nodes: [], edges: [], selectedNode: null, selectedNodes: [], selectedEdges: [], simulationRunning: false, simulationMetrics: null })
+    set({ nodes: [], edges: [], selectedNode: null, selectedNodes: [], selectedEdges: [], simulationRunning: false, simulationMetrics: null, history: [], historyIndex: -1 })
   },
 }))
 

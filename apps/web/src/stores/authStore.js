@@ -1,25 +1,31 @@
 import { create } from 'zustand'
 import { api } from '@/services/api'
 
+const getStoredUser = () => {
+  try {
+    const stored = localStorage.getItem('resonance-user')
+    if (!stored || stored === 'undefined' || stored === 'null') return null
+    return JSON.parse(stored)
+  } catch {
+    localStorage.removeItem('resonance-user')
+    return null
+  }
+}
+
 export const useAuthStore = create((set, get) => ({
-  user: JSON.parse(localStorage.getItem('resonance-user') || 'null'),
-  isAuthenticated: !!localStorage.getItem('resonance-token'),
-  isLoading: false,
+  user: getStoredUser(),
+  isAuthenticated: false,
+  isLoading: true,
   error: null,
 
   init: async () => {
-    const token = localStorage.getItem('resonance-token')
-    if (!token) {
-      set({ isAuthenticated: false, user: null })
-      return
-    }
-
+    set({ isLoading: true, error: null })
     try {
       const user = await api.getCurrentUser()
       localStorage.setItem('resonance-user', JSON.stringify(user))
-      set({ user, isAuthenticated: true, isLoading: false })
-    } catch {
-      localStorage.removeItem('resonance-token')
+      set({ user, isAuthenticated: true, isLoading: false, error: null })
+    } catch (err) {
+      console.error('Auth init error:', err.message)
       localStorage.removeItem('resonance-user')
       set({ user: null, isAuthenticated: false, isLoading: false })
     }
@@ -27,33 +33,31 @@ export const useAuthStore = create((set, get) => ({
 
   login: async (provider) => {
     if (provider === 'github') {
-      // Redirect to backend OAuth endpoint
       window.location.href = `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/auth/github`
     }
   },
 
-  handleCallback: async (token) => {
-  console.log('handleCallback called with token')
-  set({ isLoading: true, error: null })
-  try {
-    const { user } = await api.githubCallback(token)
-    console.log('handleCallback success:', user)
-    localStorage.setItem('resonance-token', token)
-    localStorage.setItem('resonance-user', JSON.stringify(user))
-    set({ user, isAuthenticated: true, isLoading: false })
-    return user
-  } catch (err) {
-    console.error('handleCallback error:', err)
-    set({ error: err.message, isLoading: false, isAuthenticated: false })
-    throw err
-  }
-},
+  handleCallback: async () => {
+    set({ isLoading: true, error: null })
+    try {
+      const user = await api.githubCallback()
+      localStorage.setItem('resonance-user', JSON.stringify(user))
+      set({ user, isAuthenticated: true, isLoading: false, error: null })
+      return user
+    } catch (err) {
+      set({ error: err.message, isLoading: false, isAuthenticated: false })
+      throw err
+    }
+  },
 
-  logout: () => {
-    api.logout()
-    localStorage.removeItem('resonance-token')
+  logout: async () => {
+    try {
+      await api.logout()
+    } catch (err) {
+      console.error('Logout error:', err)
+    }
     localStorage.removeItem('resonance-user')
-    set({ user: null, isAuthenticated: false, error: null })
+    set({ user: null, isAuthenticated: false, error: null, isLoading: false })
   },
 
   updateUser: (updates) => {

@@ -2,42 +2,43 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
 class ApiService {
   constructor() {
-    this.token = localStorage.getItem('resonance-token')
-  }
-
-  setToken(token) {
-    this.token = token
-    localStorage.setItem('resonance-token', token)
-  }
-
-  clearToken() {
-    this.token = null
-    localStorage.removeItem('resonance-token')
+    // No token in localStorage anymore - cookies handle auth
   }
 
   getHeaders() {
-    const headers = {
+    return {
       'Content-Type': 'application/json',
     }
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`
-    }
-    return headers
   }
 
   async request(endpoint, options = {}) {
     const response = await fetch(`${API_BASE}${endpoint}`, {
       ...options,
+      credentials: 'include',
       headers: {
         ...this.getHeaders(),
         ...options.headers,
       },
     })
 
+    // Handle token expiration - try refresh once
     if (response.status === 401) {
-      this.clearToken()
-      window.location.href = '/login'
-      throw new Error('Session expired')
+      const errorData = await response.json().catch(() => ({}))
+      
+      if (errorData.code === 'TOKEN_EXPIRED') {
+        const refreshed = await this.refreshToken()
+        if (refreshed) {
+          return this.request(endpoint, options)
+        }
+      }
+      
+      // True auth failure - redirect to login (prevent loop on auth pages)
+      const currentPath = window.location.pathname
+      if (!currentPath.includes('/login') && !currentPath.includes('/auth/callback')) {
+        window.location.href = '/login'
+      }
+      
+      throw new Error(errorData.error || 'Session expired')
     }
 
     if (!response.ok) {
@@ -48,14 +49,21 @@ class ApiService {
     return response.json()
   }
 
-  // Auth
-  async githubCallback(token) {
-    // Set token directly instead of using this.setToken
-    this.token = token
-    localStorage.setItem('resonance-token', token)
-    
+  async refreshToken() {
+    try {
+      const response = await fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      return response.ok
+    } catch {
+      return false
+    }
+  }
+
+  async githubCallback() {
     const user = await this.request('/auth/me')
-    return { token, user }
+    return user
   }
 
   async getCurrentUser() {
@@ -64,10 +72,9 @@ class ApiService {
 
   async logout() {
     await this.request('/auth/logout', { method: 'POST' }).catch(() => {})
-    this.clearToken()
+    localStorage.removeItem('resonance-user')
   }
 
-  // Designs
   async getDesigns() {
     return this.request('/designs')
   }
@@ -97,11 +104,17 @@ class ApiService {
   async saveCanvas(id, { nodes, edges }) {
     return this.request(`/designs/${id}/canvas`, {
       method: 'POST',
-      body: JSON.stringify({ blocks: nodes, edges }),
+      body: JSON.stringify({ nodes, edges }),
     })
   }
 
-  // Simulations
+  async autoSaveCanvas(id, { nodes, edges }) {
+    return this.request(`/designs/${id}/autosave`, {
+      method: 'POST',
+      body: JSON.stringify({ nodes, edges }),
+    })
+  }
+
   async runSimulation(data) {
     return this.request('/simulations', {
       method: 'POST',

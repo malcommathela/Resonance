@@ -28,6 +28,11 @@ export const cache = {
     await redis.del(key)
   },
 
+  async keys(pattern) {
+    const keys = await redis.keys(pattern)
+    return keys
+  },
+
   async invalidatePattern(pattern) {
     const keys = await redis.keys(pattern)
     if (keys.length > 0) {

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 import { Loader2 } from 'lucide-react'
@@ -7,21 +7,24 @@ export const AuthCallback = () => {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { handleCallback } = useAuthStore()
+  const hasRun = useRef(false)
 
   useEffect(() => {
-    const token = searchParams.get('token')
+    if (hasRun.current) return
+    hasRun.current = true
 
-    if (!token) {
-      navigate('/login?error=missing_token')
+    const error = searchParams.get('error')
+    if (error) {
+      navigate(`/login?error=${error}`, { replace: true })
       return
     }
 
-    handleCallback(token)
+    handleCallback()
       .then(() => {
         navigate('/dashboard', { replace: true })
       })
       .catch(() => {
-        navigate('/login?error=auth_failed')
+        navigate('/login?error=auth_failed', { replace: true })
       })
   }, [searchParams, handleCallback, navigate])
 

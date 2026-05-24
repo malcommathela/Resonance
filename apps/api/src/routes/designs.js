@@ -13,6 +13,43 @@ const designSchema = z.object({
   repoBranch: z.string().optional(),
 })
 
+// Serialize Prisma blocks/edges to React Flow format
+function serializeDesign(design) {
+  const nodes = design.blocks.map(block => ({
+    id: block.id,
+    type: 'customBlock',
+    position: { x: block.x, y: block.y },
+    data: {
+      label: block.label,
+      type: block.type,
+      color: block.color,
+      config: typeof block.config === 'string' ? JSON.parse(block.config) : block.config,
+      metrics: block.metrics ? (typeof block.metrics === 'string' ? JSON.parse(block.metrics) : block.metrics) : null,
+    }
+  }))
+
+  const edges = design.edges.map(edge => ({
+    id: edge.id,
+    source: edge.sourceId,
+    target: edge.targetId,
+    type: 'customEdge',
+    animated: edge.animated,
+    data: {
+      connectionType: edge.connectionType,
+      label: edge.label,
+    }
+  }))
+
+  return {
+    ...design,
+    nodes,
+    edges,
+    blocks: undefined,
+    edges: undefined,
+    _count: undefined,
+  }
+}
+
 // Get all designs for user
 router.get('/', authMiddleware, async (req, res) => {
   const cacheKey = `designs:${req.user.id}`
@@ -36,7 +73,7 @@ router.get('/', authMiddleware, async (req, res) => {
   })))
 })
 
-// Get single design with blocks and edges
+// Get single design with blocks and edges (React Flow format) — NO CACHE
 router.get('/:id', authMiddleware, async (req, res) => {
   const design = await prisma.design.findFirst({
     where: { id: req.params.id, ownerId: req.user.id },
@@ -48,7 +85,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
   })
 
   if (!design) return res.status(404).json({ error: 'Design not found' })
-  res.json(design)
+  res.json(serializeDesign(design))
 })
 
 // Create design
@@ -66,7 +103,7 @@ router.post('/', authMiddleware, async (req, res) => {
   res.status(201).json(design)
 })
 
-// Update design
+// Update design metadata
 router.patch('/:id', authMiddleware, async (req, res) => {
   const design = await prisma.design.findFirst({
     where: { id: req.params.id, ownerId: req.user.id }
@@ -91,12 +128,13 @@ router.delete('/:id', authMiddleware, async (req, res) => {
   })
 
   await cache.invalidatePattern(`designs:${req.user.id}*`)
+  await cache.del(`design:${req.params.id}`)
   res.json({ success: true })
 })
 
-// Save canvas state (blocks + edges)
+// Save canvas state (blocks + edges) — full replace
 router.post('/:id/canvas', authMiddleware, async (req, res) => {
-  const { blocks, edges } = req.body
+  const { nodes, edges } = req.body
 
   await prisma.$transaction(async (tx) => {
     // Delete existing blocks and edges
@@ -105,7 +143,7 @@ router.post('/:id/canvas', authMiddleware, async (req, res) => {
 
     // Create new blocks
     const blockMap = new Map()
-    for (const block of blocks) {
+    for (const block of nodes) {
       const created = await tx.block.create({
         data: {
           designId: req.params.id,
@@ -130,6 +168,7 @@ router.post('/:id/canvas', authMiddleware, async (req, res) => {
           targetId: blockMap.get(edge.target),
           connectionType: edge.data?.connectionType || 'http',
           animated: edge.animated ?? true,
+          label: edge.data?.label || null,
         }
       })
     }
@@ -141,7 +180,61 @@ router.post('/:id/canvas', authMiddleware, async (req, res) => {
   })
 
   await cache.invalidatePattern(`designs:${req.user.id}*`)
+  await cache.del(`design:${req.params.id}`)
   res.json({ success: true })
+})
+
+// Auto-save endpoint — lightweight, just updates blocks/edges without full validation
+router.post('/:id/autosave', authMiddleware, async (req, res) => {
+  const { nodes, edges } = req.body
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.edge.deleteMany({ where: { designId: req.params.id } })
+      await tx.block.deleteMany({ where: { designId: req.params.id } })
+
+      const blockMap = new Map()
+      for (const block of nodes) {
+        const created = await tx.block.create({
+          data: {
+            designId: req.params.id,
+            type: block.data?.type || 'service',
+            label: block.data?.label || 'Untitled',
+            x: block.position?.x || 0,
+            y: block.position?.y || 0,
+            color: block.data?.color || '#8b5cf6',
+            config: block.data?.config || {},
+            metrics: block.data?.metrics || null,
+          }
+        })
+        blockMap.set(block.id, created.id)
+      }
+
+      for (const edge of edges) {
+        await tx.edge.create({
+          data: {
+            designId: req.params.id,
+            sourceId: blockMap.get(edge.source),
+            targetId: blockMap.get(edge.target),
+            connectionType: edge.data?.connectionType || 'http',
+            animated: edge.animated ?? true,
+            label: edge.data?.label || null,
+          }
+        })
+      }
+
+      await tx.design.update({
+        where: { id: req.params.id },
+        data: { updatedAt: new Date() }
+      })
+    })
+
+    // Don't invalidate cache on autosave — let it stale, next GET will refresh
+    res.json({ success: true, savedAt: new Date().toISOString() })
+  } catch (err) {
+    console.error('Autosave error:', err)
+    res.status(500).json({ error: 'Autosave failed' })
+  }
 })
 
 export default router

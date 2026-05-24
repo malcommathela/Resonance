@@ -1,21 +1,40 @@
-import React, { useState, useRef } from 'react'
-import { useClickOutside } from '@/hooks/useClickOutside'
+import React, { useState, useRef, useEffect } from 'react'
 
 export const Dropdown = ({ trigger, items, align = 'right' }) => {
   const [isOpen, setIsOpen] = useState(false)
-  const ref = useClickOutside(() => setIsOpen(false))
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const handleClick = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) {
+        setIsOpen(false)
+      }
+    }
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClick)
+      return () => document.removeEventListener('mousedown', handleClick)
+    }
+  }, [isOpen])
 
   const alignClass = align === 'right' ? 'right-0' : 'left-0'
 
   return (
     <div className="relative" ref={ref}>
-      <div onClick={() => setIsOpen(!isOpen)}>{trigger}</div>
+      <div onClick={(e) => {
+        e.stopPropagation()
+        setIsOpen(!isOpen)
+      }}>
+        {trigger}
+      </div>
       {isOpen && (
-        <div className={`absolute ${alignClass} top-full mt-1 w-48 bg-resonance-bg-elevated border border-resonance-border rounded-xl shadow-xl z-50 py-1`}>
+        <div 
+          className={`absolute ${alignClass} top-full mt-1 w-48 bg-resonance-bg-elevated border border-resonance-border rounded-xl shadow-xl z-50 py-1`}
+        >
           {items.map((item, i) => (
             <button
               key={i}
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation()
                 item.onClick()
                 setIsOpen(false)
               }}

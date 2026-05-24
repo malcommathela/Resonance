@@ -2,17 +2,15 @@ import { useState, useEffect } from 'react'
 import { useDesignStore } from '@/stores/designStore'
 
 export const useDesign = (id) => {
-  const { getDesignById } = useDesignStore()
-  const [design, setDesign] = useState(null)
+  const { loadDesign, currentDesign } = useDesignStore()
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (id) {
-      const d = getDesignById(id)
-      setDesign(d)
-      setLoading(false)
+      setLoading(true)
+      loadDesign(id).finally(() => setLoading(false))
     }
-  }, [id, getDesignById])
+  }, [id, loadDesign])
 
-  return { design, loading }
+  return { design: currentDesign, loading }
 }
