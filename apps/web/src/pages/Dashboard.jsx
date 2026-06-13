@@ -23,6 +23,7 @@ export const Dashboard = () => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [toasts, setToasts] = useState([])
 
+  // Import loading state
   const [isImporting, setIsImporting] = useState(false)
   const [importProgress, setImportProgress] = useState('')
 
@@ -128,6 +129,7 @@ export const Dashboard = () => {
 
   return (
     <div className="min-h-screen bg-resonance-bg-primary">
+      {/* Header */}
       <header className="sticky top-0 z-30 bg-resonance-bg-primary/80 backdrop-blur-xl border-b border-resonance-border">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
@@ -177,6 +179,7 @@ export const Dashboard = () => {
         </div>
       </header>
 
+      {/* Bulk Actions Bar */}
       {selectedDesigns.size > 0 && (
         <div className="sticky top-16 z-20 bg-resonance-accent/10 border-b border-resonance-accent/30 backdrop-blur-sm animate-slide-down">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
@@ -197,6 +200,7 @@ export const Dashboard = () => {
         </div>
       )}
 
+      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {isLoading ? (
           <div className="flex items-center justify-center py-20">
@@ -225,9 +229,15 @@ export const Dashboard = () => {
         ) : (
           <div className={viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' : 'space-y-4'}>
             {filteredDesigns.map((design, index) => (
-              <div key={design.id} className="animate-fade-in" style={{ animationDelay: `${index * 50}ms` }}>
+              <div
+                key={design.id}
+                className="animate-fade-in"
+                style={{ animationDelay: `${index * 50}ms` }}
+              >
                 <div 
-                  className={`rounded-xl border overflow-hidden transition-all cursor-pointer group ${selectedDesigns.has(design.id) ? 'border-resonance-accent bg-resonance-accent/5' : 'border-resonance-border hover:border-resonance-accent/30 hover:shadow-lg'}`}
+                  className={`rounded-xl border overflow-hidden transition-all cursor-pointer group ${
+                    selectedDesigns.has(design.id) ? 'border-resonance-accent bg-resonance-accent/5' : 'border-resonance-border hover:border-resonance-accent/30 hover:shadow-lg'
+                  }`}
                   onClick={() => navigate(`/design/${design.id}`)}
                 >
                   <div className="h-32 bg-resonance-bg-tertiary flex items-center justify-center relative">
@@ -254,6 +264,7 @@ export const Dashboard = () => {
         )}
       </main>
 
+      {/* New Design Modal */}
       <Modal isOpen={showNewModal} onClose={() => setShowNewModal(false)} title="Create New Design">
         <div className="space-y-4">
           <Input
@@ -273,12 +284,14 @@ export const Dashboard = () => {
         </div>
       </Modal>
 
+      {/* GitHub Import Modal */}
       <GitHubImportModal
         isOpen={showImportModal}
         onClose={() => !isImporting && setShowImportModal(false)}
         onImport={handleGitHubImport}
       />
 
+      {/* Delete Confirmation */}
       <Modal isOpen={showDeleteConfirm} onClose={() => setShowDeleteConfirm(false)} title="Delete Designs" size="sm">
         <div className="space-y-4">
           <p className="text-resonance-text-secondary">
@@ -291,24 +304,32 @@ export const Dashboard = () => {
         </div>
       </Modal>
 
+      {/* Toasts */}
       <div className="fixed bottom-4 right-4 z-50 space-y-2">
         {toasts.map(toast => (
           <div
             key={toast.id}
-            className={`px-4 py-3 rounded-lg shadow-lg border flex items-center gap-2 min-w-[300px] animate-slide-up ${toast.type === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-400' : toast.type === 'success' ? 'bg-green-500/10 border-green-500/30 text-green-400' : 'bg-resonance-bg-secondary border-resonance-border text-resonance-text-primary'}`}
+            className={`px-4 py-3 rounded-lg shadow-lg border flex items-center gap-2 min-w-[300px] animate-slide-up ${
+              toast.type === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-400' :
+              toast.type === 'success' ? 'bg-green-500/10 border-green-500/30 text-green-400' :
+              'bg-resonance-bg-secondary border-resonance-border text-resonance-text-primary'
+            }`}
           >
             <span className="text-sm">{toast.message}</span>
           </div>
         ))}
       </div>
 
+      {/* Import Loading Overlay */}
       {isImporting && (
         <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center animate-fade-in">
           <div className="bg-resonance-bg-secondary border border-resonance-border rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl animate-scale-in">
             <div className="flex flex-col items-center gap-4">
               <Loader2 size={40} className="animate-spin text-resonance-accent" />
               <div className="text-center">
-                <h3 className="text-lg font-semibold text-resonance-text-primary mb-1">Importing from GitHub</h3>
+                <h3 className="text-lg font-semibold text-resonance-text-primary mb-1">
+                  Importing from GitHub
+                </h3>
                 <p className="text-sm text-resonance-text-secondary">{importProgress}</p>
               </div>
               <div className="w-full h-1.5 bg-resonance-bg-tertiary rounded-full overflow-hidden">

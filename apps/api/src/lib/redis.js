@@ -1,27 +1,18 @@
-import Redis from 'ioredis'
+import { Redis } from '@upstash/redis'
 
-export const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
-  retryStrategy: (times) => Math.min(times * 50, 2000),
-  maxRetriesPerRequest: 3,
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL || 'https://your-db.upstash.io',
+  token: process.env.UPSTASH_REDIS_REST_TOKEN || 'your-token',
 })
 
-redis.on('error', (err) => {
-  console.error('Redis error:', err)
-})
-
-redis.on('connect', () => {
-  console.log('🔴 Redis connected')
-})
-
-// Cache helpers
 export const cache = {
   async get(key) {
     const data = await redis.get(key)
-    return data ? JSON.parse(data) : null
+    return data || null
   },
 
   async set(key, value, ttl = 3600) {
-    await redis.setex(key, ttl, JSON.stringify(value))
+    await redis.set(key, JSON.stringify(value), { ex: ttl })
   },
 
   async del(key) {
@@ -30,13 +21,15 @@ export const cache = {
 
   async keys(pattern) {
     const keys = await redis.keys(pattern)
-    return keys
+    return keys || []
   },
 
   async invalidatePattern(pattern) {
     const keys = await redis.keys(pattern)
-    if (keys.length > 0) {
+    if (keys && keys.length > 0) {
       await redis.del(...keys)
     }
   },
 }
+
+export { redis }
