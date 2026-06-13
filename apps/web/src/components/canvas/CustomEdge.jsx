@@ -27,7 +27,7 @@ export const CustomEdge = ({
   })
 
   const connectionType = data?.connectionType || 'http'
-  const meta = TYPE_META[connectionType]
+  const meta = TYPE_META[connectionType] || TYPE_META['http']
 
   const cycleType = () => {
     const types = Object.keys(TYPE_META)

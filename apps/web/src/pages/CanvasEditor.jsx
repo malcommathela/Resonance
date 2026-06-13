@@ -160,7 +160,7 @@ function CanvasEditorInner() {
             setNodes(design.nodes || [])
             setEdges(design.edges || [])
             loadCanvasDesign(design)
-            setTimeout(() => { isSyncingFromStore.current = false }, 50)
+            setTimeout(() => { isSyncingFromStore.current = false; if (typeof skipNextAutoSave === 'function') skipNextAutoSave() }, 50)
           }
           setIsInitialized(true)
         } catch (err) {
@@ -557,3 +557,5 @@ export const CanvasEditor = () => (
     <CanvasEditorInner />
   </ReactFlowProvider>
 )
+
+

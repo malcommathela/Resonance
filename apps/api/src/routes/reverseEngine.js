@@ -24,9 +24,6 @@ router.post('/analyze-and-save/:designId', authMiddleware, async (req, res) => {
     const result = await generateArchitecture(files)
 
     console.log('[AI] blocks:', result.blocks.length, 'edges:', result.edges.length)
-    console.log('[AI] block IDs:', result.blocks.map(b => b.id))
-    console.log('[AI] edge sources:', result.edges.map(e => e.source))
-    console.log('[AI] edge targets:', result.edges.map(e => e.target))
 
     // Build nodes
     const nodes = result.blocks.map(block => ({
@@ -108,16 +105,19 @@ router.post('/analyze-and-save/:designId', authMiddleware, async (req, res) => {
       console.log('[FALLBACK] total edges:', edges.length)
     }
 
-    // SAVE TO DATABASE
-    console.log('[DB] Starting transaction...')
-    await prisma.$transaction(async (tx) => {
-      await tx.edge.deleteMany({ where: { designId } })
-      await tx.block.deleteMany({ where: { designId } })
+    // SAVE TO DATABASE — batch create + verification
+    console.log('[DB] Starting verified batch save...')
 
-      // Create blocks
-      const blockMap = new Map()
-      for (const block of nodes) {
-        const created = await tx.block.create({
+    // Clear existing
+    const deletedEdges = await prisma.edge.deleteMany({ where: { designId } })
+    const deletedBlocks = await prisma.block.deleteMany({ where: { designId } })
+    console.log(`[DB] Cleared ${deletedEdges.count} edges, ${deletedBlocks.count} blocks`)
+
+    // Create blocks
+    const blockMap = new Map()
+    for (const block of nodes) {
+      try {
+        const created = await prisma.block.create({
           data: {
             designId,
             type: block.data.type,
@@ -131,46 +131,79 @@ router.post('/analyze-and-save/:designId', authMiddleware, async (req, res) => {
         })
         blockMap.set(block.id, created.id)
         console.log(`[DB BLOCK] "${block.id}" -> ${created.id}`)
+      } catch (err) {
+        console.error(`[DB BLOCK ERROR] ${block.id}:`, err.message)
+      }
+    }
+
+    // Prepare edges for batch create
+    const edgesToCreate = []
+    for (const edge of edges) {
+      const srcPrisma = blockMap.get(edge.source)
+      const tgtPrisma = blockMap.get(edge.target)
+
+      if (!srcPrisma || !tgtPrisma) {
+        console.log(`[DB EDGE SKIP] ${edge.id}: missing mapping`)
+        continue
       }
 
-      console.log('[DB] BlockMap:', Array.from(blockMap.entries()))
-
-      // Create edges - THIS IS THE CRITICAL PART
-      let savedCount = 0
-      for (const edge of edges) {
-        const srcPrisma = blockMap.get(edge.source)
-        const tgtPrisma = blockMap.get(edge.target)
-
-        console.log(`[DB EDGE CHECK] "${edge.source}"->${srcPrisma}, "${edge.target}"->${tgtPrisma}`)
-
-        if (!srcPrisma || !tgtPrisma) {
-          console.log(`[DB EDGE SKIP] Missing mapping for edge ${edge.id}`)
-          continue
-        }
-
-        await tx.edge.create({
-          data: {
-            designId,
-            sourceId: srcPrisma,
-            targetId: tgtPrisma,
-            connectionType: edge.data?.connectionType || 'http',
-            animated: true,
-          }
-        })
-        savedCount++
-        console.log(`[DB EDGE SAVED] ${edge.source} -> ${edge.target}`)
-      }
-
-      console.log(`[DB] Saved ${savedCount}/${edges.length} edges`)
-
-      await tx.design.update({
-        where: { id: designId },
-        data: { 
-          updatedAt: new Date(), 
-          status: 'draft',
-          description: design.description + ` | AI: ${result.metadata.description}` 
-        }
+      edgesToCreate.push({
+        designId,
+        sourceId: srcPrisma,
+        targetId: tgtPrisma,
+        connectionType: edge.data?.connectionType || 'http',
+        animated: true,
       })
+    }
+
+    console.log(`[DB] Prepared ${edgesToCreate.length} edges for batch create`)
+
+    // Batch create edges (single round-trip = pooler-safe)
+    let savedCount = 0
+    if (edgesToCreate.length > 0) {
+      try {
+        const result = await prisma.edge.createMany({
+          data: edgesToCreate,
+          skipDuplicates: true,
+        })
+        savedCount = result.count
+        console.log(`[DB EDGE BATCH] Created ${savedCount} edges`)
+      } catch (err) {
+        console.error(`[DB EDGE BATCH ERROR]`, err.message)
+        // Fallback: individual creates
+        for (const edgeData of edgesToCreate) {
+          try {
+            await prisma.edge.create({ data: edgeData })
+            savedCount++
+          } catch (e) {
+            console.error(`[DB EDGE FALLBACK ERROR]`, e.message)
+          }
+        }
+      }
+    }
+
+    // VERIFY: Count edges in database
+    const edgeCount = await prisma.edge.count({ where: { designId } })
+    console.log(`[DB VERIFY] ${edgeCount} edges in DB (expected ${edgesToCreate.length})`)
+
+    // Retry if mismatch
+    if (edgeCount < edgesToCreate.length && edgesToCreate.length > 0) {
+      console.log(`[DB RETRY] Missing ${edgesToCreate.length - edgeCount} edges, retrying...`)
+      const retryResult = await prisma.edge.createMany({
+        data: edgesToCreate,
+        skipDuplicates: true,
+      })
+      const retryCount = await prisma.edge.count({ where: { designId } })
+      console.log(`[DB RETRY] ${retryCount} edges after retry`)
+    }
+
+    await prisma.design.update({
+      where: { id: designId },
+      data: { 
+        updatedAt: new Date(), 
+        status: 'draft',
+        description: design.description + ` | AI: ${result.metadata.description}` 
+      }
     })
 
     // Invalidate cache
@@ -178,11 +211,23 @@ router.post('/analyze-and-save/:designId', authMiddleware, async (req, res) => {
     await cache.del(`design:${designId}`)
     console.log('[CACHE] Invalidated')
 
+    // Final flush delay
+    await new Promise(r => setTimeout(r, 500))
+
+    const finalEdgeCount = await prisma.edge.count({ where: { designId } })
+    console.log(`[DB FINAL] ${finalEdgeCount} edges persisted`)
+
     res.json({
       success: true,
       nodes,
       edges,
       metadata: result.metadata,
+      _debug: {
+        blocksCreated: blockMap.size,
+        edgesPrepared: edgesToCreate.length,
+        edgesCreated: savedCount,
+        edgesInDb: finalEdgeCount,
+      }
     })
   } catch (err) {
     console.error('[ERROR]', err)
