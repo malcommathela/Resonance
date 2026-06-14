@@ -13,6 +13,7 @@ const router = Router()
 
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET
+const GITHUB_CALLBACK_URL = process.env.GITHUB_CALLBACK_URL
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173'
 
 // Step 1: Redirect user to GitHub for authorization
@@ -28,7 +29,7 @@ router.get('/github', (req, res) => {
 
   const params = new URLSearchParams({
     client_id: GITHUB_CLIENT_ID,
-    redirect_uri: `${req.protocol}://${req.get('host')}/auth/github/callback`,
+    redirect_uri: GITHUB_CALLBACK_URL,
     scope: 'user:email read:user repo',
     state,
   })
@@ -67,7 +68,7 @@ router.get('/github/callback', async (req, res) => {
         client_id: GITHUB_CLIENT_ID,
         client_secret: GITHUB_CLIENT_SECRET,
         code,
-        redirect_uri: `${req.protocol}://${req.get('host')}/auth/github/callback`,
+        redirect_uri: GITHUB_CALLBACK_URL,
       }),
     })
 
