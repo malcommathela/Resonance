@@ -1,6 +1,7 @@
 {
   "name": "resonance",
   "private": true,
+  "packageManager": "npm@10.2.4",
   "workspaces": ["apps/*"],
   "scripts": {
     "build": "turbo run build",
