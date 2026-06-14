@@ -122,15 +122,15 @@ export const refreshTokens = async (req, res) => {
     // Set new cookies
     res.cookie('accessToken', newAccessToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: true,
+      sameSite: 'none',
       maxAge: 15 * 60 * 1000, // 15 minutes
     })
 
     res.cookie('refreshToken', newRefreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: true,
+      sameSite: 'none',
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
       path: '/auth/refresh',
     })
@@ -146,15 +146,15 @@ export const refreshTokens = async (req, res) => {
 export const setAuthCookies = (res, accessToken, refreshToken) => {
   res.cookie('accessToken', accessToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: true,
+    sameSite: 'none',
     maxAge: 15 * 60 * 1000,
   })
 
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: true,
+    sameSite: 'none',
     maxAge: 7 * 24 * 60 * 60 * 1000,
     path: '/auth/refresh',
   })
@@ -162,6 +162,6 @@ export const setAuthCookies = (res, accessToken, refreshToken) => {
 
 // Clear auth cookies helper
 export const clearAuthCookies = (res) => {
-  res.clearCookie('accessToken')
-  res.clearCookie('refreshToken', { path: '/auth/refresh' })
+  res.clearCookie('accessToken', { sameSite: 'none', secure: true })
+  res.clearCookie('refreshToken', { path: '/auth/refresh', sameSite: 'none', secure: true })
 }
