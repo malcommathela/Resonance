@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from '@clerk/clerk-react'
-import { useApiWithAuth } from '@/lib/api'  // ← ADD THIS
+import { useApiWithAuth } from '@/services/api'  // ← ADD THIS
 import { useThemeStore } from '@/stores/themeStore'
 import { ToastProvider } from '@/components/ui/Toast'
 import { AppShell } from '@/components/layout/AppShell'
