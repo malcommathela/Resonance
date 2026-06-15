@@ -1,10 +1,11 @@
 import { useAuth } from '@clerk/clerk-react'
+import { useEffect } from 'react'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
 class ApiService {
   constructor() {
-    this.getToken = null // Will be set by the hook
+    this.getToken = null
   }
 
   setTokenGetter(getTokenFn) {
@@ -15,12 +16,15 @@ class ApiService {
     const headers = {
       'Content-Type': 'application/json',
     }
-
-    // Get Clerk JWT token
+    
     if (this.getToken) {
-      const token = await this.getToken()
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`
+      try {
+        const token = await this.getToken()
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`
+        }
+      } catch (err) {
+        console.error('Failed to get Clerk token:', err)
       }
     }
 
@@ -30,7 +34,6 @@ class ApiService {
   async request(endpoint, options = {}) {
     const response = await fetch(`${API_BASE}${endpoint}`, {
       ...options,
-      credentials: 'include', // Keep for any remaining cookie needs
       headers: {
         ...(await this.getHeaders()),
         ...options.headers,
@@ -38,12 +41,8 @@ class ApiService {
     })
 
     if (response.status === 401) {
-      // Let Clerk handle re-auth
-      const currentPath = window.location.pathname
-      if (!currentPath.includes('/login') && !currentPath.includes('/sign-up')) {
-        window.location.href = '/login'
-      }
-      throw new Error('Session expired')
+      const error = await response.json().catch(() => ({ error: 'Unauthorized' }))
+      throw new Error(error.error || 'Unauthorized')
     }
 
     if (!response.ok) {
@@ -52,14 +51,6 @@ class ApiService {
     }
 
     return response.json()
-  }
-
-  async getCurrentUser() {
-    return this.request('/auth/me')
-  }
-
-  async logout() {
-    await this.request('/auth/logout', { method: 'POST' }).catch(() => {})
   }
 
   async getDesigns() {
@@ -112,16 +103,29 @@ class ApiService {
   async getSimulation(id) {
     return this.request(`/simulations/${id}`)
   }
+
+  async getCurrentUser() {
+    return this.request('/auth/me')
+  }
+
+  async logout() {
+    return this.request('/auth/logout', { method: 'POST' })
+  }
 }
 
 export const api = new ApiService()
 
 // Hook to connect Clerk's getToken to the API service
 export function useApiWithAuth() {
-  const { getToken } = useAuth()
-
-  // Set the token getter when the hook runs
-  api.setTokenGetter(() => getToken())
+  const { getToken, isSignedIn } = useAuth()
+  
+  useEffect(() => {
+    if (isSignedIn && getToken) {
+      api.setTokenGetter(() => getToken())
+    } else {
+      api.setTokenGetter(null)
+    }
+  }, [isSignedIn, getToken])
 
   return api
 }
