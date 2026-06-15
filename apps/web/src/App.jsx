@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react'
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { useAuth, useUser } from '@clerk/clerk-react'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { useAuth } from '@clerk/clerk-react'
+import { useApiWithAuth } from '@/lib/api'  // ← ADD THIS
 import { useThemeStore } from '@/stores/themeStore'
 import { ToastProvider } from '@/components/ui/Toast'
 import { AppShell } from '@/components/layout/AppShell'
@@ -20,6 +21,8 @@ const LoadingScreen = () => (
 export default function App() {
   const { init: initTheme } = useThemeStore()
   const { isLoaded, isSignedIn } = useAuth()
+  
+  useApiWithAuth()  // ← ADD THIS — initializes token getter immediately
 
   useEffect(() => {
     initTheme()
@@ -32,7 +35,6 @@ export default function App() {
   return (
     <ToastProvider>
       <Routes>
-        {/* Public routes */}
         <Route 
           path="/login" 
           element={isSignedIn ? <Navigate to="/dashboard" replace /> : <Login />} 
@@ -42,7 +44,6 @@ export default function App() {
           element={isSignedIn ? <Navigate to="/dashboard" replace /> : <Login mode="signUp" />} 
         />
 
-        {/* Protected routes — require auth */}
         <Route 
           path="/" 
           element={isSignedIn ? <AppShell /> : <Navigate to="/login" replace />} 
