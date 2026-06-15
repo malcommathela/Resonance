@@ -1,68 +1,64 @@
-import { create } from 'zustand'
-import { api } from '@/services/api'
+import { useAuth, useUser } from '@clerk/clerk-react'
+import { useCallback } from 'react'
 
-const getStoredUser = () => {
-  try {
-    const stored = localStorage.getItem('resonance-user')
-    if (!stored || stored === 'undefined' || stored === 'null') return null
-    return JSON.parse(stored)
-  } catch {
-    localStorage.removeItem('resonance-user')
-    return null
+// Drop-in replacement for your old Zustand auth store.
+// Use this in components that previously used useAuthStore().
+//
+// All the same properties/methods are available:
+//   user, isAuthenticated, isLoading, error
+//   init(), login(), handleCallback(), logout(), updateUser()
+//
+// But now they delegate to Clerk instead of localStorage + cookies.
+
+export function useAuthStore() {
+  const { isSignedIn, isLoaded, signOut } = useAuth()
+  const { user: clerkUser } = useUser()
+
+  // Map Clerk user to your old user shape
+  const user = clerkUser ? {
+    id: clerkUser.id,
+    email: clerkUser.primaryEmailAddress?.emailAddress,
+    name: clerkUser.fullName || clerkUser.username || clerkUser.firstName || 'User',
+    avatar: clerkUser.imageUrl,
+  } : null
+
+  return {
+    user,
+    isAuthenticated: isSignedIn,
+    isLoading: !isLoaded,
+    error: null, // Clerk handles errors internally
+
+    // init() is a no-op now — Clerk auto-initializes on mount
+    init: () => {},
+
+    // login() now redirects to Clerk's sign-in page
+    login: (provider) => {
+      if (provider === 'github') {
+        // Clerk's SignIn component already has GitHub as a social provider
+        // Just redirect to the login page
+        window.location.href = '/login'
+      } else {
+        window.location.href = '/login'
+      }
+    },
+
+    // handleCallback() is a no-op — Clerk handles the OAuth callback internally
+    handleCallback: () => {
+      return Promise.resolve(user)
+    },
+
+    // logout() now uses Clerk's signOut
+    logout: async () => {
+      await signOut()
+    },
+
+    // updateUser() is a no-op for now — user data comes from Clerk
+    // If you need to update profile, use Clerk's useUser().update()
+    updateUser: (updates) => {
+      console.warn("updateUser() is deprecated. Use Clerk's useUser().update() instead.")
+    },
   }
 }
 
-export const useAuthStore = create((set, get) => ({
-  user: getStoredUser(),
-  isAuthenticated: false,
-  isLoading: true,
-  error: null,
-
-  init: async () => {
-    set({ isLoading: true, error: null })
-    try {
-      const user = await api.getCurrentUser()
-      localStorage.setItem('resonance-user', JSON.stringify(user))
-      set({ user, isAuthenticated: true, isLoading: false, error: null })
-    } catch (err) {
-      console.error('Auth init error:', err.message)
-      localStorage.removeItem('resonance-user')
-      set({ user: null, isAuthenticated: false, isLoading: false })
-    }
-  },
-
-  login: async (provider) => {
-    if (provider === 'github') {
-      window.location.href = `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/auth/github`
-    }
-  },
-
-  handleCallback: async () => {
-    set({ isLoading: true, error: null })
-    try {
-      const user = await api.githubCallback()
-      localStorage.setItem('resonance-user', JSON.stringify(user))
-      set({ user, isAuthenticated: true, isLoading: false, error: null })
-      return user
-    } catch (err) {
-      set({ error: err.message, isLoading: false, isAuthenticated: false })
-      throw err
-    }
-  },
-
-  logout: async () => {
-    try {
-      await api.logout()
-    } catch (err) {
-      console.error('Logout error:', err)
-    }
-    localStorage.removeItem('resonance-user')
-    set({ user: null, isAuthenticated: false, error: null, isLoading: false })
-  },
-
-  updateUser: (updates) => {
-    const user = { ...get().user, ...updates }
-    localStorage.setItem('resonance-user', JSON.stringify(user))
-    set({ user })
-  },
-}))
+// Re-export Clerk hooks for direct use when needed
+export { useAuth, useUser } from '@clerk/clerk-react'

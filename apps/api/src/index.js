@@ -3,15 +3,16 @@ import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
+import { clerkMiddleware } from '@clerk/express'
 import { prisma } from './lib/db.js'
 import { redis } from './lib/redis.js'
+import webhookRoutes from './routes/webhooks.js'
 import authRoutes from './routes/auth.js'
 import designRoutes from './routes/designs.js'
 import simulationRoutes from './routes/simulations.js'
 import githubRoutes from './routes/github.js'
 import reverseEngineRoutes from './routes/reverseEngine.js'
 import optimizeRoutes from './routes/optimize.js'
-import cookieParser from 'cookie-parser'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -32,8 +33,11 @@ const limiter = rateLimit({
 })
 app.use('/api/', limiter)
 
+// Clerk middleware — attaches req.auth when valid session exists
+// This is OPTIONAL auth: routes work for both logged-in and anonymous users
+app.use(clerkMiddleware())
+
 app.use(express.json({ limit: '10mb' }))
-app.use(cookieParser())
 
 // Health check
 app.get('/health', async (req, res) => {
@@ -50,6 +54,7 @@ app.get('/health', async (req, res) => {
 })
 
 // Routes
+app.use('/webhooks', webhookRoutes)
 app.use('/auth', authRoutes)
 app.use('/designs', designRoutes)
 app.use('/simulations', simulationRoutes)

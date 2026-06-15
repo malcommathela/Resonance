@@ -1,44 +1,49 @@
+import { useAuth } from '@clerk/clerk-react'
+
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
 class ApiService {
   constructor() {
-    // No token in localStorage anymore - cookies handle auth
+    this.getToken = null // Will be set by the hook
   }
 
-  getHeaders() {
-    return {
+  setTokenGetter(getTokenFn) {
+    this.getToken = getTokenFn
+  }
+
+  async getHeaders() {
+    const headers = {
       'Content-Type': 'application/json',
     }
+
+    // Get Clerk JWT token
+    if (this.getToken) {
+      const token = await this.getToken()
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+    }
+
+    return headers
   }
 
   async request(endpoint, options = {}) {
     const response = await fetch(`${API_BASE}${endpoint}`, {
       ...options,
-      credentials: 'include',
+      credentials: 'include', // Keep for any remaining cookie needs
       headers: {
-        ...this.getHeaders(),
+        ...(await this.getHeaders()),
         ...options.headers,
       },
     })
 
-    // Handle token expiration - try refresh once
     if (response.status === 401) {
-      const errorData = await response.json().catch(() => ({}))
-      
-      if (errorData.code === 'TOKEN_EXPIRED') {
-        const refreshed = await this.refreshToken()
-        if (refreshed) {
-          return this.request(endpoint, options)
-        }
-      }
-      
-      // True auth failure - redirect to login (prevent loop on auth pages)
+      // Let Clerk handle re-auth
       const currentPath = window.location.pathname
-      if (!currentPath.includes('/login') && !currentPath.includes('/auth/callback')) {
+      if (!currentPath.includes('/login') && !currentPath.includes('/sign-up')) {
         window.location.href = '/login'
       }
-      
-      throw new Error(errorData.error || 'Session expired')
+      throw new Error('Session expired')
     }
 
     if (!response.ok) {
@@ -49,30 +54,12 @@ class ApiService {
     return response.json()
   }
 
-  async refreshToken() {
-    try {
-      const response = await fetch(`${API_BASE}/auth/refresh`, {
-        method: 'POST',
-        credentials: 'include',
-      })
-      return response.ok
-    } catch {
-      return false
-    }
-  }
-
-  async githubCallback() {
-    const user = await this.request('/auth/me')
-    return user
-  }
-
   async getCurrentUser() {
     return this.request('/auth/me')
   }
 
   async logout() {
     await this.request('/auth/logout', { method: 'POST' }).catch(() => {})
-    localStorage.removeItem('resonance-user')
   }
 
   async getDesigns() {
@@ -128,3 +115,13 @@ class ApiService {
 }
 
 export const api = new ApiService()
+
+// Hook to connect Clerk's getToken to the API service
+export function useApiWithAuth() {
+  const { getToken } = useAuth()
+
+  // Set the token getter when the hook runs
+  api.setTokenGetter(() => getToken())
+
+  return api
+}

@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../lib/db.js'
-import { authMiddleware } from '../middleware/auth.js'
+import { requireAuth } from '../middleware/auth.js'
 import { cache } from '../lib/redis.js'
 
 const router = Router()
@@ -291,7 +291,7 @@ function runTick(blockModels, adjacency, trafficRps, timeDelta) {
 }
 
 // POST /simulations/:id/run — Start real simulation
-router.post('/:id/run', authMiddleware, async (req, res) => {
+router.post('/:id/run', requireAuth, async (req, res) => {
   const { id } = req.params
   const { trafficPattern = 'steady', rps = 100, duration = 300, scenario = 'none' } = req.body
 
@@ -455,7 +455,7 @@ router.post('/:id/run', authMiddleware, async (req, res) => {
 })
 
 // GET /simulations/:id/status — Get current simulation status
-router.get('/:id/status', authMiddleware, async (req, res) => {
+router.get('/:id/status', requireAuth, async (req, res) => {
   try {
     const simulation = await prisma.simulation.findFirst({
       where: { id: req.params.id, userId: req.user.id }
@@ -476,7 +476,7 @@ router.get('/:id/status', authMiddleware, async (req, res) => {
 })
 
 // POST /simulations/:id/stop — Stop running simulation
-router.post('/:id/stop', authMiddleware, async (req, res) => {
+router.post('/:id/stop', requireAuth, async (req, res) => {
   try {
     const sim = activeSimulations.get(req.params.id)
     if (sim) {
@@ -498,7 +498,7 @@ router.post('/:id/stop', authMiddleware, async (req, res) => {
 })
 
 // WebSocket endpoint for live streaming (REST fallback)
-router.get('/:id/stream', authMiddleware, async (req, res) => {
+router.get('/:id/stream', requireAuth, async (req, res) => {
   try {
     const simulation = await prisma.simulation.findFirst({
       where: { id: req.params.id, userId: req.user.id }

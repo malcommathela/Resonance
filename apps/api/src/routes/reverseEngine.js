@@ -1,13 +1,13 @@
 import { Router } from 'express'
-import { authMiddleware } from '../middleware/auth.js'
-import { cache } from '../lib/redis.js'
 import { prisma } from '../lib/db.js'
+import { requireAuth } from '../middleware/auth.js'
+import { cache } from '../lib/redis.js'
 import { generateArchitecture } from '../lib/gemini.js'
 
 const router = Router()
 
 // POST /analyze-and-save/:designId — AI-powered architecture generation
-router.post('/analyze-and-save/:designId', authMiddleware, async (req, res) => {
+router.post('/analyze-and-save/:designId', requireAuth, async (req, res) => {
   try {
     const { designId } = req.params
     const { files } = req.body
@@ -236,7 +236,7 @@ router.post('/analyze-and-save/:designId', authMiddleware, async (req, res) => {
 })
 
 // POST /analyze — Just analyze, don't save
-router.post('/analyze', authMiddleware, async (req, res) => {
+router.post('/analyze', requireAuth, async (req, res) => {
   try {
     const { files } = req.body
     if (!files || files.length === 0) {

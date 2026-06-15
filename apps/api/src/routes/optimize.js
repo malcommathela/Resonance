@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../lib/db.js'
-import { authMiddleware } from '../middleware/auth.js'
+import { requireAuth } from '../middleware/auth.js'
 
 const router = Router()
 
@@ -184,7 +184,7 @@ const OPTIMIZATION_RULES = [
 ]
 
 // POST /optimize/analyze — Analyze simulation and suggest optimizations
-router.post('/analyze', authMiddleware, async (req, res) => {
+router.post('/analyze', requireAuth, async (req, res) => {
   try {
     const { simulationId, designId } = req.body
 
@@ -253,7 +253,7 @@ router.post('/analyze', authMiddleware, async (req, res) => {
 })
 
 // POST /optimize/apply — Apply a suggestion to the design
-router.post('/apply', authMiddleware, async (req, res) => {
+router.post('/apply', requireAuth, async (req, res) => {
   try {
     const { designId, suggestionId, simulationId } = req.body
 
@@ -372,7 +372,7 @@ router.post('/apply', authMiddleware, async (req, res) => {
 })
 
 // POST /optimize/simulate — Apply + run new simulation to validate
-router.post('/simulate', authMiddleware, async (req, res) => {
+router.post('/simulate', requireAuth, async (req, res) => {
   try {
     const { designId, suggestionId, simulationConfig } = req.body
 

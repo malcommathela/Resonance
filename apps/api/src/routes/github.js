@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../lib/db.js'
 import { cache } from '../lib/redis.js'
-import { authMiddleware } from '../middleware/auth.js'
+import { requireAuth } from '../middleware/auth.js'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs/promises'
@@ -11,20 +11,38 @@ import os from 'os'
 const router = Router()
 const execAsync = promisify(exec)
 
-// Helper: Get GitHub token by userId (survives JWT expiration & refresh!)
+// Helper: Get GitHub token by clerkId
+// Since we no longer have the custom OAuth flow, users need to connect their GitHub
+// via Clerk's social connection. The token is stored when they use the GitHub OAuth through Clerk.
+// For now, this route checks if the user has a githubId (meaning they signed in with GitHub via Clerk)
+// and uses a stored token, or falls back to a user-provided token.
 async function getGitHubToken(req) {
-  const userId = req.user?.id
-  if (!userId) {
-    console.log('getGitHubToken: no userId in req.user')
+  const clerkId = req.user?.clerkId
+  if (!clerkId) {
+    console.log('getGitHubToken: no clerkId in req.user')
     return null
   }
 
-  const token = await cache.get(`github-token:${userId}`)
+  const token = await cache.get(`github-token:${clerkId}`)
   if (!token) {
-    console.log(`getGitHubToken: no github-token for user ${userId}`)
+    console.log(`getGitHubToken: no github-token for clerkId ${clerkId}`)
   }
   return token
 }
+
+// POST /github/token — Store a GitHub personal access token
+// Users can provide their own PAT if they didn't sign in with GitHub via Clerk
+router.post('/token', requireAuth, async (req, res) => {
+  try {
+    const { token } = req.body
+    if (!token) return res.status(400).json({ error: 'Token required' })
+
+    await cache.set(`github-token:${req.user.clerkId}`, token, 604800) // 7 days
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 // Helper: GitHub API request
 async function githubApi(token, endpoint, options = {}) {
@@ -47,11 +65,11 @@ async function githubApi(token, endpoint, options = {}) {
 }
 
 // GET /github/repos — List user's repositories
-router.get('/repos', authMiddleware, async (req, res) => {
+router.get('/repos', requireAuth, async (req, res) => {
   try {
     const token = await getGitHubToken(req)
     if (!token) {
-      return res.status(401).json({ error: 'GitHub token not found. Re-authenticate with repo scope.' })
+      return res.status(401).json({ error: 'GitHub token not found. Connect your GitHub account or provide a PAT at POST /github/token' })
     }
 
     const { page = 1, per_page = 30, sort = 'updated' } = req.query
@@ -79,7 +97,7 @@ router.get('/repos', authMiddleware, async (req, res) => {
 })
 
 // GET /github/repos/:owner/:repo/branches — List branches
-router.get('/repos/:owner/:repo/branches', authMiddleware, async (req, res) => {
+router.get('/repos/:owner/:repo/branches', requireAuth, async (req, res) => {
   try {
     const token = await getGitHubToken(req)
     if (!token) return res.status(401).json({ error: 'GitHub token not found' })
@@ -98,7 +116,7 @@ router.get('/repos/:owner/:repo/branches', authMiddleware, async (req, res) => {
 })
 
 // GET /github/repos/:owner/:repo/tree — Get file tree for a branch
-router.get('/repos/:owner/:repo/tree', authMiddleware, async (req, res) => {
+router.get('/repos/:owner/:repo/tree', requireAuth, async (req, res) => {
   try {
     const token = await getGitHubToken(req)
     if (!token) return res.status(401).json({ error: 'GitHub token not found' })
@@ -136,7 +154,7 @@ router.get('/repos/:owner/:repo/tree', authMiddleware, async (req, res) => {
 })
 
 // GET /github/repos/:owner/:repo/contents — Get file content
-router.get('/repos/:owner/:repo/contents', authMiddleware, async (req, res) => {
+router.get('/repos/:owner/:repo/contents', requireAuth, async (req, res) => {
   try {
     const token = await getGitHubToken(req)
     if (!token) return res.status(401).json({ error: 'GitHub token not found' })
@@ -164,7 +182,7 @@ router.get('/repos/:owner/:repo/contents', authMiddleware, async (req, res) => {
 })
 
 // POST /github/clone — Clone repo to temp storage for analysis
-router.post('/clone', authMiddleware, async (req, res) => {
+router.post('/clone', requireAuth, async (req, res) => {
   try {
     const { repoUrl, branch = 'main' } = req.body
     if (!repoUrl) return res.status(400).json({ error: 'repoUrl required' })
@@ -172,7 +190,7 @@ router.post('/clone', authMiddleware, async (req, res) => {
     const token = await getGitHubToken(req)
     if (!token) return res.status(401).json({ error: 'GitHub token not found' })
 
-    const tempDir = path.join(os.tmpdir(), `resonance-${req.user.id}-${Date.now()}`)
+    const tempDir = path.join(os.tmpdir(), `resonance-${req.user.clerkId}-${Date.now()}`)
     await fs.mkdir(tempDir, { recursive: true })
 
     const authUrl = repoUrl.replace('https://github.com', `https://${token}@github.com`)
@@ -183,7 +201,7 @@ router.post('/clone', authMiddleware, async (req, res) => {
     })
 
     await fs.rm(path.join(tempDir, '.git'), { recursive: true, force: true })
-    await cache.set(`clone:${req.user.id}`, { path: tempDir, repoUrl, branch, createdAt: Date.now() }, 3600)
+    await cache.set(`clone:${req.user.clerkId}`, { path: tempDir, repoUrl, branch, createdAt: Date.now() }, 3600)
 
     res.json({ 
       success: true, 
@@ -197,9 +215,9 @@ router.post('/clone', authMiddleware, async (req, res) => {
 })
 
 // GET /github/clone/files — List cloned files
-router.get('/clone/files', authMiddleware, async (req, res) => {
+router.get('/clone/files', requireAuth, async (req, res) => {
   try {
-    const cloneData = await cache.get(`clone:${req.user.id}`)
+    const cloneData = await cache.get(`clone:${req.user.clerkId}`)
     if (!cloneData) return res.status(404).json({ error: 'No cloned repository found' })
 
     const { path: tempDir } = cloneData
@@ -261,9 +279,9 @@ router.get('/clone/files', authMiddleware, async (req, res) => {
 })
 
 // GET /github/clone/file — Read a specific file from cloned repo
-router.get('/clone/file', authMiddleware, async (req, res) => {
+router.get('/clone/file', requireAuth, async (req, res) => {
   try {
-    const cloneData = await cache.get(`clone:${req.user.id}`)
+    const cloneData = await cache.get(`clone:${req.user.clerkId}`)
     if (!cloneData) return res.status(404).json({ error: 'No cloned repository found' })
 
     const { path: tempDir } = cloneData
@@ -284,12 +302,12 @@ router.get('/clone/file', authMiddleware, async (req, res) => {
 })
 
 // DELETE /github/clone — Clean up cloned repo
-router.delete('/clone', authMiddleware, async (req, res) => {
+router.delete('/clone', requireAuth, async (req, res) => {
   try {
-    const cloneData = await cache.get(`clone:${req.user.id}`)
+    const cloneData = await cache.get(`clone:${req.user.clerkId}`)
     if (cloneData) {
       await fs.rm(cloneData.path, { recursive: true, force: true })
-      await cache.del(`clone:${req.user.id}`)
+      await cache.del(`clone:${req.user.clerkId}`)
     }
     res.json({ success: true })
   } catch (err) {

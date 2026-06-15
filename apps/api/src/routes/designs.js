@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { prisma } from '../lib/db.js'
-import { authMiddleware } from '../middleware/auth.js'
+import { requireAuth } from '../middleware/auth.js'
 import { cache } from '../lib/redis.js'
 
 const router = Router()
@@ -43,7 +43,7 @@ function serializeDesign(design) {
   return { ...rest, nodes, edges }
 }
 
-router.get('/', authMiddleware, async (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   const cacheKey = `designs:${req.user.id}`
   let designs = await cache.get(cacheKey)
   if (!designs) {
@@ -57,7 +57,7 @@ router.get('/', authMiddleware, async (req, res) => {
   res.json(designs.map(d => ({ ...d, blocks: d._count.blocks, simulations: d._count.simulations })))
 })
 
-router.get('/:id', authMiddleware, async (req, res) => {
+router.get('/:id', requireAuth, async (req, res) => {
   const design = await prisma.design.findFirst({
     where: { id: req.params.id, ownerId: req.user.id },
     include: { blocks: true, edges: true, simulations: { orderBy: { startedAt: 'desc' }, take: 5 } }
@@ -66,7 +66,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
   res.json(serializeDesign(design))
 })
 
-router.post('/', authMiddleware, async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   const parsed = designSchema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() })
   const design = await prisma.design.create({ data: { ...parsed.data, ownerId: req.user.id } })
@@ -74,7 +74,7 @@ router.post('/', authMiddleware, async (req, res) => {
   res.status(201).json(design)
 })
 
-router.patch('/:id', authMiddleware, async (req, res) => {
+router.patch('/:id', requireAuth, async (req, res) => {
   const design = await prisma.design.findFirst({ where: { id: req.params.id, ownerId: req.user.id } })
   if (!design) return res.status(404).json({ error: 'Not found' })
   const updated = await prisma.design.update({ where: { id: req.params.id }, data: { ...req.body, updatedAt: new Date() } })
@@ -83,7 +83,7 @@ router.patch('/:id', authMiddleware, async (req, res) => {
   res.json(updated)
 })
 
-router.delete('/:id', authMiddleware, async (req, res) => {
+router.delete('/:id', requireAuth, async (req, res) => {
   await prisma.design.deleteMany({ where: { id: req.params.id, ownerId: req.user.id } })
   await cache.invalidatePattern(`designs:${req.user.id}*`)
   await cache.del(`design:${req.params.id}`)
@@ -91,7 +91,7 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 })
 
 // FIXED: Non-transactional save — works with any pooler
-router.post('/:id/canvas', authMiddleware, async (req, res) => {
+router.post('/:id/canvas', requireAuth, async (req, res) => {
   const { nodes, edges } = req.body
   const designId = req.params.id
 
@@ -145,7 +145,7 @@ router.post('/:id/canvas', authMiddleware, async (req, res) => {
 })
 
 // FIXED: Non-transactional autosave — works with any pooler
-router.post('/:id/autosave', authMiddleware, async (req, res) => {
+router.post('/:id/autosave', requireAuth, async (req, res) => {
   const { nodes, edges } = req.body
   const designId = req.params.id
 

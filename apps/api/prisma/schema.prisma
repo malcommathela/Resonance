@@ -4,45 +4,33 @@ generator client {
 
 datasource db {
   directUrl = env("DIRECT_URL")
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
 }
 
 model User {
   id        String   @id @default(cuid())
+  clerkId   String   @unique
   email     String   @unique
   name      String
   avatar    String?
-  githubId  String?  @unique
+  githubId  String?
   tier      String   @default("free")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   designs      Design[]
   simulations  Simulation[]
-  sessions     Session[]
   teamMembers  TeamMember[]
 
   @@map("users")
 }
 
-model Session {
-  id        String   @id @default(cuid())
-  token     String   @unique
-  userId    String
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("sessions")
-}
-
 model Team {
-  id         String @id @default(cuid())
+  id         String   @id @default(cuid())
   name       String
   ownerId    String
-  maxMembers Int    @default(5)
+  maxMembers Int      @default(5)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -78,8 +66,8 @@ model Design {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  owner       User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  team        Team?         @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  owner       User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  team        Team?        @relation(fields: [teamId], references: [id], onDelete: SetNull)
   blocks      Block[]
   edges       Edge[]
   simulations Simulation[]
