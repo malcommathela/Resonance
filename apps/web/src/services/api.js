@@ -1,7 +1,9 @@
 import { useAuth } from '@clerk/clerk-react'
 import { useCallback, useEffect } from 'react'
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+// FIX: Strip trailing slash from API_BASE to prevent double slashes
+const rawBase = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const API_BASE = rawBase.replace(/\/+$/, '') // removes trailing slash(es)
 
 class ApiService {
   constructor() {
@@ -39,7 +41,11 @@ class ApiService {
   }
 
   async request(endpoint, options = {}) {
-    const response = await fetch(`${API_BASE}${endpoint}`, {
+    // FIX: Ensure endpoint always starts with / and isn't empty
+    const safeEndpoint = endpoint && endpoint.startsWith('/') ? endpoint : `/${endpoint || ''}`
+    const url = `${API_BASE}${safeEndpoint}`
+
+    const response = await fetch(url, {
       ...options,
       headers: {
         ...(await this.getHeaders()),
@@ -47,14 +53,14 @@ class ApiService {
       },
     })
 
-    if (response.status === 401) {
-      const error = await response.json().catch(() => ({ error: 'Unauthorized' }))
-      throw new Error(error.error || 'Unauthorized')
-    }
-
+    // FIX: Better error handling — preserve status for callers to check
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }))
-      throw new Error(error.error || `API Error: ${response.status}`)
+      const data = await response.json().catch(() => ({}))
+      const error = new Error(data.error || `API Error: ${response.status}`)
+      error.status = response.status      // attach status for modal logic
+      error.statusText = response.statusText
+      error.data = data
+      throw error
     }
 
     return response.json()
@@ -114,8 +120,6 @@ class ApiService {
   async getCurrentUser() {
     return this.request('/auth/me')
   }
-
-
 
   async logout() {
     return this.request('/auth/logout', { method: 'POST' })

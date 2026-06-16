@@ -16,13 +16,11 @@ async function getDbUser(req) {
   const auth = getAuth(req)
   if (!auth?.userId) return null
   
-  // Try to find existing user
   let user = await prisma.user.findUnique({
     where: { clerkId: auth.userId },
     select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
   })
   
-  // Auto-create from Clerk if not in DB yet
   if (!user) {
     try {
       const clerkUser = await clerkClient.users.getUser(auth.userId)
@@ -63,25 +61,6 @@ async function getGitHubToken(req) {
   return token
 }
 
-// Apply Clerk's built-in auth to all routes
-router.use(requireAuth())
-
-// POST /github/token — Store a GitHub personal access token
-router.post('/token', async (req, res) => {
-  const user = await getDbUser(req)
-  if (!user) return res.status(401).json({ error: 'User not found' })
-
-  try {
-    const { token } = req.body
-    if (!token) return res.status(400).json({ error: 'Token required' })
-
-    await cache.set(`github-token:${user.clerkId}`, token, 604800) // 7 days
-    res.json({ success: true })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
 // Helper: GitHub API request
 async function githubApi(token, endpoint, options = {}) {
   const response = await fetch(`https://api.github.com${endpoint}`, {
@@ -101,6 +80,111 @@ async function githubApi(token, endpoint, options = {}) {
 
   return response.json()
 }
+
+// ============================================================
+// PUBLIC ROUTES (no auth required)
+// ============================================================
+
+// POST /analyze/public-repo — Analyze any public GitHub repo without auth
+router.post('/analyze/public-repo', async (req, res) => {
+  try {
+    const { repoUrl } = req.body
+    if (!repoUrl) {
+      return res.status(400).json({ error: 'repoUrl required' })
+    }
+
+    // Parse owner/repo from URL
+    const match = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+?)(?:\.git)?$/)
+    if (!match) {
+      return res.status(400).json({ error: 'Invalid GitHub URL. Expected: https://github.com/owner/repo' })
+    }
+
+    const [, owner, repo] = match
+
+    // Fetch repo info from GitHub API (no token needed for public repos)
+    const repoInfo = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers: { 'User-Agent': 'Resonance-App' }
+    })
+
+    if (!repoInfo.ok) {
+      const err = await repoInfo.json().catch(() => ({}))
+      return res.status(repoInfo.status).json({ 
+        error: err.message || 'Failed to fetch repository' 
+      })
+    }
+
+    const repoData = await repoInfo.json()
+
+    // Fetch default branch tree
+    const treeRes = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/git/trees/${repoData.default_branch}?recursive=1`,
+      { headers: { 'User-Agent': 'Resonance-App' } }
+    )
+
+    const treeData = treeRes.ok ? await treeRes.json() : { tree: [] }
+
+    const relevantExtensions = ['.json', '.yml', '.yaml', '.tf', '.proto', '.js', '.ts', '.go', '.py', '.java', '.dockerfile', '.dockerignore']
+    const relevantNames = ['package.json', 'docker-compose', 'Dockerfile', 'kubernetes', 'terraform', 'serverless', 'requirements', 'go.mod', 'Cargo.toml', 'pom.xml', 'build.gradle']
+
+    const files = treeData.tree
+      ?.filter(item => item.type === 'blob')
+      ?.filter(item => {
+        const name = item.path.toLowerCase()
+        return relevantExtensions.some(ext => name.endsWith(ext)) ||
+               relevantNames.some(r => name.includes(r.toLowerCase()))
+      })
+      ?.map(item => ({
+        path: item.path,
+        sha: item.sha,
+        size: item.size,
+      }))
+      ?.sort((a, b) => a.path.localeCompare(b.path)) || []
+
+    // Return analysis result (frontend will pass this to onImport)
+    res.json({
+      repo: repoData.full_name,
+      owner: repoData.owner.login,
+      name: repoData.name,
+      description: repoData.description,
+      url: repoData.html_url,
+      defaultBranch: repoData.default_branch,
+      language: repoData.language,
+      stars: repoData.stargazers_count,
+      files,
+      fileCount: files.length,
+      // Placeholder for pre-generated architecture — your AI logic goes here
+      nodes: [],
+      edges: [],
+    })
+
+  } catch (err) {
+    console.error('Public repo analysis error:', err)
+    res.status(500).json({ error: err.message || 'Failed to analyze repository' })
+  }
+})
+
+// ============================================================
+// PROTECTED ROUTES (require Clerk auth)
+// ============================================================
+
+// Apply auth only to routes below this line
+router.use(requireAuth())
+
+// POST /github/token — Store a GitHub personal access token
+router.post('/token', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
+  try {
+    const { token } = req.body
+    if (!token) return res.status(400).json({ error: 'Token required' })
+
+    await cache.set(`github-token:${user.clerkId}`, token, 604800) // 7 days
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 // GET /github/repos — List user's repositories
 router.get('/repos', async (req, res) => {
