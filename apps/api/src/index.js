@@ -17,14 +17,19 @@ import optimizeRoutes from './routes/optimize.js'
 const app = express()
 const PORT = process.env.PORT || 3001
 
-// Security middleware
 app.use(helmet())
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    const allowed = [process.env.FRONTEND_URL, 'http://localhost:5173'].filter(Boolean)
+    if (!origin || allowed.includes(origin) || origin.endsWith('.vercel.app')) {
+      callback(null, true)
+    } else {
+      callback(new Error('Not allowed'))
+    }
+  },
   credentials: true,
 }))
 
-// Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -33,27 +38,20 @@ const limiter = rateLimit({
 })
 app.use('/api/', limiter)
 
-// Clerk middleware — attaches req.auth when valid session exists
-// This is OPTIONAL auth: routes work for both logged-in and anonymous users
-app.use(clerkMiddleware())
+// EXPLICIT KEYS — ensures Clerk can validate tokens
+app.use(clerkMiddleware({
+  secretKey: process.env.CLERK_SECRET_KEY,
+  publishableKey: process.env.CLERK_PUBLISHABLE_KEY,
+}))
 
 app.use(express.json({ limit: '10mb' }))
 
-// Health check
 app.get('/health', async (req, res) => {
   const dbHealthy = await prisma.$queryRaw`SELECT 1`.then(() => true).catch(() => false)
   const redisHealthy = await redis.ping().then(() => true).catch(() => false)
-
-  res.json({
-    status: dbHealthy && redisHealthy ? 'ok' : 'degraded',
-    service: 'resonance-api',
-    version: '1.0.0',
-    database: dbHealthy ? 'connected' : 'error',
-    redis: redisHealthy ? 'connected' : 'error',
-  })
+  res.json({ status: dbHealthy && redisHealthy ? 'ok' : 'degraded', database: dbHealthy ? 'connected' : 'error', redis: redisHealthy ? 'connected' : 'error' })
 })
 
-// Routes
 app.use('/webhooks', webhookRoutes)
 app.use('/auth', authRoutes)
 app.use('/designs', designRoutes)
@@ -62,24 +60,17 @@ app.use('/github', githubRoutes)
 app.use('/analyze', reverseEngineRoutes)
 app.use('/optimize', optimizeRoutes)
 
-// Error handling
 app.use((err, req, res, next) => {
   console.error(err)
-  res.status(err.status || 500).json({
-    error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message,
-  })
+  res.status(err.status || 500).json({ error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message })
 })
 
-// Graceful shutdown
 process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, shutting down gracefully')
   await prisma.$disconnect()
   await redis.quit()
   process.exit(0)
 })
 
 app.listen(PORT, () => {
-  console.log(`Resonance API running on http://localhost:${PORT}`)
-  console.log(`Database: ${process.env.DATABASE_URL?.split('@')[1] || 'not configured'}`)
-  console.log(`Redis: ${process.env.REDIS_URL || 'not configured'}`)
+  console.log(`API running on port ${PORT}`)
 })

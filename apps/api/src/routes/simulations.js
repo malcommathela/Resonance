@@ -1,9 +1,22 @@
 import { Router } from 'express'
+import { requireAuth, getAuth } from '@clerk/express'
 import { prisma } from '../lib/db.js'
-import { requireAuth } from '../middleware/auth.js'
 import { cache } from '../lib/redis.js'
 
 const router = Router()
+
+// Helper: Get DB user from Clerk auth
+async function getDbUser(req) {
+  const auth = getAuth(req)
+  if (!auth?.userId) return null
+  return prisma.user.findUnique({
+    where: { clerkId: auth.userId },
+    select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
+  })
+}
+
+// Apply Clerk's built-in auth to all routes
+router.use(requireAuth())
 
 // Simulation state store (in-memory for now, Redis for production)
 const activeSimulations = new Map()
@@ -11,9 +24,9 @@ const activeSimulations = new Map()
 // Queuing theory models
 class QueueingModel {
   constructor(capacity, serviceRate, failureRate = 0) {
-    this.capacity = capacity // Max concurrent requests
-    this.serviceRate = serviceRate // Requests per second this block can handle
-    this.failureRate = failureRate // Probability of failure (0-1)
+    this.capacity = capacity
+    this.serviceRate = serviceRate
+    this.failureRate = failureRate
     this.queue = []
     this.processing = 0
     this.totalProcessed = 0
@@ -23,11 +36,9 @@ class QueueingModel {
     this.utilizationHistory = []
   }
 
-  // Process a batch of requests
   process(requests, timeDelta) {
     const results = []
 
-    // Add incoming to queue
     for (const req of requests) {
       if (this.queue.length + this.processing < this.capacity * 2) {
         this.queue.push({ ...req, queuedAt: Date.now() })
@@ -37,7 +48,6 @@ class QueueingModel {
       }
     }
 
-    // Process from queue
     const canProcess = Math.min(
       this.queue.length,
       Math.floor(this.serviceRate * timeDelta),
@@ -48,10 +58,8 @@ class QueueingModel {
       const req = this.queue.shift()
       this.processing++
 
-      // Simulate service time (exponential distribution)
       const serviceTime = -Math.log(Math.random()) / this.serviceRate * 1000
 
-      // Check failure
       if (Math.random() < this.failureRate) {
         this.totalFailed++
         this.processing--
@@ -65,7 +73,6 @@ class QueueingModel {
       }
     }
 
-    // Update utilization
     const utilization = this.processing / this.capacity
     this.utilizationHistory.push(utilization)
     if (this.utilizationHistory.length > 100) this.utilizationHistory.shift()
@@ -90,12 +97,11 @@ class QueueingModel {
       p50Latency: sorted[Math.floor(sorted.length * 0.5)] || 0,
       p95Latency: sorted[Math.floor(sorted.length * 0.95)] || 0,
       p99Latency: sorted[Math.floor(sorted.length * 0.99)] || 0,
-      throughput: this.totalProcessed, // Total since start
+      throughput: this.totalProcessed,
     }
   }
 }
 
-// Block configuration defaults
 const BLOCK_CONFIGS = {
   'api-gateway': { capacity: 10000, serviceRate: 5000, failureRate: 0.001 },
   'service': { capacity: 1000, serviceRate: 500, failureRate: 0.005 },
@@ -109,70 +115,52 @@ const BLOCK_CONFIGS = {
   'storage': { capacity: 5000, serviceRate: 500, failureRate: 0.001 },
 }
 
-// Traffic pattern generators
 function generateTraffic(pattern, rps, elapsed, duration) {
   switch (pattern) {
     case 'steady':
       return rps
-
     case 'spike': {
-      // 50x spike at 60% through duration, lasts 10% of duration
       const spikeStart = duration * 0.6
       const spikeEnd = spikeStart + duration * 0.1
-      if (elapsed >= spikeStart && elapsed <= spikeEnd) {
-        return rps * 50
-      }
+      if (elapsed >= spikeStart && elapsed <= spikeEnd) return rps * 50
       return rps
     }
-
-    case 'ramp': {
-      // Linear ramp from 0 to 10x RPS
+    case 'ramp':
       return rps * (1 + (elapsed / duration) * 9)
-    }
-
-    case 'chaos': {
-      // Random spikes
+    case 'chaos':
       return rps * (1 + Math.random() * 20)
-    }
-
     default:
       return rps
   }
 }
 
-// Failure injection scenarios
 function applyScenario(blockModels, scenario, elapsed, duration) {
   if (!scenario || scenario === 'none') return
 
   switch (scenario) {
     case 'db_slowdown': {
-      // Database slows down at 40% mark
       if (elapsed > duration * 0.4) {
         for (const [id, model] of blockModels) {
           if (id.includes('database') || id.includes('db')) {
-            model.serviceRate = model.serviceRate * 0.3 // 70% slowdown
+            model.serviceRate = model.serviceRate * 0.3
             model.failureRate = Math.min(model.failureRate * 3, 0.3)
           }
         }
       }
       break
     }
-
     case 'cache_eviction': {
-      // Cache fails at 50% mark (thundering herd)
       if (elapsed > duration * 0.5) {
         for (const [id, model] of blockModels) {
           if (id.includes('cache')) {
             model.serviceRate = model.serviceRate * 0.1
-            model.failureRate = 0.5 // 50% miss rate
+            model.failureRate = 0.5
           }
         }
       }
       break
     }
-
     case 'region_outage': {
-      // Random block fails at 30% mark
       if (elapsed > duration * 0.3 && elapsed < duration * 0.5) {
         const blockIds = Array.from(blockModels.keys())
         const victim = blockIds[Math.floor(Math.random() * blockIds.length)]
@@ -184,9 +172,7 @@ function applyScenario(blockModels, scenario, elapsed, duration) {
       }
       break
     }
-
     case 'ddos': {
-      // Gateway overwhelmed from start
       for (const [id, model] of blockModels) {
         if (id.includes('gateway') || id.includes('lb')) {
           model.capacity = Math.floor(model.capacity * 0.5)
@@ -197,15 +183,12 @@ function applyScenario(blockModels, scenario, elapsed, duration) {
   }
 }
 
-// Build simulation graph from design
 function buildSimulationGraph(blocks, edges) {
   const blockModels = new Map()
-  const adjacency = new Map() // source -> [targets]
+  const adjacency = new Map()
 
-  // Create queueing models for each block
   for (const block of blocks) {
     const config = BLOCK_CONFIGS[block.data?.type] || BLOCK_CONFIGS['service']
-    // Override with block config if present
     const customCapacity = block.data?.config?.replicas ? config.capacity * block.data.config.replicas : config.capacity
     const customRate = block.data?.config?.cpu ? config.serviceRate * parseFloat(block.data.config.cpu) : config.serviceRate
 
@@ -213,7 +196,6 @@ function buildSimulationGraph(blocks, edges) {
     adjacency.set(block.id, [])
   }
 
-  // Build adjacency list
   for (const edge of edges) {
     const targets = adjacency.get(edge.source) || []
     targets.push({
@@ -227,20 +209,17 @@ function buildSimulationGraph(blocks, edges) {
   return { blockModels, adjacency }
 }
 
-// Run one simulation tick
 function runTick(blockModels, adjacency, trafficRps, timeDelta) {
   const metrics = {}
   const requestCounts = new Map()
 
-  // Generate requests for entry points (no incoming edges)
   const entryBlocks = Array.from(adjacency.keys()).filter(id => {
-    const hasIncoming = Array.from(adjacency.values()).some(targets => 
+    const hasIncoming = Array.from(adjacency.values()).some(targets =>
       targets.some(t => t.targetId === id)
     )
     return !hasIncoming
   })
 
-  // Distribute traffic to entry points
   const requestsPerEntry = Math.floor(trafficRps * timeDelta / Math.max(entryBlocks.length, 1))
 
   for (const entryId of entryBlocks) {
@@ -251,7 +230,6 @@ function runTick(blockModels, adjacency, trafficRps, timeDelta) {
     requestCounts.set(entryId, requests)
   }
 
-  // Process blocks in topological order (BFS from entry points)
   const processed = new Set()
   const queue = [...entryBlocks]
 
@@ -263,17 +241,14 @@ function runTick(blockModels, adjacency, trafficRps, timeDelta) {
     const model = blockModels.get(blockId)
     const incomingRequests = requestCounts.get(blockId) || []
 
-    // Process requests
     const results = model.process(incomingRequests, timeDelta)
     metrics[blockId] = model.getMetrics()
 
-    // Forward successful requests to next blocks
     const targets = adjacency.get(blockId) || []
     const successful = results.filter(r => !r.dropped && !r.failed)
 
     for (const target of targets) {
       const targetRequests = requestCounts.get(target.targetId) || []
-      // Add path tracking
       const forwarded = successful.map(r => ({
         ...r,
         path: [...r.path, target.targetId],
@@ -290,21 +265,22 @@ function runTick(blockModels, adjacency, trafficRps, timeDelta) {
   return { metrics, requestCounts }
 }
 
-// POST /simulations/:id/run — Start real simulation
-router.post('/:id/run', requireAuth, async (req, res) => {
+// POST /simulations/:id/run
+router.post('/:id/run', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
   const { id } = req.params
   const { trafficPattern = 'steady', rps = 100, duration = 300, scenario = 'none' } = req.body
 
   try {
-    // Get design
     const design = await prisma.design.findFirst({
-      where: { id, ownerId: req.user.id },
+      where: { id, ownerId: user.id },
       include: { blocks: true, edges: true }
     })
 
     if (!design) return res.status(404).json({ error: 'Design not found' })
 
-    // Convert to React Flow format for simulation
     const blocks = design.blocks.map(b => ({
       id: b.id,
       data: {
@@ -323,14 +299,12 @@ router.post('/:id/run', requireAuth, async (req, res) => {
       }
     }))
 
-    // Build simulation graph
     const { blockModels, adjacency } = buildSimulationGraph(blocks, edges)
 
-    // Create simulation record
     const simulation = await prisma.simulation.create({
       data: {
         designId: id,
-        userId: req.user.id,
+        userId: user.id,
         trafficPattern,
         rps,
         duration,
@@ -338,7 +312,6 @@ router.post('/:id/run', requireAuth, async (req, res) => {
       }
     })
 
-    // Store active simulation
     activeSimulations.set(simulation.id, {
       simulationId: simulation.id,
       blockModels,
@@ -358,23 +331,17 @@ router.post('/:id/run', requireAuth, async (req, res) => {
       }
     })
 
-    // Start simulation loop (100ms ticks)
-    const timeDelta = 0.1 // 100ms in seconds
+    const timeDelta = 0.1
     const sim = activeSimulations.get(simulation.id)
 
     sim.tickInterval = setInterval(async () => {
       sim.elapsed += timeDelta
 
-      // Generate traffic
       const currentRps = generateTraffic(trafficPattern, rps, sim.elapsed, duration)
-
-      // Apply failure scenario
       applyScenario(blockModels, scenario, sim.elapsed, duration)
 
-      // Run tick
       const { metrics } = runTick(blockModels, adjacency, currentRps, timeDelta)
 
-      // Aggregate global metrics
       let tickRequests = 0
       let tickErrors = 0
       let tickDropped = 0
@@ -392,7 +359,6 @@ router.post('/:id/run', requireAuth, async (req, res) => {
       sim.globalMetrics.totalDropped += tickDropped
       sim.globalMetrics.latencies.push(...tickLatencies)
 
-      // Store tick data in Redis for WebSocket streaming
       await cache.set(`sim:${simulation.id}:tick`, {
         elapsed: sim.elapsed,
         progress: (sim.elapsed / duration) * 100,
@@ -401,11 +367,9 @@ router.post('/:id/run', requireAuth, async (req, res) => {
         currentRps,
       }, 60)
 
-      // Check completion
       if (sim.elapsed >= duration) {
         clearInterval(sim.tickInterval)
 
-        // Calculate final metrics
         const allLatencies = sim.globalMetrics.latencies
         const sorted = [...allLatencies].sort((a, b) => a - b)
 
@@ -415,8 +379,8 @@ router.post('/:id/run', requireAuth, async (req, res) => {
           p50Latency: sorted[Math.floor(sorted.length * 0.5)] || 0,
           p95Latency: sorted[Math.floor(sorted.length * 0.95)] || 0,
           p99Latency: sorted[Math.floor(sorted.length * 0.99)] || 0,
-          errorRate: sim.globalMetrics.totalRequests > 0 
-            ? (sim.globalMetrics.totalErrors / sim.globalMetrics.totalRequests) * 100 
+          errorRate: sim.globalMetrics.totalRequests > 0
+            ? (sim.globalMetrics.totalErrors / sim.globalMetrics.totalRequests) * 100
             : 0,
           throughput: sim.globalMetrics.totalRequests / duration,
           availability: sim.globalMetrics.totalRequests > 0
@@ -425,7 +389,6 @@ router.post('/:id/run', requireAuth, async (req, res) => {
           duration,
         }
 
-        // Update simulation record
         await prisma.simulation.update({
           where: { id: simulation.id },
           data: {
@@ -439,7 +402,7 @@ router.post('/:id/run', requireAuth, async (req, res) => {
         activeSimulations.delete(simulation.id)
         await cache.del(`sim:${simulation.id}:tick`)
       }
-    }, 100) // 100ms ticks
+    }, 100)
 
     res.status(201).json({
       simulationId: simulation.id,
@@ -454,16 +417,18 @@ router.post('/:id/run', requireAuth, async (req, res) => {
   }
 })
 
-// GET /simulations/:id/status — Get current simulation status
-router.get('/:id/status', requireAuth, async (req, res) => {
+// GET /simulations/:id/status
+router.get('/:id/status', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
   try {
     const simulation = await prisma.simulation.findFirst({
-      where: { id: req.params.id, userId: req.user.id }
+      where: { id: req.params.id, userId: user.id }
     })
 
     if (!simulation) return res.status(404).json({ error: 'Simulation not found' })
 
-    // Get live tick data if running
     const tickData = await cache.get(`sim:${req.params.id}:tick`)
 
     res.json({
@@ -475,8 +440,11 @@ router.get('/:id/status', requireAuth, async (req, res) => {
   }
 })
 
-// POST /simulations/:id/stop — Stop running simulation
-router.post('/:id/stop', requireAuth, async (req, res) => {
+// POST /simulations/:id/stop
+router.post('/:id/stop', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
   try {
     const sim = activeSimulations.get(req.params.id)
     if (sim) {
@@ -497,16 +465,18 @@ router.post('/:id/stop', requireAuth, async (req, res) => {
   }
 })
 
-// WebSocket endpoint for live streaming (REST fallback)
-router.get('/:id/stream', requireAuth, async (req, res) => {
+// GET /simulations/:id/stream
+router.get('/:id/stream', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
   try {
     const simulation = await prisma.simulation.findFirst({
-      where: { id: req.params.id, userId: req.user.id }
+      where: { id: req.params.id, userId: user.id }
     })
 
     if (!simulation) return res.status(404).json({ error: 'Not found' })
 
-    // Server-Sent Events fallback
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')

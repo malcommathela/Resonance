@@ -1,10 +1,22 @@
 import { Router } from 'express'
+import { requireAuth, getAuth } from '@clerk/express'
 import { prisma } from '../lib/db.js'
-import { requireAuth } from '../middleware/auth.js'
 
 const router = Router()
 
-// Optimization heuristics database
+// Helper: Get DB user from Clerk auth
+async function getDbUser(req) {
+  const auth = getAuth(req)
+  if (!auth?.userId) return null
+  return prisma.user.findUnique({
+    where: { clerkId: auth.userId },
+    select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
+  })
+}
+
+// Apply Clerk's built-in auth to all routes
+router.use(requireAuth())
+
 const OPTIMIZATION_RULES = [
   {
     id: 'db-read-replica',
@@ -28,7 +40,7 @@ const OPTIMIZATION_RULES = [
         currentRps: currentCapacity,
         projectedRps: newCapacity,
         latencyReduction: latencyImprovement,
-        costIncrease: 280, // $/month
+        costIncrease: 280,
         confidence: 0.92,
       }
     },
@@ -48,7 +60,7 @@ const OPTIMIZATION_RULES = [
     condition: (metrics, blocks) => {
       const cache = blocks.find(b => b.data?.type === 'cache')
       const cacheMetrics = cache ? metrics[cache.id] : null
-      return cacheMetrics && cacheMetrics.errorRate > 0.3 // High miss rate
+      return cacheMetrics && cacheMetrics.errorRate > 0.3
     },
     impact: (metrics, blocks) => {
       const cache = blocks.find(b => b.data?.type === 'cache')
@@ -56,8 +68,8 @@ const OPTIMIZATION_RULES = [
       if (!cacheMetrics) return null
 
       return {
-        hitRatioImprovement: 18, // percentage points
-        dbLoadReduction: 35, // percentage
+        hitRatioImprovement: 18,
+        dbLoadReduction: 35,
         latencyReduction: 25,
         costIncrease: 0,
         confidence: 0.85,
@@ -183,21 +195,22 @@ const OPTIMIZATION_RULES = [
   },
 ]
 
-// POST /optimize/analyze — Analyze simulation and suggest optimizations
-router.post('/analyze', requireAuth, async (req, res) => {
+// POST /optimize/analyze
+router.post('/analyze', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
   try {
     const { simulationId, designId } = req.body
 
-    // Get simulation results
     const simulation = await prisma.simulation.findFirst({
-      where: { id: simulationId, userId: req.user.id }
+      where: { id: simulationId, userId: user.id }
     })
 
     if (!simulation) return res.status(404).json({ error: 'Simulation not found' })
 
-    // Get design blocks
     const design = await prisma.design.findFirst({
-      where: { id: designId, ownerId: req.user.id },
+      where: { id: designId, ownerId: user.id },
       include: { blocks: true, edges: true }
     })
 
@@ -214,7 +227,6 @@ router.post('/analyze', requireAuth, async (req, res) => {
 
     const metrics = simulation.metrics || {}
 
-    // Evaluate all rules
     const suggestions = []
     for (const rule of OPTIMIZATION_RULES) {
       try {
@@ -236,7 +248,6 @@ router.post('/analyze', requireAuth, async (req, res) => {
       }
     }
 
-    // Sort by priority
     suggestions.sort((a, b) => b.priority - a.priority)
 
     res.json({
@@ -244,7 +255,7 @@ router.post('/analyze', requireAuth, async (req, res) => {
       designId,
       totalSuggestions: suggestions.length,
       estimatedTotalCost: suggestions.reduce((sum, s) => sum + (s.impact.costIncrease || 0), 0),
-      suggestions: suggestions.slice(0, 5), // Top 5
+      suggestions: suggestions.slice(0, 5),
     })
   } catch (err) {
     console.error('Optimization analyze error:', err)
@@ -252,13 +263,16 @@ router.post('/analyze', requireAuth, async (req, res) => {
   }
 })
 
-// POST /optimize/apply — Apply a suggestion to the design
-router.post('/apply', requireAuth, async (req, res) => {
+// POST /optimize/apply
+router.post('/apply', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
   try {
     const { designId, suggestionId, simulationId } = req.body
 
     const design = await prisma.design.findFirst({
-      where: { id: designId, ownerId: req.user.id },
+      where: { id: designId, ownerId: user.id },
       include: { blocks: true, edges: true }
     })
 
@@ -272,7 +286,6 @@ router.post('/apply', requireAuth, async (req, res) => {
 
     await prisma.$transaction(async (tx) => {
       if (action.type === 'add_block') {
-        // Create new block
         const newBlock = await tx.block.create({
           data: {
             designId,
@@ -280,7 +293,7 @@ router.post('/apply', requireAuth, async (req, res) => {
             label: action.label,
             x: 400 + Math.random() * 200,
             y: 300 + Math.random() * 200,
-            color: action.blockType === 'database' ? '#10b981' : 
+            color: action.blockType === 'database' ? '#10b981' :
                    action.blockType === 'cache' ? '#f59e0b' :
                    action.blockType === 'load-balancer' ? '#06b6d4' :
                    action.blockType === 'cdn' ? '#ec4899' : '#3b82f6',
@@ -290,7 +303,6 @@ router.post('/apply', requireAuth, async (req, res) => {
 
         changes.push({ type: 'add_block', block: newBlock })
 
-        // Create connection if specified
         if (action.connectTo) {
           const targetBlock = design.blocks.find(b => b.data?.type === action.connectTo || b.type === action.connectTo)
           if (targetBlock) {
@@ -310,10 +322,8 @@ router.post('/apply', requireAuth, async (req, res) => {
         if (action.insertBefore) {
           const targetBlock = design.blocks.find(b => b.data?.type === action.insertBefore || b.type === action.insertBefore)
           if (targetBlock) {
-            // Find edges pointing to target and reroute through new block
             const incomingEdges = design.edges.filter(e => e.targetId === targetBlock.id)
             for (const edge of incomingEdges) {
-              // Create edge from source to new block
               await tx.edge.create({
                 data: {
                   designId,
@@ -323,7 +333,6 @@ router.post('/apply', requireAuth, async (req, res) => {
                   animated: true,
                 }
               })
-              // Create edge from new block to target
               await tx.edge.create({
                 data: {
                   designId,
@@ -333,7 +342,6 @@ router.post('/apply', requireAuth, async (req, res) => {
                   animated: true,
                 }
               })
-              // Delete old edge
               await tx.edge.delete({ where: { id: edge.id } })
             }
           }
@@ -371,12 +379,14 @@ router.post('/apply', requireAuth, async (req, res) => {
   }
 })
 
-// POST /optimize/simulate — Apply + run new simulation to validate
-router.post('/simulate', requireAuth, async (req, res) => {
+// POST /optimize/simulate
+router.post('/simulate', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
   try {
     const { designId, suggestionId, simulationConfig } = req.body
 
-    // Apply the optimization
     const applyRes = await fetch(`http://localhost:${process.env.PORT || 3001}/optimize/apply`, {
       method: 'POST',
       headers: {
@@ -391,7 +401,6 @@ router.post('/simulate', requireAuth, async (req, res) => {
       throw new Error(error.error || 'Failed to apply optimization')
     }
 
-    // Run new simulation
     const simRes = await fetch(`http://localhost:${process.env.PORT || 3001}/simulations/${designId}/run`, {
       method: 'POST',
       headers: {

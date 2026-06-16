@@ -1,7 +1,7 @@
 import { Router } from 'express'
+import { requireAuth, getAuth } from '@clerk/express'
 import { z } from 'zod'
 import { prisma } from '../lib/db.js'
-import { requireAuth } from '../middleware/auth.js'
 import { cache } from '../lib/redis.js'
 
 const router = Router()
@@ -13,42 +13,31 @@ const designSchema = z.object({
   repoBranch: z.string().optional(),
 })
 
-function serializeDesign(design) {
-  const nodes = design.blocks.map(block => ({
-    id: block.id,
-    type: 'customBlock',
-    position: { x: block.x, y: block.y },
-    data: {
-      label: block.label,
-      type: block.type,
-      color: block.color,
-      config: typeof block.config === 'string' ? JSON.parse(block.config) : block.config,
-      metrics: block.metrics ? (typeof block.metrics === 'string' ? JSON.parse(block.metrics) : block.metrics) : null,
-    }
-  }))
-
-  const edges = design.edges.map(edge => ({
-    id: edge.id,
-    source: edge.sourceId,
-    target: edge.targetId,
-    type: 'customEdge',
-    animated: edge.animated,
-    data: {
-      connectionType: edge.connectionType,
-      label: edge.label,
-    }
-  }))
-
-  const { blocks, edges: _edges, _count, ...rest } = design
-  return { ...rest, nodes, edges }
+// Helper: Get DB user from Clerk auth
+async function getDbUser(req) {
+  const auth = getAuth(req)
+  if (!auth?.userId) return null
+  
+  const user = await prisma.user.findUnique({
+    where: { clerkId: auth.userId },
+    select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
+  })
+  
+  return user
 }
 
-router.get('/', requireAuth, async (req, res) => {
-  const cacheKey = `designs:${req.user.id}`
+// Apply Clerk's built-in auth to all routes
+router.use(requireAuth())
+
+router.get('/', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+  
+  const cacheKey = `designs:${user.id}`
   let designs = await cache.get(cacheKey)
   if (!designs) {
     designs = await prisma.design.findMany({
-      where: { ownerId: req.user.id },
+      where: { ownerId: user.id },
       orderBy: { updatedAt: 'desc' },
       include: { _count: { select: { blocks: true, simulations: true } } }
     })
@@ -57,48 +46,65 @@ router.get('/', requireAuth, async (req, res) => {
   res.json(designs.map(d => ({ ...d, blocks: d._count.blocks, simulations: d._count.simulations })))
 })
 
-router.get('/:id', requireAuth, async (req, res) => {
+router.get('/:id', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+  
   const design = await prisma.design.findFirst({
-    where: { id: req.params.id, ownerId: req.user.id },
+    where: { id: req.params.id, ownerId: user.id },
     include: { blocks: true, edges: true, simulations: { orderBy: { startedAt: 'desc' }, take: 5 } }
   })
   if (!design) return res.status(404).json({ error: 'Design not found' })
   res.json(serializeDesign(design))
 })
 
-router.post('/', requireAuth, async (req, res) => {
+router.post('/', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+  
   const parsed = designSchema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() })
-  const design = await prisma.design.create({ data: { ...parsed.data, ownerId: req.user.id } })
-  await cache.invalidatePattern(`designs:${req.user.id}*`)
+  
+  const design = await prisma.design.create({ data: { ...parsed.data, ownerId: user.id } })
+  await cache.invalidatePattern(`designs:${user.id}*`)
   res.status(201).json(design)
 })
 
-router.patch('/:id', requireAuth, async (req, res) => {
-  const design = await prisma.design.findFirst({ where: { id: req.params.id, ownerId: req.user.id } })
+router.patch('/:id', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+  
+  const design = await prisma.design.findFirst({ where: { id: req.params.id, ownerId: user.id } })
   if (!design) return res.status(404).json({ error: 'Not found' })
+  
   const updated = await prisma.design.update({ where: { id: req.params.id }, data: { ...req.body, updatedAt: new Date() } })
-  await cache.invalidatePattern(`designs:${req.user.id}*`)
+  await cache.invalidatePattern(`designs:${user.id}*`)
   await cache.del(`design:${req.params.id}`)
   res.json(updated)
 })
 
-router.delete('/:id', requireAuth, async (req, res) => {
-  await prisma.design.deleteMany({ where: { id: req.params.id, ownerId: req.user.id } })
-  await cache.invalidatePattern(`designs:${req.user.id}*`)
+router.delete('/:id', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+  
+  await prisma.design.deleteMany({ where: { id: req.params.id, ownerId: user.id } })
+  await cache.invalidatePattern(`designs:${user.id}*`)
   await cache.del(`design:${req.params.id}`)
   res.json({ success: true })
 })
 
-// FIXED: Non-transactional save — works with any pooler
-router.post('/:id/canvas', requireAuth, async (req, res) => {
+router.post('/:id/canvas', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+  
+  // ... your existing canvas save logic
   const { nodes, edges } = req.body
   const designId = req.params.id
-
+  
   try {
     await prisma.edge.deleteMany({ where: { designId } })
     await prisma.block.deleteMany({ where: { designId } })
-
+    
     const blockMap = new Map()
     for (const block of nodes) {
       const created = await prisma.block.create({
@@ -115,7 +121,7 @@ router.post('/:id/canvas', requireAuth, async (req, res) => {
       })
       blockMap.set(block.id, created.id)
     }
-
+    
     for (const edge of edges) {
       const src = blockMap.get(edge.source)
       const tgt = blockMap.get(edge.target)
@@ -132,10 +138,9 @@ router.post('/:id/canvas', requireAuth, async (req, res) => {
         })
       }
     }
-
+    
     await prisma.design.update({ where: { id: designId }, data: { updatedAt: new Date() } })
-
-    await cache.invalidatePattern(`designs:${req.user.id}*`)
+    await cache.invalidatePattern(`designs:${user.id}*`)
     await cache.del(`design:${designId}`)
     res.json({ success: true })
   } catch (err) {
@@ -144,15 +149,18 @@ router.post('/:id/canvas', requireAuth, async (req, res) => {
   }
 })
 
-// FIXED: Non-transactional autosave — works with any pooler
-router.post('/:id/autosave', requireAuth, async (req, res) => {
+router.post('/:id/autosave', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+  
+  // ... your existing autosave logic
   const { nodes, edges } = req.body
   const designId = req.params.id
-
+  
   try {
     await prisma.edge.deleteMany({ where: { designId } })
     await prisma.block.deleteMany({ where: { designId } })
-
+    
     const blockMap = new Map()
     for (const block of nodes) {
       const created = await prisma.block.create({
@@ -169,7 +177,7 @@ router.post('/:id/autosave', requireAuth, async (req, res) => {
       })
       blockMap.set(block.id, created.id)
     }
-
+    
     for (const edge of edges) {
       const src = blockMap.get(edge.source)
       const tgt = blockMap.get(edge.target)
@@ -186,14 +194,43 @@ router.post('/:id/autosave', requireAuth, async (req, res) => {
         })
       }
     }
-
+    
     await prisma.design.update({ where: { id: designId }, data: { updatedAt: new Date() } })
-
     res.json({ success: true, savedAt: new Date().toISOString() })
   } catch (err) {
     console.error('[AUTOSAVE ERROR]', err)
     res.status(500).json({ error: 'Autosave failed', details: err.message })
   }
 })
+
+function serializeDesign(design) {
+  const nodes = design.blocks.map(block => ({
+    id: block.id,
+    type: 'customBlock',
+    position: { x: block.x, y: block.y },
+    data: {
+      label: block.label,
+      type: block.type,
+      color: block.color,
+      config: typeof block.config === 'string' ? JSON.parse(block.config) : block.config,
+      metrics: block.metrics ? (typeof block.metrics === 'string' ? JSON.parse(block.metrics) : block.metrics) : null,
+    }
+  }))
+  
+  const edges = design.edges.map(edge => ({
+    id: edge.id,
+    source: edge.sourceId,
+    target: edge.targetId,
+    type: 'customEdge',
+    animated: edge.animated,
+    data: {
+      connectionType: edge.connectionType,
+      label: edge.label,
+    }
+  }))
+  
+  const { blocks, edges: _edges, _count, ...rest } = design
+  return { ...rest, nodes, edges }
+}
 
 export default router

@@ -1,19 +1,35 @@
 import { Router } from 'express'
+import { requireAuth, getAuth } from '@clerk/express'
 import { prisma } from '../lib/db.js'
-import { requireAuth } from '../middleware/auth.js'
 import { cache } from '../lib/redis.js'
 import { generateArchitecture } from '../lib/gemini.js'
 
 const router = Router()
 
-// POST /analyze-and-save/:designId — AI-powered architecture generation
-router.post('/analyze-and-save/:designId', requireAuth, async (req, res) => {
+// Helper: Get DB user from Clerk auth
+async function getDbUser(req) {
+  const auth = getAuth(req)
+  if (!auth?.userId) return null
+  return prisma.user.findUnique({
+    where: { clerkId: auth.userId },
+    select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
+  })
+}
+
+// Apply Clerk's built-in auth to all routes
+router.use(requireAuth())
+
+// POST /analyze-and-save/:designId
+router.post('/analyze-and-save/:designId', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
   try {
     const { designId } = req.params
     const { files } = req.body
 
     const design = await prisma.design.findFirst({
-      where: { id: designId, ownerId: req.user.id }
+      where: { id: designId, ownerId: user.id }
     })
     if (!design) return res.status(404).json({ error: 'Design not found' })
 
@@ -25,7 +41,6 @@ router.post('/analyze-and-save/:designId', requireAuth, async (req, res) => {
 
     console.log('[AI] blocks:', result.blocks.length, 'edges:', result.edges.length)
 
-    // Build nodes
     const nodes = result.blocks.map(block => ({
       id: block.id,
       type: 'customBlock',
@@ -38,7 +53,6 @@ router.post('/analyze-and-save/:designId', requireAuth, async (req, res) => {
       }
     }))
 
-    // Build edges - ensure IDs match node IDs exactly
     const validNodeIds = new Set(nodes.map(n => n.id))
     let edges = []
 
@@ -59,9 +73,6 @@ router.post('/analyze-and-save/:designId', requireAuth, async (req, res) => {
         }))
     }
 
-    console.log('[VALID] edges after filtering:', edges.length)
-
-    // FALLBACK: Create edges if AI didn't generate any valid ones
     if (edges.length === 0 && nodes.length > 1) {
       console.log('[FALLBACK] Creating logical edges...')
 
@@ -105,15 +116,12 @@ router.post('/analyze-and-save/:designId', requireAuth, async (req, res) => {
       console.log('[FALLBACK] total edges:', edges.length)
     }
 
-    // SAVE TO DATABASE — batch create + verification
     console.log('[DB] Starting verified batch save...')
 
-    // Clear existing
     const deletedEdges = await prisma.edge.deleteMany({ where: { designId } })
     const deletedBlocks = await prisma.block.deleteMany({ where: { designId } })
     console.log(`[DB] Cleared ${deletedEdges.count} edges, ${deletedBlocks.count} blocks`)
 
-    // Create blocks
     const blockMap = new Map()
     for (const block of nodes) {
       try {
@@ -136,7 +144,6 @@ router.post('/analyze-and-save/:designId', requireAuth, async (req, res) => {
       }
     }
 
-    // Prepare edges for batch create
     const edgesToCreate = []
     for (const edge of edges) {
       const srcPrisma = blockMap.get(edge.source)
@@ -158,7 +165,6 @@ router.post('/analyze-and-save/:designId', requireAuth, async (req, res) => {
 
     console.log(`[DB] Prepared ${edgesToCreate.length} edges for batch create`)
 
-    // Batch create edges (single round-trip = pooler-safe)
     let savedCount = 0
     if (edgesToCreate.length > 0) {
       try {
@@ -170,7 +176,6 @@ router.post('/analyze-and-save/:designId', requireAuth, async (req, res) => {
         console.log(`[DB EDGE BATCH] Created ${savedCount} edges`)
       } catch (err) {
         console.error(`[DB EDGE BATCH ERROR]`, err.message)
-        // Fallback: individual creates
         for (const edgeData of edgesToCreate) {
           try {
             await prisma.edge.create({ data: edgeData })
@@ -182,14 +187,12 @@ router.post('/analyze-and-save/:designId', requireAuth, async (req, res) => {
       }
     }
 
-    // VERIFY: Count edges in database
     const edgeCount = await prisma.edge.count({ where: { designId } })
     console.log(`[DB VERIFY] ${edgeCount} edges in DB (expected ${edgesToCreate.length})`)
 
-    // Retry if mismatch
     if (edgeCount < edgesToCreate.length && edgesToCreate.length > 0) {
       console.log(`[DB RETRY] Missing ${edgesToCreate.length - edgeCount} edges, retrying...`)
-      const retryResult = await prisma.edge.createMany({
+      await prisma.edge.createMany({
         data: edgesToCreate,
         skipDuplicates: true,
       })
@@ -199,19 +202,17 @@ router.post('/analyze-and-save/:designId', requireAuth, async (req, res) => {
 
     await prisma.design.update({
       where: { id: designId },
-      data: { 
-        updatedAt: new Date(), 
+      data: {
+        updatedAt: new Date(),
         status: 'draft',
-        description: design.description + ` | AI: ${result.metadata.description}` 
+        description: design.description + ` | AI: ${result.metadata.description}`
       }
     })
 
-    // Invalidate cache
-    await cache.invalidatePattern(`designs:${req.user.id}*`)
+    await cache.invalidatePattern(`designs:${user.id}*`)
     await cache.del(`design:${designId}`)
     console.log('[CACHE] Invalidated')
 
-    // Final flush delay
     await new Promise(r => setTimeout(r, 500))
 
     const finalEdgeCount = await prisma.edge.count({ where: { designId } })
@@ -235,8 +236,11 @@ router.post('/analyze-and-save/:designId', requireAuth, async (req, res) => {
   }
 })
 
-// POST /analyze — Just analyze, don't save
-router.post('/analyze', requireAuth, async (req, res) => {
+// POST /analyze
+router.post('/analyze', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
   try {
     const { files } = req.body
     if (!files || files.length === 0) {
