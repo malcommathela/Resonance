@@ -12,7 +12,7 @@ import { api } from '@/services/api'
 
 export const Dashboard = () => {
   const navigate = useNavigate()
-  const { user, isLoaded: authLoaded } = useAuth()
+  const { isSignedIn, isLoaded: authLoaded } = useAuth()
   const { designs, loadDesigns, createDesign, deleteDesign, isLoading } = useDesignStore()
 
   const [showNewModal, setShowNewModal] = useState(false)
@@ -29,12 +29,10 @@ export const Dashboard = () => {
   const [importProgress, setImportProgress] = useState('')
 
   useEffect(() => {
-  console.log('Dashboard mount - authLoaded:', authLoaded, 'user:', !!user)
-  if (authLoaded && user) {
-    console.log('Calling loadDesigns...')
-    loadDesigns()
-  }
-}, [authLoaded, user, loadDesigns])
+    if (authLoaded && isSignedIn) {
+      loadDesigns()
+    }
+  }, [authLoaded, isSignedIn, loadDesigns])
 
   const addToast = useCallback((message, type = 'info') => {
     const id = Date.now()

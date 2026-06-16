@@ -70,7 +70,6 @@ app.use((err, req, res, next) => {
 
 process.on('SIGTERM', async () => {
   await prisma.$disconnect()
-  await redis.quit()
   process.exit(0)
 })
 
