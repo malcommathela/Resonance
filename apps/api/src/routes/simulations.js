@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireAuth, getAuth } from '@clerk/express'
+import { getAuth, clerkClient } from '@clerk/express'
 import { prisma } from '../lib/db.js'
 import { cache } from '../lib/redis.js'
 
@@ -9,10 +9,37 @@ const router = Router()
 async function getDbUser(req) {
   const auth = getAuth(req)
   if (!auth?.userId) return null
-  return prisma.user.findUnique({
+  
+  // Try to find existing user
+  let user = await prisma.user.findUnique({
     where: { clerkId: auth.userId },
     select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
   })
+  
+  // Auto-create from Clerk if not in DB yet
+  if (!user) {
+    try {
+      const clerkUser = await clerkClient.users.getUser(auth.userId)
+      const primaryEmail = clerkUser.emailAddresses?.[0]?.emailAddress
+      
+      user = await prisma.user.create({
+        data: {
+          clerkId: auth.userId,
+          email: primaryEmail || `user-${auth.userId}@clerk.dev`,
+          name: `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || clerkUser.username || 'User',
+          avatar: clerkUser.imageUrl,
+          tier: 'free',
+        },
+        select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
+      })
+      console.log(`[AUTO-CREATE] User created: ${user.id} (${user.email})`)
+    } catch (err) {
+      console.error('[AUTO-CREATE] Failed:', err.message)
+      return null
+    }
+  }
+  
+  return user
 }
 
 // Apply Clerk's built-in auth to all routes
