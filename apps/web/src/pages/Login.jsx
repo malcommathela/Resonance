@@ -1,18 +1,26 @@
 import React, { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { SignIn } from '@clerk/clerk-react'
+import { SignIn, useAuth } from '@clerk/clerk-react'
 import { Zap, Layers, Activity, Shield } from 'lucide-react'
 import { useThemeStore } from '@/stores/themeStore'
 import { animations } from '@/lib/anime'
 
 export const Login = ({ mode = 'signIn' }) => {
   const navigate = useNavigate()
+  const { isSignedIn } = useAuth()
   const { theme } = useThemeStore()
 
   const leftRef = useRef(null)
   const rightRef = useRef(null)
   const featuresRef = useRef(null)
   const orbsRef = useRef(null)
+
+  // Redirect if already signed in
+  useEffect(() => {
+    if (isSignedIn) {
+      navigate('/dashboard', { replace: true })
+    }
+  }, [isSignedIn, navigate])
 
   useEffect(() => {
     if (leftRef.current) animations.slideInLeft(leftRef.current, 0)
@@ -49,37 +57,43 @@ export const Login = ({ mode = 'signIn' }) => {
             {mode === 'signUp' ? 'Create your account' : 'Welcome back'}
           </h1>
           <p className="text-resonance-text-secondary mb-8">
-            {mode === 'signUp' 
+            {mode === 'signUp'
               ? 'Sign up to start designing and simulating your systems.'
               : 'Sign in to continue designing and simulating your systems.'}
           </p>
 
           {/* Clerk SignIn/SignUp Component */}
-          <SignIn 
+          <SignIn
             routing="hash"
             redirectUrl="/dashboard"
             appearance={{
               elements: {
                 rootBox: 'w-full',
-                card: 'bg-transparent shadow-none p-0',
+                card: 'bg-transparent shadow-none p-0 border-0',
                 headerTitle: 'hidden',
                 headerSubtitle: 'hidden',
                 socialButtonsBlockButton: 'w-full flex items-center justify-center gap-3 px-6 py-3.5 bg-resonance-bg-elevated border border-resonance-border rounded-xl text-resonance-text-primary font-medium hover:bg-resonance-bg-hover hover:border-resonance-accent/30 transition-all duration-200',
                 socialButtonsBlockButtonText: 'text-resonance-text-primary',
+                socialButtonsBlockButtonArrow: 'hidden',
                 formFieldLabel: 'text-sm font-medium text-resonance-text-secondary mb-1.5',
-                formFieldInput: 'w-full px-4 py-3 bg-resonance-bg-elevated border border-resonance-border rounded-xl text-resonance-text-primary placeholder:text-resonance-text-muted focus:outline-none focus:border-resonance-accent/50',
-                formButtonPrimary: 'w-full px-6 py-3 bg-resonance-accent text-white rounded-xl font-medium hover:bg-resonance-accent/90 transition-all',
-                footerActionLink: 'text-resonance-accent hover:underline',
+                formFieldInput: 'w-full px-4 py-3 bg-resonance-bg-elevated border border-resonance-border rounded-xl text-resonance-text-primary placeholder:text-resonance-text-muted focus:outline-none focus:border-resonance-accent/50 focus:ring-1 focus:ring-resonance-accent/20',
+                formButtonPrimary: 'w-full px-6 py-3 bg-resonance-accent text-white rounded-xl font-medium hover:bg-resonance-accent/90 transition-all shadow-lg shadow-resonance-accent/20',
+                footerActionLink: 'text-resonance-accent hover:underline font-medium',
                 dividerLine: 'bg-resonance-border',
                 dividerText: 'text-resonance-text-muted text-sm',
                 identityPreviewText: 'text-resonance-text-primary',
                 identityPreviewEditButton: 'text-resonance-accent',
                 formFieldErrorText: 'text-red-400 text-sm mt-1',
                 alertText: 'text-red-400 text-sm',
+                otpCodeFieldInput: 'bg-resonance-bg-elevated border-resonance-border text-resonance-text-primary',
+                // Hide the Clerk branding/footer
+                footer: 'hidden',
+                logoBox: 'hidden',
               },
               layout: {
                 socialButtonsPlacement: 'top',
                 showOptionalFields: false,
+                logoPlacement: 'none',
               },
             }}
           />

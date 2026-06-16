@@ -5,6 +5,7 @@ import { useDesignStore } from '@/stores/designStore'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
+import { DesignCard } from '@/components/ui/DesignCard'
 import { GitHubImportModal } from '@/components/canvas/GitHubImportModal'
 import { Loader2, Plus, Search, Github, LayoutGrid, List, Trash2, X, Layers } from 'lucide-react'
 import { api } from '@/services/api'
@@ -28,7 +29,7 @@ export const Dashboard = () => {
   const [importProgress, setImportProgress] = useState('')
 
   useEffect(() => {
-    if (authLoaded && user) {  // ← only load when auth is ready
+    if (authLoaded && user) {
       loadDesigns()
     }
   }, [authLoaded, user, loadDesigns])
@@ -68,10 +69,14 @@ export const Dashboard = () => {
 
       setImportProgress('Analyzing codebase ...')
       const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+      const token = await api.getAuthToken?.()
       const response = await fetch(`${API_BASE}/analyze/analyze-and-save/${design.id}`, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ files: importData.files }),
       })
 
@@ -124,7 +129,7 @@ export const Dashboard = () => {
     })
   }
 
-  const filteredDesigns = designs.filter(d => 
+  const filteredDesigns = designs.filter(d =>
     d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     (d.description && d.description.toLowerCase().includes(searchQuery.toLowerCase()))
   )
@@ -230,37 +235,16 @@ export const Dashboard = () => {
           </div>
         ) : (
           <div className={viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' : 'space-y-4'}>
-            {filteredDesigns.map((design, index) => (
-              <div
+            {filteredDesigns.map((design) => (
+              <DesignCard
                 key={design.id}
-                className="animate-fade-in"
-                style={{ animationDelay: `${index * 50}ms` }}
-              >
-                <div 
-                  className={`rounded-xl border overflow-hidden transition-all cursor-pointer group ${
-                    selectedDesigns.has(design.id) ? 'border-resonance-accent bg-resonance-accent/5' : 'border-resonance-border hover:border-resonance-accent/30 hover:shadow-lg'
-                  }`}
-                  onClick={() => navigate(`/design/${design.id}`)}
-                >
-                  <div className="h-32 bg-resonance-bg-tertiary flex items-center justify-center relative">
-                    <Layers size={32} className="text-resonance-text-muted" />
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); toggleSelection(design.id); }}
-                      className="absolute top-2 right-2 w-6 h-6 rounded-full border flex items-center justify-center text-xs transition-colors hover:border-resonance-accent"
-                    >
-                      {selectedDesigns.has(design.id) ? '✓' : ''}
-                    </button>
-                  </div>
-                  <div className="p-4">
-                    <h3 className="font-semibold text-resonance-text-primary mb-1">{design.name}</h3>
-                    <p className="text-sm text-resonance-text-secondary line-clamp-2 mb-3">{design.description || 'No description'}</p>
-                    <div className="flex items-center justify-between text-xs text-resonance-text-muted">
-                      <span className="flex items-center gap-1"><Layers size={12} /> {design.blocks || 0} blocks</span>
-                      <span>{new Date(design.updatedAt).toLocaleDateString()}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+                design={design}
+                viewMode={viewMode}
+                selected={selectedDesigns.has(design.id)}
+                onSelect={() => toggleSelection(design.id)}
+                onClick={() => navigate(`/design/${design.id}`)}
+                onDelete={() => handleDeleteDesign(design.id)}
+              />
             ))}
           </div>
         )}

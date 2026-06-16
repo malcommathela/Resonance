@@ -12,6 +12,13 @@ class ApiService {
     this.getToken = getTokenFn
   }
 
+  async getAuthToken() {
+    if (this.getToken) {
+      return await this.getToken()
+    }
+    return null
+  }
+
   async getHeaders() {
     const headers = {
       'Content-Type': 'application/json',
@@ -107,6 +114,8 @@ class ApiService {
   async getCurrentUser() {
     return this.request('/auth/me')
   }
+
+
 
   async logout() {
     return this.request('/auth/logout', { method: 'POST' })
