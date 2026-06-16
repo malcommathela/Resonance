@@ -1,5 +1,5 @@
 import { useAuth } from '@clerk/clerk-react'
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
@@ -115,17 +115,19 @@ class ApiService {
 
 export const api = new ApiService()
 
-// Hook to connect Clerk's getToken to the API service
 export function useApiWithAuth() {
   const { getToken, isSignedIn } = useAuth()
   
-  useEffect(() => {
+  const getTokenRef = useCallback(() => {
     if (isSignedIn && getToken) {
-      api.setTokenGetter(() => getToken())
-    } else {
-      api.setTokenGetter(null)
+      return getToken()
     }
+    return null
   }, [isSignedIn, getToken])
+
+  useEffect(() => {
+    api.setTokenGetter(getTokenRef)
+  }, [getTokenRef])
 
   return api
 }
