@@ -32,7 +32,7 @@ export const Dashboard = () => {
     if (authLoaded && isSignedIn) {
       loadDesigns()
     }
-  }, [authLoaded, isSignedIn, loadDesigns])
+}, [authLoaded, isSignedIn, loadDesigns])
 
   const addToast = useCallback((message, type = 'info') => {
     const id = Date.now()
@@ -56,20 +56,40 @@ export const Dashboard = () => {
   }
 
   const handleGitHubImport = async (importData) => {
-    setIsImporting(true)
-    setImportProgress('Creating design...')
+  setIsImporting(true)
+  setImportProgress('Creating design...')
 
-    try {
-      const design = await createDesign({
-        name: importData.repo.name,
-        description: `Imported from ${importData.repo.fullName} (${importData.branch})`,
-        repoUrl: importData.repo.url,
-        repoBranch: importData.branch,
+  try {
+    const design = await createDesign({
+      name: importData.repo.name,
+      description: `Imported from ${importData.repo.fullName} (${importData.branch})`,
+      repoUrl: importData.repo.url,
+      repoBranch: importData.branch,
+    })
+
+    // FIX: Handle public repo pre-generated architecture vs my-repos file analysis
+    if (importData.preGenerated) {
+      // Public repo flow — save pre-generated nodes/edges directly
+      setImportProgress('Saving architecture...')
+      
+      await api.saveCanvas(design.id, {
+        nodes: importData.preGenerated.nodes,
+        edges: importData.preGenerated.edges,
       })
 
-      setImportProgress('Analyzing codebase ...')
+      // Update design description with AI metadata
+      if (importData.preGenerated.metadata?.description) {
+        await api.updateDesign(design.id, {
+          description: `${design.description} | AI: ${importData.preGenerated.metadata.description}`,
+        })
+      }
+
+      addToast(`AI: ${importData.preGenerated.metadata?.description || 'Architecture generated'}`, 'success')
+    } else {
+      // My repos flow — analyze files via AI
+      setImportProgress('Analyzing codebase...')
       const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
-      const token = await api.getAuthToken?.()
+      const token = await api.getAuthToken()
       const response = await fetch(`${API_BASE}/analyze/analyze-and-save/${design.id}`, {
         method: 'POST',
         credentials: 'include',
@@ -87,17 +107,18 @@ export const Dashboard = () => {
 
       const result = await response.json()
       addToast(`AI: ${result.metadata?.description || 'Architecture generated'}`, 'success')
-
-      setImportProgress('Finalizing...')
-      await new Promise(r => setTimeout(r, 1500))
-
-      setShowImportModal(false)
-      setIsImporting(false)
-      navigate(`/design/${design.id}`)
-    } catch (err) {
-      setIsImporting(false)
-      addToast(err.message || 'Failed to import from GitHub', 'error')
     }
+
+    setImportProgress('Finalizing...')
+    await new Promise(r => setTimeout(r, 1500))
+
+    setShowImportModal(false)
+    setIsImporting(false)
+    navigate(`/design/${design.id}`)
+  } catch (err) {
+    setIsImporting(false)
+    addToast(err.message || 'Failed to import from GitHub', 'error')
+  }
   }
 
   const handleDeleteDesign = async (id) => {
