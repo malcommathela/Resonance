@@ -293,7 +293,13 @@ router.post('/public-repo', async (req, res) => {
 
   } catch (err) {
     console.error('[PUBLIC REPO ERROR]', err)
-    res.status(500).json({ error: err.message })
+    // FIX: Don't expose raw error messages to frontend for AI parsing errors
+    const isAiError = err.message?.includes('JSON') || err.message?.includes('parse')
+    res.status(500).json({ 
+      error: isAiError 
+        ? 'AI analysis failed — the model returned invalid data. Please try again with a different repository.' 
+        : err.message 
+    })
   }
 })
 

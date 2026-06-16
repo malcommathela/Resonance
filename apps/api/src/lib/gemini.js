@@ -29,27 +29,71 @@ export async function generateArchitecture(files) {
     throw new Error('Empty response from Gemini')
   }
 
-  // Parse JSON from text
-  let parsed
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/)
-    if (jsonMatch) {
-      parsed = JSON.parse(jsonMatch[1])
-    } else {
-      const anyJson = text.match(/\{[\s\S]*"nodes"[\s\S]*\}/)
-      if (anyJson) {
-        parsed = JSON.parse(anyJson[0])
-      } else {
-        throw new Error('Failed to parse AI response')
-      }
-    }
-  }
+  // Parse JSON from text with repair fallback
+  let parsed = parseGeminiJson(text)
 
   console.log('AI raw nodes:', parsed.nodes?.length, 'edges:', parsed.edges?.length)
 
   return normalizeArchitecture(parsed)
+}
+
+// FIX: Robust JSON parser with repair logic for malformed LLM output
+function parseGeminiJson(text) {
+  let jsonText = text.trim()
+
+  // Try to extract JSON from code blocks first
+  const codeBlockMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (codeBlockMatch) {
+    jsonText = codeBlockMatch[1].trim()
+  }
+
+  // Remove any leading/trailing non-JSON content
+  const jsonStart = jsonText.indexOf('{')
+  const jsonEnd = jsonText.lastIndexOf('}')
+  if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+    jsonText = jsonText.slice(jsonStart, jsonEnd + 1)
+  }
+
+  // Try parsing as-is first
+  try {
+    return JSON.parse(jsonText)
+  } catch (originalErr) {
+    console.warn('Initial JSON parse failed, attempting repair...')
+  }
+
+  // FIX: Apply common JSON repair heuristics
+  let repaired = jsonText
+
+  // Remove trailing commas before ] or }
+  repaired = repaired.replace(/,\s*([\]\}])/g, '$1')
+
+  // Fix missing closing brackets (common LLM truncation)
+  const openBraces = (repaired.match(/\{/g) || []).length
+  const closeBraces = (repaired.match(/\}/g) || []).length
+  const openBrackets = (repaired.match(/\[/g) || []).length
+  const closeBrackets = (repaired.match(/\]/g) || []).length
+
+  for (let i = 0; i < openBraces - closeBraces; i++) {
+    repaired += '}'
+  }
+  for (let i = 0; i < openBrackets - closeBrackets; i++) {
+    repaired += ']'
+  }
+
+  // Remove any trailing content after the final closing brace
+  const lastBrace = repaired.lastIndexOf('}')
+  if (lastBrace !== -1) {
+    repaired = repaired.slice(0, lastBrace + 1)
+  }
+
+  // Try parsing repaired JSON
+  try {
+    return JSON.parse(repaired)
+  } catch (repairErr) {
+    console.error('JSON repair failed. Raw text (first 500 chars):', jsonText.slice(0, 500))
+    console.error('Repaired text (first 500 chars):', repaired.slice(0, 500))
+    throw new Error('AI returned invalid JSON. Please try again with a different repository.')
+  }
 }
 
 function buildPrompt(files) {
@@ -110,7 +154,7 @@ Colors:
 - storage: #ec4899
 - cdn: #14b8a6
 
-Return ONLY valid JSON:
+Return ONLY valid JSON. Do NOT include markdown formatting, explanations, or code blocks. Return raw JSON only:
 {
   "nodes": [
     {
@@ -142,7 +186,9 @@ IMPORTANT:
 - The client MUST connect to something
 - Create 1-3 edges per service minimum
 - Use descriptive labels like "Resonance Web App" not generic "Client"
-- Edge source/target MUST exactly match node ids`
+- Edge source/target MUST exactly match node ids
+- Do NOT include trailing commas
+- Ensure all arrays and objects are properly closed`
 }
 
 function normalizeArchitecture(parsed) {
