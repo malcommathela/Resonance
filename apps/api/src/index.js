@@ -38,12 +38,16 @@ const limiter = rateLimit({
 })
 app.use('/api/', limiter)
 
-// EXPLICIT KEYS — ensures Clerk can validate tokens
+// WEBHOOKS FIRST — before any body parser that would consume the raw body
+app.use('/webhooks', webhookRoutes)
+
+// Clerk auth middleware — only needed for API routes, not webhooks
 app.use(clerkMiddleware({
   secretKey: process.env.CLERK_SECRET_KEY,
   publishableKey: process.env.CLERK_PUBLISHABLE_KEY,
 }))
 
+// JSON parser — after webhooks and Clerk middleware
 app.use(express.json({ limit: '10mb' }))
 
 app.get('/health', async (req, res) => {
@@ -52,7 +56,6 @@ app.get('/health', async (req, res) => {
   res.json({ status: dbHealthy && redisHealthy ? 'ok' : 'degraded', database: dbHealthy ? 'connected' : 'error', redis: redisHealthy ? 'connected' : 'error' })
 })
 
-app.use('/webhooks', webhookRoutes)
 app.use('/auth', authRoutes)
 app.use('/designs', designRoutes)
 app.use('/simulations', simulationRoutes)
