@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { getAuth, clerkClient } from '@clerk/express'
+import { requireAuth, getAuth, clerkClient } from '@clerk/express'
 import { prisma } from '../lib/db.js'
 
 const router = Router()
