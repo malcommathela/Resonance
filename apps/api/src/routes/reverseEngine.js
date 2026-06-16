@@ -263,6 +263,236 @@ router.post('/analyze-and-save/:designId', async (req, res) => {
   }
 })
 
+// POST /analyze/public-repo — Import from public GitHub repo URL
+router.post('/public-repo', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
+  try {
+    const { repoUrl, designId } = req.body
+    if (!repoUrl) return res.status(400).json({ error: 'repoUrl required' })
+
+    // Parse GitHub URL: https://github.com/owner/repo or https://github.com/owner/repo/tree/branch
+    const match = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)(?:\/tree\/([^\/]+))?/)
+    if (!match) return res.status(400).json({ error: 'Invalid GitHub URL' })
+
+    const [, owner, repo, branch = 'main'] = match
+    const cleanRepo = repo.replace(/\.git$/, '')
+
+    // Fetch repo tree (no auth needed for public repos)
+    const treeRes = await fetch(`https://api.github.com/repos/${owner}/${cleanRepo}/git/trees/${branch}?recursive=1`, {
+      headers: { 'User-Agent': 'Resonance-App' }
+    })
+    if (!treeRes.ok) throw new Error(`Failed to fetch repo tree: ${treeRes.status}`)
+    const treeData = await treeRes.json()
+
+    // Filter relevant files
+    const relevantExtensions = ['.json', '.yml', '.yaml', '.tf', '.proto', '.js', '.ts', '.go', '.py', '.java', '.dockerfile']
+    const relevantNames = ['package.json', 'docker-compose', 'Dockerfile', 'kubernetes', 'terraform', 'requirements', 'go.mod', 'Cargo.toml', 'pom.xml', 'build.gradle']
+
+    const filesToFetch = treeData.tree
+      .filter(item => {
+        if (item.type !== 'blob') return false
+        const name = item.path.toLowerCase()
+        return relevantExtensions.some(ext => name.endsWith(ext)) ||
+               relevantNames.some(r => name.includes(r.toLowerCase()))
+      })
+      .slice(0, 50) // Limit to 50 files to avoid rate limits
+
+    // Fetch file contents
+    const files = []
+    for (const file of filesToFetch) {
+      try {
+        const contentRes = await fetch(`https://api.github.com/repos/${owner}/${cleanRepo}/contents/${file.path}?ref=${branch}`, {
+          headers: { 'User-Agent': 'Resonance-App' }
+        })
+        if (!contentRes.ok) continue
+        const contentData = await contentRes.json()
+        if (contentData.content) {
+          const decoded = Buffer.from(contentData.content, 'base64').toString('utf-8')
+          files.push({ path: file.path, content: decoded })
+        }
+      } catch (e) {
+        console.warn(`Failed to fetch ${file.path}:`, e.message)
+      }
+    }
+
+    if (files.length === 0) {
+      return res.status(400).json({ error: 'No relevant files found in repository' })
+    }
+
+    // Run AI analysis
+    const result = await generateArchitecture(files)
+
+    // If designId provided, save directly. Otherwise return analysis.
+    if (designId) {
+      const design = await prisma.design.findFirst({
+        where: { id: designId, ownerId: user.id }
+      })
+      if (!design) return res.status(404).json({ error: 'Design not found' })
+
+      // Build nodes and edges (same logic as /analyze-and-save)
+      const nodes = result.blocks.map(block => ({
+        id: block.id,
+        type: 'customBlock',
+        position: block.position,
+        data: {
+          label: block.label,
+          type: block.type,
+          color: block.color,
+          config: block.config,
+        }
+      }))
+
+      const validNodeIds = new Set(nodes.map(n => n.id))
+      let edges = []
+
+      if (result.edges && result.edges.length > 0) {
+        edges = result.edges
+          .filter(e => validNodeIds.has(e.source) && validNodeIds.has(e.target) && e.source !== e.target)
+          .map((e, i) => ({
+            id: e.id || `e-${i}`,
+            source: e.source,
+            target: e.target,
+            type: 'customEdge',
+            animated: true,
+            data: { connectionType: e.connectionType || 'http' }
+          }))
+      }
+
+      // Fallback edges
+      if (edges.length === 0 && nodes.length > 1) {
+        const find = (type) => nodes.filter(n => n.data.type === type)
+        const client = find('client')[0]
+        const gateway = find('api-gateway')[0] || find('load-balancer')[0]
+        const services = find('service')
+        const databases = find('database')
+        const caches = find('cache')
+        const queues = find('message-queue')
+        const externals = [...find('external-api'), ...find('storage')]
+
+        let idx = 0
+        const add = (src, tgt, ctype = 'http') => {
+          if (!src || !tgt) return
+          edges.push({
+            id: `fb-${idx++}`,
+            source: src.id,
+            target: tgt.id,
+            type: 'customEdge',
+            animated: true,
+            data: { connectionType: ctype }
+          })
+        }
+
+        if (client && gateway) {
+          add(client, gateway)
+          services.forEach(s => add(gateway, s))
+        } else if (client && services[0]) {
+          add(client, services[0])
+        }
+
+        services.forEach(svc => {
+          databases.forEach(db => add(svc, db, 'db'))
+          caches.forEach(c => add(svc, c, 'http'))
+          queues.forEach(q => add(svc, q, 'event'))
+          externals.forEach(ext => add(svc, ext, 'http'))
+        })
+      }
+
+      // Save to DB
+      await prisma.edge.deleteMany({ where: { designId } })
+      await prisma.block.deleteMany({ where: { designId } })
+
+      const blockMap = new Map()
+      for (const block of nodes) {
+        const created = await prisma.block.create({
+          data: {
+            designId,
+            type: block.data.type,
+            label: block.data.label,
+            x: block.position.x,
+            y: block.position.y,
+            color: block.data.color,
+            config: block.data.config || {},
+            metrics: null,
+          }
+        })
+        blockMap.set(block.id, created.id)
+      }
+
+      const edgesToCreate = []
+      for (const edge of edges) {
+        const srcPrisma = blockMap.get(edge.source)
+        const tgtPrisma = blockMap.get(edge.target)
+        if (srcPrisma && tgtPrisma) {
+          edgesToCreate.push({
+            designId,
+            sourceId: srcPrisma,
+            targetId: tgtPrisma,
+            connectionType: edge.data?.connectionType || 'http',
+            animated: true,
+          })
+        }
+      }
+
+      if (edgesToCreate.length > 0) {
+        await prisma.edge.createMany({ data: edgesToCreate, skipDuplicates: true })
+      }
+
+      await prisma.design.update({
+        where: { id: designId },
+        data: {
+          updatedAt: new Date(),
+          status: 'draft',
+          description: design.description + ` | AI: ${result.metadata.description}`
+        }
+      })
+
+      await cache.invalidatePattern(`designs:${user.id}*`)
+      await cache.del(`design:${designId}`)
+
+      res.json({
+        success: true,
+        nodes,
+        edges,
+        metadata: result.metadata,
+        source: 'public-repo',
+        repo: `${owner}/${cleanRepo}`
+      })
+    } else {
+      // Just return analysis without saving
+      res.json({
+        nodes: result.blocks.map(block => ({
+          id: block.id,
+          type: 'customBlock',
+          position: block.position,
+          data: {
+            label: block.label,
+            type: block.type,
+            color: block.color,
+            config: block.config,
+          }
+        })),
+        edges: result.edges.map(edge => ({
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          type: 'customEdge',
+          animated: true,
+          data: { connectionType: edge.connectionType },
+        })),
+        metadata: result.metadata,
+        source: 'public-repo',
+        repo: `${owner}/${cleanRepo}`
+      })
+    }
+
+  } catch (err) {
+    console.error('[PUBLIC REPO ERROR]', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // POST /analyze
 router.post('/analyze', async (req, res) => {
   const user = await getDbUser(req)
