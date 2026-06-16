@@ -1,9 +1,19 @@
 import { Router } from 'express'
-import { getAuth } from '@clerk/express'
+import { getAuth, requireAuth } from '@clerk/express'
+import { prisma } from '../lib/db.js'
 import { cache } from '../lib/redis.js'
-import { requireAuth, optionalAuth } from '../middleware/auth.js'
 
 const router = Router()
+
+// Helper: Get DB user from Clerk auth
+async function getDbUser(req) {
+  const auth = getAuth(req)
+  if (!auth?.userId) return null
+  return prisma.user.findUnique({
+    where: { clerkId: auth.userId },
+    select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
+  })
+}
 
 // DEBUG: Check what Clerk sees
 router.get('/debug', (req, res) => {
@@ -45,18 +55,32 @@ router.get('/verify-token', async (req, res) => {
   }
 })
 
-// Get current user
-router.get('/me', optionalAuth, async (req, res) => {
-  if (!req.user) {
-    return res.status(401).json({ error: 'Not authenticated' })
+// Get current user — optional auth
+router.get('/me', async (req, res) => {
+  try {
+    const user = await getDbUser(req)
+    if (!user) {
+      return res.status(401).json({ error: 'Not authenticated' })
+    }
+    res.json(user)
+  } catch (err) {
+    console.error('Auth /me error:', err)
+    res.status(500).json({ error: err.message })
   }
-  res.json(req.user)
 })
 
-// Clear server cache on logout
-router.post('/logout', requireAuth, async (req, res) => {
-  await cache.del(`user:clerk:${req.user.clerkId}`)
-  res.json({ success: true })
+// Clear server cache on logout — requires auth
+router.post('/logout', requireAuth(), async (req, res) => {
+  try {
+    const auth = getAuth(req)
+    if (auth?.userId) {
+      await cache.del(`user:clerk:${auth.userId}`)
+    }
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Logout error:', err)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 export default router
