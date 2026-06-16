@@ -116,7 +116,7 @@ class ApiService {
 export const api = new ApiService()
 
 export function useApiWithAuth() {
-  const { getToken, isSignedIn } = useAuth()
+  const { getToken, isSignedIn, isLoaded } = useAuth()
   
   const getTokenRef = useCallback(() => {
     if (isSignedIn && getToken) {
@@ -129,5 +129,5 @@ export function useApiWithAuth() {
     api.setTokenGetter(getTokenRef)
   }, [getTokenRef])
 
-  return api
+  return { api, isLoaded, isSignedIn }
 }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '@clerk/clerk-react'
 import { useDesignStore } from '@/stores/designStore'
-import { useAuthStore } from '@/stores/authStore'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
@@ -11,7 +11,7 @@ import { api } from '@/services/api'
 
 export const Dashboard = () => {
   const navigate = useNavigate()
-  const { user } = useAuthStore()
+  const { user, isLoaded: authLoaded } = useAuth()
   const { designs, loadDesigns, createDesign, deleteDesign, isLoading } = useDesignStore()
 
   const [showNewModal, setShowNewModal] = useState(false)
@@ -28,8 +28,10 @@ export const Dashboard = () => {
   const [importProgress, setImportProgress] = useState('')
 
   useEffect(() => {
-    loadDesigns()
-  }, [loadDesigns])
+    if (authLoaded && user) {  // ← only load when auth is ready
+      loadDesigns()
+    }
+  }, [authLoaded, user, loadDesigns])
 
   const addToast = useCallback((message, type = 'info') => {
     const id = Date.now()
@@ -64,7 +66,7 @@ export const Dashboard = () => {
         repoBranch: importData.branch,
       })
 
-      setImportProgress('Analyzing codebase with AI...')
+      setImportProgress('Analyzing codebase ...')
       const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
       const response = await fetch(`${API_BASE}/analyze/analyze-and-save/${design.id}`, {
         method: 'POST',
