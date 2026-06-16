@@ -53,7 +53,7 @@ router.post('/public-repo', async (req, res) => {
 
     // Parse GitHub URL: https://github.com/owner/repo or https://github.com/owner/repo/tree/branch
     // FIX: Handle .git suffix and optional /tree/branch path
-    const match = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+?)(?:\.git)?(?:\/tree\/([^\/]+))?/)
+    const match = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+?)(?:\.git)?(?:\/tree\/([^\/]+))?\/?$/)
     if (!match) return res.status(400).json({ error: 'Invalid GitHub URL' })
 
     const [, owner, repo, branchFromUrl] = match
