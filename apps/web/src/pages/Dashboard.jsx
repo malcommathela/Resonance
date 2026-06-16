@@ -29,10 +29,12 @@ export const Dashboard = () => {
   const [importProgress, setImportProgress] = useState('')
 
   useEffect(() => {
-    if (authLoaded && user) {
-      loadDesigns()
-    }
-  }, [authLoaded, user, loadDesigns])
+  console.log('Dashboard mount - authLoaded:', authLoaded, 'user:', !!user)
+  if (authLoaded && user) {
+    console.log('Calling loadDesigns...')
+    loadDesigns()
+  }
+}, [authLoaded, user, loadDesigns])
 
   const addToast = useCallback((message, type = 'info') => {
     const id = Date.now()
