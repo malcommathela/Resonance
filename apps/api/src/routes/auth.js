@@ -24,6 +24,27 @@ router.get('/debug', (req, res) => {
   })
 })
 
+router.get('/verify-token', async (req, res) => {
+  try {
+    const auth = getAuth(req)
+    const token = req.headers.authorization?.replace('Bearer ', '')
+    
+    res.json({
+      hasAuth: !!auth,
+      userId: auth?.userId,
+      sessionId: auth?.sessionId,
+      tokenLength: token?.length,
+      tokenPrefix: token?.substring(0, 50),
+      env: {
+        hasSecretKey: !!process.env.CLERK_SECRET_KEY,
+        secretKeyPrefix: process.env.CLERK_SECRET_KEY?.substring(0, 10),
+      }
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // Get current user
 router.get('/me', optionalAuth, async (req, res) => {
   if (!req.user) {
