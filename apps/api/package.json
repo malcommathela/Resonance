@@ -8,7 +8,9 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
-    "db:seed": "node prisma/seed.js"
+    "db:seed": "node prisma/seed.js",
+    "postinstall": "prisma generate",
+    "build": "prisma generate && prisma migrate deploy"
   },
   "dependencies": {
     "@clerk/express": "^1.7.81",
