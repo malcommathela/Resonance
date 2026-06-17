@@ -354,13 +354,9 @@ export const GitHubImportModal = ({ isOpen, onClose, onImport }) => {
       </div>
 
       <div className="flex flex-col gap-3 max-w-sm mx-auto">
-        <a
-          href="/api/auth/github" // or your Clerk OAuth URL
-          className="w-full px-6 py-3 bg-resonance-accent text-white rounded-xl font-medium hover:bg-resonance-accent/90 transition-all flex items-center justify-center gap-2 text-center"
-        >
-          <Github size={18} />
-          Connect GitHub Account
-        </a>
+        <p className="text-xs text-resonance-text-muted text-center">
+          Sign out and sign back in with GitHub to connect your repositories.
+        </p>
         <button
           onClick={() => setActiveTab('public-url')}
           className="w-full px-6 py-3 bg-resonance-bg-elevated text-resonance-text-primary rounded-xl font-medium hover:bg-resonance-bg-hover transition-all text-sm"

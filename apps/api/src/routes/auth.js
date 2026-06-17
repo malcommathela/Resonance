@@ -9,17 +9,21 @@ const router = Router()
 async function getDbUser(req) {
   const auth = getAuth(req)
   if (!auth?.userId) return null
-  
+
   let user = await prisma.user.findUnique({
     where: { clerkId: auth.userId },
     select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
   })
-  
+
   if (!user) {
     try {
       const clerkUser = await clerkClient.users.getUser(auth.userId)
       const primaryEmail = clerkUser.emailAddresses?.[0]?.emailAddress
-      
+
+      const githubAccount = clerkUser.externalAccounts?.find(
+        acc => acc.provider === 'github' || acc.provider === 'oauth_github'
+      )
+
       user = await prisma.user.create({
         data: {
           clerkId: auth.userId,
@@ -27,6 +31,7 @@ async function getDbUser(req) {
           name: `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || clerkUser.username || 'User',
           avatar: clerkUser.imageUrl,
           tier: 'free',
+          githubId: githubAccount?.externalId || null,
         },
         select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
       })
@@ -36,7 +41,7 @@ async function getDbUser(req) {
       return null
     }
   }
-  
+
   return user
 }
 
@@ -63,7 +68,7 @@ router.get('/verify-token', async (req, res) => {
   try {
     const auth = getAuth(req)
     const token = req.headers.authorization?.replace('Bearer ', '')
-    
+
     res.json({
       hasAuth: !!auth,
       userId: auth?.userId,
@@ -80,13 +85,11 @@ router.get('/verify-token', async (req, res) => {
   }
 })
 
-// Get current user — optional auth
+// Get current user
 router.get('/me', async (req, res) => {
   try {
     const user = await getDbUser(req)
-    if (!user) {
-      return res.status(401).json({ error: 'Not authenticated' })
-    }
+    if (!user) return res.status(401).json({ error: 'Not authenticated' })
     res.json(user)
   } catch (err) {
     console.error('Auth /me error:', err)
@@ -94,12 +97,13 @@ router.get('/me', async (req, res) => {
   }
 })
 
-// Clear server cache on logout — requires auth
+// Clear server cache on logout
 router.post('/logout', requireAuth(), async (req, res) => {
   try {
     const auth = getAuth(req)
     if (auth?.userId) {
       await cache.del(`user:clerk:${auth.userId}`)
+      await cache.del(`clone:${auth.userId}`)
     }
     res.json({ success: true })
   } catch (err) {
