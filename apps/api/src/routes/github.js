@@ -104,7 +104,7 @@ async function githubApi(token, endpoint, options = {}) {
 // ============================================================
 
 // GET /github/status — Check if user has GitHub OAuth connected
-router.get('/status', requireAuth(), async (req, res) => {
+router.get('/status', requireApiAuth, async (req, res) => {
   try {
     const auth = getAuth(req)
     if (!auth?.userId) {
@@ -122,7 +122,14 @@ router.get('/status', requireAuth(), async (req, res) => {
 // ============================================================
 // PROTECTED ROUTES
 // ============================================================
-router.use(requireAuth())
+async function requireApiAuth(req, res, next) {
+  const auth = getAuth(req)
+  if (!auth?.userId) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  next()
+}
+router.use(requireApiAuth)
 
 // GET /github/repos — List user's repositories
 router.get('/repos', async (req, res) => {

@@ -2,17 +2,17 @@ import React, { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import { animations } from '@/lib/anime'
 
-export const Modal = ({ isOpen, onClose, title, children, size = 'md' }) => {
+export const Modal = ({ isOpen, onClose, title, children, size = 'md', footer = null }) => {
   const contentRef = useRef(null)
   const backdropRef = useRef(null)
 
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden'
-      setTimeout(() => {
+      requestAnimationFrame(() => {
         if (backdropRef.current) animations.backdropFade(backdropRef.current)
         if (contentRef.current) animations.modalEnter(contentRef.current)
-      }, 10)
+      })
     } else {
       document.body.style.overflow = ''
     }
@@ -20,6 +20,17 @@ export const Modal = ({ isOpen, onClose, title, children, size = 'md' }) => {
       document.body.style.overflow = ''
     }
   }, [isOpen])
+
+  // Escape key handler
+  useEffect(() => {
+    const handleEscape = (e) => {
+      if (e.key === 'Escape' && isOpen) {
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [isOpen, onClose])
 
   if (!isOpen) return null
 
@@ -32,7 +43,7 @@ export const Modal = ({ isOpen, onClose, title, children, size = 'md' }) => {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         ref={backdropRef}
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
@@ -40,22 +51,29 @@ export const Modal = ({ isOpen, onClose, title, children, size = 'md' }) => {
       />
       <div
         ref={contentRef}
-        className={`relative w-full ${sizes[size]} bg-resonance-bg-elevated rounded-2xl border border-resonance-border shadow-2xl max-h-[90vh] overflow-hidden`}
+        className={`relative w-full ${sizes[size]} bg-resonance-bg-elevated rounded-2xl border border-resonance-border shadow-2xl max-h-[90vh] overflow-hidden flex flex-col`}
+        onClick={(e) => e.stopPropagation()}
       >
         {title && (
-          <div className="flex items-center justify-between px-6 py-4 border-b border-resonance-border">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-resonance-border shrink-0">
             <h3 className="text-lg font-semibold text-resonance-text-primary">{title}</h3>
             <button
               onClick={onClose}
               className="p-1 rounded-lg hover:bg-resonance-bg-hover transition-colors"
+              aria-label="Close modal"
             >
               <X size={20} className="text-resonance-text-muted" />
             </button>
           </div>
         )}
-        <div className="p-6 overflow-y-auto max-h-[calc(90vh-80px)]">
+        <div className="flex-1 overflow-y-auto p-6">
           {children}
         </div>
+        {footer && (
+          <div className="px-6 py-4 border-t border-resonance-border shrink-0">
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   )

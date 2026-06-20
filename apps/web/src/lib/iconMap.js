@@ -1,28 +1,143 @@
 import {
-  Globe, Server, Database, Zap, MessageSquare, Scale, Cloud, Monitor, ExternalLink, HardDrive,
-  Activity, Cpu, Box, Network, Layers, Wifi, Smartphone, Link2, FolderOpen,
+  Globe,
+  Server,
+  Database,
+  Zap,
+  MessageSquare,
+  Scale,
+  Cloud,
+  Monitor,
+  ExternalLink,
+  HardDrive,
+  ArrowRightLeft,
+  Wifi,
+  Box,
+  Settings,
+  Palette,
+  GitBranch,
+  Search,
+  ChevronRight,
+  ChevronDown,
+  Plus,
+  Copy,
+  Download,
+  Check,
+  FileJson,
+  FileText,
+  FileCode,
+  Container,
+  Play,
+  Pause,
+  Settings2,
+  TrendingUp,
+  Activity,
+  Timer,
+  AlertTriangle,
+  CloudOff,
+  ShieldAlert,
+  Waves,
+  X,
+  Trash2,
+  Save,
+  Share2,
+  Undo2,
+  Redo2,
+  ChevronLeft,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  Maximize,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react'
 
-// Map block type IDs to Lucide icon components
 export const blockIconMap = {
-  'api-gateway': Globe,
-  'service': Server,
-  'database': Database,
-  'cache': Zap,
-  'message-queue': MessageSquare,
-  'load-balancer': Scale,
-  'cdn': Cloud,
-  'client': Monitor,
-  'external-api': ExternalLink,
-  'storage': HardDrive,
+  Globe,
+  Server,
+  Database,
+  Zap,
+  MessageSquare,
+  Scale,
+  Cloud,
+  Monitor,
+  ExternalLink,
+  HardDrive,
+  ArrowRightLeft,
+  Wifi,
+  Box,
+  Settings,
+  Palette,
+  GitBranch,
 }
 
-// Fallback icon
-export const getBlockIcon = (iconName) => {
-  return blockIconMap[iconName] || Server
-}
-
-// Map for the block library sidebar
 export const libraryIconMap = {
-  Globe, Server, Database, Zap, MessageSquare, Scale, Cloud, Monitor, ExternalLink, HardDrive,
+  Globe,
+  Server,
+  Database,
+  Zap,
+  MessageSquare,
+  Scale,
+  Cloud,
+  Monitor,
+  ExternalLink,
+  HardDrive,
+  ArrowRightLeft,
+  Wifi,
+  Box,
+  Settings,
+  Palette,
+  GitBranch,
+  Search,
+  ChevronRight,
+  ChevronDown,
+  Plus,
+  Copy,
+  Download,
+  Check,
+  FileJson,
+  FileText,
+  FileCode,
+  Container,
+  Play,
+  Pause,
+  Settings2,
+  TrendingUp,
+  Activity,
+  Timer,
+  AlertTriangle,
+  CloudOff,
+  ShieldAlert,
+  Waves,
+  X,
+  Trash2,
+  Save,
+  Share2,
+  Undo2,
+  Redo2,
+  ChevronLeft,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  Maximize,
+  ZoomIn,
+  ZoomOut,
+}
+
+export const getBlockIcon = (iconName) => {
+  return blockIconMap[iconName] || blockIconMap['Server']
+}
+
+export const getBlockColor = (type) => {
+  const block = BLOCK_TYPES.find(b => b.id === type)
+  return block?.color || '#8b5cf6'
+}
+
+export const getBlockLabel = (type) => {
+  const block = BLOCK_TYPES.find(b => b.id === type)
+  return block?.label || type
+}
+
+export const getBlockCategory = (type) => {
+  const block = BLOCK_TYPES.find(b => b.id === type)
+  return block?.category || 'other'
 }

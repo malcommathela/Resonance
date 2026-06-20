@@ -1,5 +1,5 @@
 cd apps/api
-npx prisma migrate dev --name init
+npx prisma migrate dev --name add_optimization_history
 npm run dev
 
 
@@ -10,3 +10,6 @@ docker-compose up -d
 
 cd apps/web
 npm run dev
+
+https://resonance-web-eight.vercel.app/
+http://localhost:3001/auth/github/callback

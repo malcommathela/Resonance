@@ -1,13 +1,14 @@
 import { useAuth } from '@clerk/clerk-react'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
-// FIX: Strip trailing slash from API_BASE to prevent double slashes
 const rawBase = import.meta.env.VITE_API_URL || 'http://localhost:3001'
-const API_BASE = rawBase.replace(/\/+$/, '') // removes trailing slash(es)
+const API_BASE = rawBase.replace(/\/+$/, '')
 
 class ApiService {
   constructor() {
     this.getToken = null
+    this.tokenCache = null
+    this.tokenExpiry = 0
   }
 
   setTokenGetter(getTokenFn) {
@@ -15,49 +16,56 @@ class ApiService {
   }
 
   async getAuthToken() {
-    if (this.getToken) {
-      return await this.getToken()
+    if (!this.getToken) return null
+    
+    // Cache token for 50 seconds to avoid repeated Clerk API calls
+    const now = Date.now()
+    if (this.tokenCache && this.tokenExpiry > now) {
+      return this.tokenCache
     }
-    return null
+
+    try {
+      const token = await this.getToken()
+      this.tokenCache = token
+      this.tokenExpiry = now + 50000 // 50s cache
+      return token
+    } catch (err) {
+      console.error('Failed to get Clerk token:', err)
+      this.tokenCache = null
+      return null
+    }
   }
 
   async getHeaders() {
     const headers = {
       'Content-Type': 'application/json',
     }
-    
-    if (this.getToken) {
-      try {
-        const token = await this.getToken()
-        if (token) {
-          headers['Authorization'] = `Bearer ${token}`
-        }
-      } catch (err) {
-        console.error('Failed to get Clerk token:', err)
-      }
+
+    const token = await this.getAuthToken()
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
     }
 
     return headers
   }
 
   async request(endpoint, options = {}) {
-    // FIX: Ensure endpoint always starts with / and isn't empty
     const safeEndpoint = endpoint && endpoint.startsWith('/') ? endpoint : `/${endpoint || ''}`
     const url = `${API_BASE}${safeEndpoint}`
 
     const response = await fetch(url, {
       ...options,
+      credentials: 'include', // FIXED: Send cookies for Clerk session
       headers: {
         ...(await this.getHeaders()),
         ...options.headers,
       },
     })
 
-    // FIX: Better error handling — preserve status for callers to check
     if (!response.ok) {
       const data = await response.json().catch(() => ({}))
       const error = new Error(data.error || `API Error: ${response.status}`)
-      error.status = response.status      // attach status for modal logic
+      error.status = response.status
       error.statusText = response.statusText
       error.data = data
       throw error
@@ -66,6 +74,7 @@ class ApiService {
     return response.json()
   }
 
+  // Designs
   async getDesigns() {
     return this.request('/designs')
   }
@@ -93,7 +102,7 @@ class ApiService {
   }
 
   async saveCanvas(id, { nodes, edges }) {
-    return this.request(`/designs/${id}/canvas`, {
+    return this.request(`/designs/${id}/save`, {
       method: 'POST',
       body: JSON.stringify({ nodes, edges }),
     })
@@ -106,15 +115,24 @@ class ApiService {
     })
   }
 
-  async runSimulation(data) {
-    return this.request('/simulations', {
+  // Simulations
+  async runSimulation(designId, config) {
+    return this.request(`/simulations/${designId}/run`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(config),
     })
   }
 
-  async getSimulation(id) {
-    return this.request(`/simulations/${id}`)
+  async getSimulationStatus(id) {
+    return this.request(`/simulations/${id}/status`)
+  }
+
+  async stopSimulation(id) {
+    return this.request(`/simulations/${id}/stop`, { method: 'POST' })
+  }
+
+  async streamSimulation(id) {
+    return `${API_BASE}/simulations/${id}/stream`
   }
 
   async getCurrentUser() {
@@ -128,19 +146,28 @@ class ApiService {
 
 export const api = new ApiService()
 
+// FIXED: Properly initialize token getter with Clerk
 export function useApiWithAuth() {
   const { getToken, isSignedIn, isLoaded } = useAuth()
-  
-  const getTokenRef = useCallback(() => {
-    if (isSignedIn && getToken) {
-      return getToken()
-    }
-    return null
-  }, [isSignedIn, getToken])
+  const hasSetGetter = useRef(false)
 
   useEffect(() => {
-    api.setTokenGetter(getTokenRef)
-  }, [getTokenRef])
+    if (!isLoaded || hasSetGetter.current) return
+
+    // Set the token getter to call Clerk's getToken with the proper template
+    api.setTokenGetter(async () => {
+      if (!isSignedIn || !getToken) return null
+      try {
+        // Get JWT with no template (uses default session token)
+        return await getToken()
+      } catch (err) {
+        console.error('Clerk getToken failed:', err)
+        return null
+      }
+    })
+
+    hasSetGetter.current = true
+  }, [isLoaded, isSignedIn, getToken])
 
   return { api, isLoaded, isSignedIn }
 }

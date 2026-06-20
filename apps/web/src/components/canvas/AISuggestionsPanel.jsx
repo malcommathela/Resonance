@@ -16,6 +16,8 @@ import {
   HardDrive,
   Globe,
   Layers,
+  Plus,
+  Settings2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
@@ -47,12 +49,13 @@ export const AISuggestionsPanel = ({ designId, simulationId, isOpen, onClose, on
     setIsLoading(true)
     setError(null)
     try {
+      const token = await window.__clerk?.session?.getToken?.()
       const response = await fetch(
         `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/optimize/analyze`,
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('resonance-token')}`,
+            'Authorization': `Bearer ${token || ''}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ simulationId, designId }),
@@ -60,7 +63,7 @@ export const AISuggestionsPanel = ({ designId, simulationId, isOpen, onClose, on
       )
 
       if (!response.ok) {
-        const error = await response.json()
+        const error = await response.json().catch(() => ({}))
         throw new Error(error.error || 'Failed to analyze')
       }
 
@@ -76,12 +79,13 @@ export const AISuggestionsPanel = ({ designId, simulationId, isOpen, onClose, on
   const handleApply = async (suggestion) => {
     setApplyingId(suggestion.id)
     try {
+      const token = await window.__clerk?.session?.getToken?.()
       const response = await fetch(
         `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/optimize/apply`,
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('resonance-token')}`,
+            'Authorization': `Bearer ${token || ''}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ designId, suggestionId: suggestion.id }),
@@ -89,7 +93,7 @@ export const AISuggestionsPanel = ({ designId, simulationId, isOpen, onClose, on
       )
 
       if (!response.ok) {
-        const error = await response.json()
+        const error = await response.json().catch(() => ({}))
         throw new Error(error.error || 'Failed to apply')
       }
 
@@ -104,12 +108,6 @@ export const AISuggestionsPanel = ({ designId, simulationId, isOpen, onClose, on
     } finally {
       setApplyingId(null)
     }
-  }
-
-  const getImpactColor = (value) => {
-    if (value > 50) return 'text-green-500'
-    if (value > 20) return 'text-amber-500'
-    return 'text-resonance-text-secondary'
   }
 
   return (
@@ -285,19 +283,8 @@ export const AISuggestionsPanel = ({ designId, simulationId, isOpen, onClose, on
                         {/* Apply Button */}
                         {!isApplied && (
                           <div className="flex justify-end gap-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setExpandedId(null)}
-                            >
-                              Close
-                            </Button>
-                            <Button
-                              size="sm"
-                              icon={isApplying ? Loader2 : Zap}
-                              onClick={() => handleApply(suggestion)}
-                              disabled={isApplying}
-                            >
+                            <Button variant="ghost" size="sm" onClick={() => setExpandedId(null)}>Close</Button>
+                            <Button size="sm" icon={isApplying ? Loader2 : Zap} onClick={() => handleApply(suggestion)} disabled={isApplying}>
                               {isApplying ? 'Applying...' : 'Apply Optimization'}
                             </Button>
                           </div>
@@ -314,6 +301,3 @@ export const AISuggestionsPanel = ({ designId, simulationId, isOpen, onClose, on
     </Modal>
   )
 }
-
-// Also need to import these in the component:
-// import { Plus, Settings2 } from 'lucide-react'

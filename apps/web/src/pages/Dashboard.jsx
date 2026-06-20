@@ -1,21 +1,31 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@clerk/clerk-react'
 import { useDesignStore } from '@/stores/designStore'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
-import { DesignCard } from '@/components/ui/DesignCard'
+import { DesignCard, getRandomAccent } from '@/components/ui/DesignCard'
 import { GitHubImportModal } from '@/components/canvas/GitHubImportModal'
-import { Loader2, Plus, Search, Github, LayoutGrid, List, Trash2, X, Layers } from 'lucide-react'
+import { 
+  Loader2, Plus, Search, Github, LayoutGrid, List, Trash2, X, Layers,
+  FolderOpen, GitBranch, Clock, Activity, Zap, FolderGit, FileCode
+} from 'lucide-react'
 import { api } from '@/services/api'
 
 export const Dashboard = () => {
   const navigate = useNavigate()
   const { isSignedIn, isLoaded: authLoaded } = useAuth()
-  const { designs, loadDesigns, createDesign, deleteDesign, isLoading } = useDesignStore()
+
+  const designs = useDesignStore(state => state.designs)
+  const isLoading = useDesignStore(state => state.isLoading)
+  const loadDesigns = useDesignStore(state => state.loadDesigns)
+  const createDesign = useDesignStore(state => state.createDesign)
+  const deleteDesign = useDesignStore(state => state.deleteDesign)
+  const updateDesign = useDesignStore(state => state.updateDesign)
 
   const [showNewModal, setShowNewModal] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
   const [newDesignName, setNewDesignName] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
@@ -23,6 +33,13 @@ export const Dashboard = () => {
   const [selectedDesigns, setSelectedDesigns] = useState(new Set())
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [toasts, setToasts] = useState([])
+  const [activeFilter, setActiveFilter] = useState('all')
+
+  // Edit state
+  const [editingDesign, setEditingDesign] = useState(null)
+  const [editName, setEditName] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editAccent, setEditAccent] = useState('')
 
   // Import loading state
   const [isImporting, setIsImporting] = useState(false)
@@ -32,7 +49,7 @@ export const Dashboard = () => {
     if (authLoaded && isSignedIn) {
       loadDesigns()
     }
-}, [authLoaded, isSignedIn, loadDesigns])
+  }, [authLoaded, isSignedIn, loadDesigns])
 
   const addToast = useCallback((message, type = 'info') => {
     const id = Date.now()
@@ -42,10 +59,22 @@ export const Dashboard = () => {
     }, 4000)
   }, [])
 
+  // Overview stats
+  const stats = useMemo(() => {
+    const total = designs.length
+    const active = designs.filter(d => d.status === 'active').length
+    const withRepo = designs.filter(d => d.repoUrl).length
+    const totalBlocks = designs.reduce((sum, d) => sum + (d.blocks || 0), 0)
+    return { total, active, withRepo, totalBlocks }
+  }, [designs])
+
   const handleCreateDesign = async () => {
     if (!newDesignName.trim()) return
     try {
-      const design = await createDesign({ name: newDesignName.trim() })
+      const design = await createDesign({ 
+        name: newDesignName.trim(),
+        accentColor: getRandomAccent()
+      })
       setShowNewModal(false)
       setNewDesignName('')
       addToast('Design created successfully', 'success')
@@ -55,70 +84,119 @@ export const Dashboard = () => {
     }
   }
 
-  const handleGitHubImport = async (importData) => {
-  setIsImporting(true)
-  setImportProgress('Creating design...')
-
-  try {
-    const design = await createDesign({
-      name: importData.repo.name,
-      description: `Imported from ${importData.repo.fullName} (${importData.branch})`,
-      repoUrl: importData.repo.url,
-      repoBranch: importData.branch,
-    })
-
-    // FIX: Handle public repo pre-generated architecture vs my-repos file analysis
-    if (importData.preGenerated) {
-      // Public repo flow — save pre-generated nodes/edges directly
-      setImportProgress('Saving architecture...')
-      
-      await api.saveCanvas(design.id, {
-        nodes: importData.preGenerated.nodes,
-        edges: importData.preGenerated.edges,
-      })
-
-      // Update design description with AI metadata
-      if (importData.preGenerated.metadata?.description) {
-        await api.updateDesign(design.id, {
-          description: `${design.description} | AI: ${importData.preGenerated.metadata.description}`,
-        })
-      }
-
-      addToast(`AI: ${importData.preGenerated.metadata?.description || 'Architecture generated'}`, 'success')
-    } else {
-      // My repos flow — analyze files via AI
-      setImportProgress('Analyzing codebase...')
-      const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
-      const token = await api.getAuthToken()
-      const response = await fetch(`${API_BASE}/analyze/analyze-and-save/${design.id}`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ files: importData.files }),
-      })
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Analysis failed' }))
-        throw new Error(error.error || 'Failed to generate architecture')
-      }
-
-      const result = await response.json()
-      addToast(`AI: ${result.metadata?.description || 'Architecture generated'}`, 'success')
-    }
-
-    setImportProgress('Finalizing...')
-    await new Promise(r => setTimeout(r, 1500))
-
-    setShowImportModal(false)
-    setIsImporting(false)
-    navigate(`/design/${design.id}`)
-  } catch (err) {
-    setIsImporting(false)
-    addToast(err.message || 'Failed to import from GitHub', 'error')
+  const handleEditDesign = (design) => {
+    setEditingDesign(design)
+    setEditName(design.name)
+    setEditDescription(design.description || '')
+    setEditAccent(design.accentColor || '#6366f1')
+    setShowEditModal(true)
   }
+
+  const handleSaveEdit = async () => {
+    if (!editingDesign || !editName.trim()) return
+    try {
+      await updateDesign(editingDesign.id, {
+        name: editName.trim(),
+        description: editDescription.trim(),
+        accentColor: editAccent
+      })
+      setShowEditModal(false)
+      setEditingDesign(null)
+      addToast('Design updated successfully', 'success')
+    } catch (err) {
+      addToast(err.message || 'Failed to update design', 'error')
+    }
+  }
+
+  const handleDuplicateDesign = async (design) => {
+    try {
+      await createDesign({
+        name: `${design.name} (Copy)`,
+        description: design.description,
+        accentColor: design.accentColor || getRandomAccent(),
+        repoUrl: design.repoUrl,
+        repoBranch: design.repoBranch,
+      })
+      await loadDesigns()
+      addToast('Design duplicated', 'success')
+    } catch (err) {
+      addToast(err.message || 'Failed to duplicate design', 'error')
+    }
+  }
+
+  const handleGitHubImport = async (importData) => {
+    setIsImporting(true)
+    setImportProgress('Creating design...')
+
+    try {
+      const design = await createDesign({
+        name: importData.repo.name,
+        description: `Imported from ${importData.repo.fullName} (${importData.branch})`,
+        repoUrl: importData.repo.url,
+        repoBranch: importData.branch,
+        accentColor: getRandomAccent(),
+      })
+
+      if (importData.preGenerated) {
+        setImportProgress('Saving architecture...')
+
+        await api.saveCanvas(design.id, {
+          nodes: importData.preGenerated.nodes,
+          edges: importData.preGenerated.edges,
+        })
+
+        await updateDesign(design.id, {
+          blocks: importData.preGenerated.nodes?.length || 0
+        })
+
+        if (importData.preGenerated.metadata?.description) {
+          await api.updateDesign(design.id, {
+            description: `${design.description} | AI: ${importData.preGenerated.metadata.description}`,
+          })
+        }
+
+        addToast(`AI: ${importData.preGenerated.metadata?.description || 'Architecture generated'}`, 'success')
+      } else {
+        setImportProgress('Analyzing codebase...')
+        const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+        const token = await api.getAuthToken()
+        const response = await fetch(`${API_BASE}/analyze/analyze-and-save/${design.id}`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ files: importData.files }),
+        })
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: 'Analysis failed' }))
+          throw new Error(error.error || 'Failed to generate architecture')
+        }
+
+        const result = await response.json()
+
+        if (result.nodes) {
+          await updateDesign(design.id, {
+            blocks: result.nodes.length || 0
+          })
+        }
+
+        addToast(`AI: ${result.metadata?.description || 'Architecture generated'}`, 'success')
+      }
+
+      setImportProgress('Finalizing...')
+      await new Promise(r => setTimeout(r, 1500))
+
+      setShowImportModal(false)
+      setIsImporting(false)
+      await loadDesigns()
+      navigate(`/design/${design.id}`)
+    } catch (err) {
+      setIsImporting(false)
+      addToast(err.message || 'Failed to import from GitHub', 'error')
+    }
   }
 
   const handleDeleteDesign = async (id) => {
@@ -150,86 +228,172 @@ export const Dashboard = () => {
     })
   }
 
-  const filteredDesigns = designs.filter(d =>
-    d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (d.description && d.description.toLowerCase().includes(searchQuery.toLowerCase()))
-  )
+  // Filter designs
+  const filteredDesigns = useMemo(() => {
+    let filtered = designs.filter(d =>
+      d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (d.description && d.description.toLowerCase().includes(searchQuery.toLowerCase()))
+    )
+
+    if (activeFilter === 'repo') {
+      filtered = filtered.filter(d => d.repoUrl)
+    } else if (activeFilter === 'normal') {
+      filtered = filtered.filter(d => !d.repoUrl)
+    } else if (activeFilter === 'active') {
+      filtered = filtered.filter(d => d.status === 'active')
+    } else if (activeFilter === 'draft') {
+      filtered = filtered.filter(d => d.status === 'draft')
+    }
+
+    return filtered
+  }, [designs, searchQuery, activeFilter])
+
+  const ACCENT_PRESETS = [
+    '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316',
+    '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#a855f7'
+  ]
 
   return (
     <div className="min-h-screen bg-resonance-bg-primary">
-      {/* Header */}
-      <header className="sticky top-0 z-30 bg-resonance-bg-primary/80 backdrop-blur-xl border-b border-resonance-border">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <h1 className="text-xl font-bold text-resonance-text-primary">My Designs</h1>
-              <span className="text-sm text-resonance-text-muted">{designs.length} total</span>
+      {/* Overview Stats */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-4">
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-resonance-text-primary">Overview</h1>
+            <p className="text-sm text-resonance-text-secondary mt-1">All your system designs and simulations</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button onClick={() => setShowImportModal(true)} variant="secondary" className="gap-2">
+              <Github size={16} />
+              Import from GitHub
+            </Button>
+            <Button onClick={() => setShowNewModal(true)} className="gap-2">
+              <Plus size={16} />
+              Create Design
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <div className="bg-resonance-bg-secondary border border-resonance-border rounded-xl p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-lg bg-resonance-accent/10 flex items-center justify-center">
+                <FolderOpen size={20} className="text-resonance-accent" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-resonance-text-primary">{stats.total}</p>
+            <p className="text-xs text-resonance-text-muted mt-1">Total Designs</p>
+          </div>
+          <div className="bg-resonance-bg-secondary border border-resonance-border rounded-xl p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center">
+                <Activity size={20} className="text-green-500" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-resonance-text-primary">{stats.active}</p>
+            <p className="text-xs text-resonance-text-muted mt-1">Active</p>
+          </div>
+          <div className="bg-resonance-bg-secondary border border-resonance-border rounded-xl p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
+                <Clock size={20} className="text-amber-500" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-resonance-text-primary">{stats.totalBlocks}</p>
+            <p className="text-xs text-resonance-text-muted mt-1">Simulations</p>
+          </div>
+          <div className="bg-resonance-bg-secondary border border-resonance-border rounded-xl p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                <GitBranch size={20} className="text-blue-500" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-resonance-text-primary">{stats.withRepo}</p>
+            <p className="text-xs text-resonance-text-muted mt-1">Connected Repos</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Designs Section */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
+        {/* Toolbar */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-resonance-text-muted" />
+              <Input
+                type="text"
+                placeholder="Search designs..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 w-64"
+              />
             </div>
 
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-resonance-text-muted" />
-                <Input
-                  type="text"
-                  placeholder="Search designs..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 w-64"
-                />
-              </div>
-
-              <div className="flex items-center bg-resonance-bg-secondary rounded-lg p-1 border border-resonance-border">
+            {/* Filter tabs */}
+            <div className="flex items-center bg-resonance-bg-secondary rounded-lg p-1 border border-resonance-border">
+              {[
+                { id: 'all', label: 'All' },
+                { id: 'active', label: 'Active' },
+                { id: 'draft', label: 'Draft' },
+                { id: 'repo', label: 'From GitHub' },
+                { id: 'normal', label: 'Manual' },
+              ].map((filter) => (
                 <button
-                  onClick={() => setViewMode('grid')}
-                  className={`p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-resonance-accent text-white' : 'text-resonance-text-muted hover:text-resonance-text-primary'}`}
+                  key={filter.id}
+                  onClick={() => setActiveFilter(filter.id)}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    activeFilter === filter.id 
+                      ? 'bg-resonance-accent text-white' 
+                      : 'text-resonance-text-muted hover:text-resonance-text-primary'
+                  }`}
                 >
-                  <LayoutGrid size={16} />
+                  {filter.label}
                 </button>
-                <button
-                  onClick={() => setViewMode('list')}
-                  className={`p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-resonance-accent text-white' : 'text-resonance-text-muted hover:text-resonance-text-primary'}`}
-                >
-                  <List size={16} />
-                </button>
-              </div>
+              ))}
+            </div>
+          </div>
 
-              <Button onClick={() => setShowImportModal(true)} variant="secondary">
-                <Github size={16} className="mr-2" />
-                Import
-              </Button>
-
-              <Button onClick={() => setShowNewModal(true)}>
-                <Plus size={16} className="mr-2" />
-                New Design
-              </Button>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center bg-resonance-bg-secondary rounded-lg p-1 border border-resonance-border">
+              <button
+                onClick={() => setViewMode('grid')}
+                className={`p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-resonance-accent text-white' : 'text-resonance-text-muted hover:text-resonance-text-primary'}`}
+              >
+                <LayoutGrid size={16} />
+              </button>
+              <button
+                onClick={() => setViewMode('list')}
+                className={`p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-resonance-accent text-white' : 'text-resonance-text-muted hover:text-resonance-text-primary'}`}
+              >
+                <List size={16} />
+              </button>
             </div>
           </div>
         </div>
-      </header>
 
-      {/* Bulk Actions Bar */}
-      {selectedDesigns.size > 0 && (
-        <div className="sticky top-16 z-20 bg-resonance-accent/10 border-b border-resonance-accent/30 backdrop-blur-sm animate-slide-down">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
-            <span className="text-sm font-medium text-resonance-accent">
-              {selectedDesigns.size} selected
-            </span>
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setSelectedDesigns(new Set())}>
-                <X size={14} className="mr-1" />
-                Clear
-              </Button>
-              <Button variant="danger" size="sm" onClick={() => setShowDeleteConfirm(true)}>
-                <Trash2 size={14} className="mr-1" />
-                Delete
-              </Button>
+        {/* Bulk Actions Bar */}
+        {selectedDesigns.size > 0 && (
+          <div className="sticky top-0 z-20 bg-resonance-accent/10 border border-resonance-accent/30 rounded-xl backdrop-blur-sm mb-6 animate-slide-down">
+            <div className="px-4 py-3 flex items-center justify-between">
+              <span className="text-sm font-medium text-resonance-accent">
+                {selectedDesigns.size} selected
+              </span>
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setSelectedDesigns(new Set())}>
+                  <X size={14} className="mr-1" />
+                  Clear
+                </Button>
+                <Button variant="danger" size="sm" onClick={() => setShowDeleteConfirm(true)}>
+                  <Trash2 size={14} className="mr-1" />
+                  Delete
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Create New Card + Design Grid */}
         {isLoading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 size={32} className="animate-spin text-resonance-accent" />
@@ -256,6 +420,18 @@ export const Dashboard = () => {
           </div>
         ) : (
           <div className={viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' : 'space-y-4'}>
+            {/* Create New Card */}
+            <div 
+              className="rounded-xl border border-dashed border-resonance-border bg-resonance-bg-secondary/50 hover:bg-resonance-bg-secondary transition-all cursor-pointer flex flex-col items-center justify-center min-h-[240px] group"
+              onClick={() => setShowNewModal(true)}
+            >
+              <div className="w-14 h-14 rounded-2xl bg-resonance-bg-tertiary flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <Plus size={28} className="text-resonance-text-muted" />
+              </div>
+              <p className="text-sm font-medium text-resonance-text-primary">Create new design</p>
+              <p className="text-xs text-resonance-text-muted mt-1">Start from scratch</p>
+            </div>
+
             {filteredDesigns.map((design) => (
               <DesignCard
                 key={design.id}
@@ -264,12 +440,14 @@ export const Dashboard = () => {
                 selected={selectedDesigns.has(design.id)}
                 onSelect={() => toggleSelection(design.id)}
                 onClick={() => navigate(`/design/${design.id}`)}
-                onDelete={() => handleDeleteDesign(design.id)}
+                onEdit={handleEditDesign}
+                onDelete={handleDeleteDesign}
+                onDuplicate={handleDuplicateDesign}
               />
             ))}
           </div>
         )}
-      </main>
+      </div>
 
       {/* New Design Modal */}
       <Modal isOpen={showNewModal} onClose={() => setShowNewModal(false)} title="Create New Design">
@@ -286,6 +464,50 @@ export const Dashboard = () => {
             <Button variant="ghost" onClick={() => setShowNewModal(false)}>Cancel</Button>
             <Button onClick={handleCreateDesign} disabled={!newDesignName.trim()}>
               Create Design
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Edit Design Modal */}
+      <Modal isOpen={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Design">
+        <div className="space-y-4">
+          <Input
+            label="Design Name"
+            placeholder="Design name"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            autoFocus
+          />
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-resonance-text-primary">Description</label>
+            <textarea
+              value={editDescription}
+              onChange={(e) => setEditDescription(e.target.value)}
+              placeholder="Add a description..."
+              rows={3}
+              className="w-full px-3 py-2 bg-resonance-bg-tertiary border border-resonance-border rounded-lg text-sm text-resonance-text-primary placeholder-resonance-text-muted focus:outline-none focus:ring-2 focus:ring-resonance-accent/30 focus:border-resonance-accent transition-all resize-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-resonance-text-primary">Accent Color</label>
+            <div className="flex flex-wrap gap-2">
+              {ACCENT_PRESETS.map((color) => (
+                <button
+                  key={color}
+                  onClick={() => setEditAccent(color)}
+                  className={`w-8 h-8 rounded-full border-2 transition-all ${
+                    editAccent === color ? 'border-white scale-110 shadow-lg' : 'border-transparent hover:scale-105'
+                  }`}
+                  style={{ backgroundColor: color }}
+                />
+              ))}
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="ghost" onClick={() => setShowEditModal(false)}>Cancel</Button>
+            <Button onClick={handleSaveEdit} disabled={!editName.trim()}>
+              Save Changes
             </Button>
           </div>
         </div>

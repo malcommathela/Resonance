@@ -10,6 +10,9 @@ export default defineConfig({
       '@shared': path.resolve(__dirname, '../../packages/shared'),
     },
   },
+  optimizeDeps: {
+    exclude: ['@shared'],  // ← ADD THIS
+  },
   server: {
     port: 5173,
     proxy: {
@@ -17,6 +20,9 @@ export default defineConfig({
         target: 'http://localhost:3001',
         changeOrigin: true,
       },
+    },
+    watch: {
+      ignored: ['!**/packages/shared/**'],  // ← ADD THIS
     },
   },
 })

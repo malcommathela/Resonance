@@ -1,261 +1,292 @@
 import { Router } from 'express'
-import { requireAuth, getAuth, clerkClient } from '@clerk/express'
-import { z } from 'zod'
+import { requireAuth, getAuth } from '@clerk/express'
 import { prisma } from '../lib/db.js'
-import { cache } from '../lib/redis.js'
 
 const router = Router()
 
-const designSchema = z.object({
-  name: z.string().min(1).max(100),
-  description: z.string().optional(),
-  repoUrl: z.string().url().optional(),
-  repoBranch: z.string().optional(),
-})
-
-
-// Helper: Get or create DB user from Clerk auth
 async function getDbUser(req) {
   const auth = getAuth(req)
   if (!auth?.userId) return null
-  
-  // Try to find existing user
-  let user = await prisma.user.findUnique({
+  return prisma.user.findUnique({
     where: { clerkId: auth.userId },
     select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
   })
-  
-  // Auto-create from Clerk if not in DB yet
-  if (!user) {
-    try {
-      const clerkUser = await clerkClient.users.getUser(auth.userId)
-      const primaryEmail = clerkUser.emailAddresses?.[0]?.emailAddress
-      
-      user = await prisma.user.create({
-        data: {
-          clerkId: auth.userId,
-          email: primaryEmail || `user-${auth.userId}@clerk.dev`,
-          name: `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || clerkUser.username || 'User',
-          avatar: clerkUser.imageUrl,
-          tier: 'free',
-        },
-        select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
-      })
-      console.log(`[AUTO-CREATE] User created: ${user.id} (${user.email})`)
-    } catch (err) {
-      console.error('[AUTO-CREATE] Failed:', err.message)
-      return null
-    }
-  }
-  
-  return user
 }
 
-// Apply Clerk's built-in auth to all routes
-router.use(requireAuth())
+async function requireApiAuth(req, res, next) {
+  const auth = getAuth(req)
+  if (!auth?.userId) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  next()
+}
+router.use(requireApiAuth)
 
+// GET /designs — list user's designs
 router.get('/', async (req, res) => {
   const user = await getDbUser(req)
   if (!user) return res.status(401).json({ error: 'User not found' })
-  
-  const cacheKey = `designs:${user.id}`
-  let designs = await cache.get(cacheKey)
-  if (!designs) {
-    designs = await prisma.design.findMany({
+
+  try {
+    const designs = await prisma.design.findMany({
       where: { ownerId: user.id },
       orderBy: { updatedAt: 'desc' },
-      include: { _count: { select: { blocks: true, simulations: true } } }
+      select: {
+        id: true, name: true, description: true, status: true,
+        repoUrl: true, repoBranch: true, thumbnail: true,
+        ownerId: true, teamId: true, createdAt: true, updatedAt: true,
+        _count: { select: { blocks: true, edges: true, simulations: true } }
+      }
     })
-    await cache.set(cacheKey, designs, 60)
+    res.json(designs)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
   }
-  res.json(designs.map(d => ({ ...d, blocks: d._count.blocks, simulations: d._count.simulations })))
 })
 
+// GET /designs/:id — load single design with blocks, edges, recent simulations
 router.get('/:id', async (req, res) => {
   const user = await getDbUser(req)
   if (!user) return res.status(401).json({ error: 'User not found' })
-  
-  const design = await prisma.design.findFirst({
-    where: { id: req.params.id, ownerId: user.id },
-    include: { blocks: true, edges: true, simulations: { orderBy: { startedAt: 'desc' }, take: 5 } }
-  })
-  if (!design) return res.status(404).json({ error: 'Design not found' })
-  res.json(serializeDesign(design))
+
+  try {
+    const design = await prisma.design.findFirst({
+      where: { id: req.params.id, ownerId: user.id },
+      include: {
+        blocks: true,
+        edges: true,
+        simulations: {
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          select: {
+            id: true, status: true, trafficPattern: true, rps: true,
+            duration: true, metrics: true, startedAt: true, completedAt: true,
+            createdAt: true, updatedAt: true,
+          }
+        }
+      }
+    })
+
+    if (!design) return res.status(404).json({ error: 'Design not found' })
+
+    const nodes = design.blocks.map(b => ({
+      id: b.id,
+      type: 'customBlock',
+      position: { x: b.x, y: b.y },
+      data: {
+        type: b.type,
+        label: b.label,
+        color: b.color,
+        config: typeof b.config === 'string' ? JSON.parse(b.config) : b.config,
+        metrics: typeof b.metrics === 'string' ? JSON.parse(b.metrics) : b.metrics,
+      }
+    }))
+
+    const edges = design.edges.map(e => ({
+      id: e.id,
+      source: e.sourceId,
+      target: e.targetId,
+      type: 'customEdge',
+      animated: e.animated,
+      label: e.label,
+      data: { connectionType: e.connectionType }
+    }))
+
+    res.json({ ...design, nodes, edges })
+  } catch (err) {
+    console.error('Load design error:', err)
+    res.status(500).json({ error: err.message })
+  }
 })
 
+// POST /designs — create new design
 router.post('/', async (req, res) => {
   const user = await getDbUser(req)
   if (!user) return res.status(401).json({ error: 'User not found' })
-  
-  const parsed = designSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() })
-  
-  const design = await prisma.design.create({ data: { ...parsed.data, ownerId: user.id } })
-  await cache.invalidatePattern(`designs:${user.id}*`)
-  res.status(201).json(design)
+
+  const { name, description, repoUrl, repoBranch } = req.body
+  if (!name?.trim()) return res.status(400).json({ error: 'Name is required' })
+
+  try {
+    const design = await prisma.design.create({
+      data: {
+        name: name.trim(),
+        description: description?.trim(),
+        repoUrl: repoUrl?.trim(),
+        repoBranch: repoBranch?.trim() || 'main',
+        ownerId: user.id,
+      }
+    })
+    res.status(201).json(design)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
 })
 
+// PATCH /designs/:id — update design metadata
 router.patch('/:id', async (req, res) => {
   const user = await getDbUser(req)
   if (!user) return res.status(401).json({ error: 'User not found' })
-  
-  const design = await prisma.design.findFirst({ where: { id: req.params.id, ownerId: user.id } })
-  if (!design) return res.status(404).json({ error: 'Not found' })
-  
-  const updated = await prisma.design.update({ where: { id: req.params.id }, data: { ...req.body, updatedAt: new Date() } })
-  await cache.invalidatePattern(`designs:${user.id}*`)
-  await cache.del(`design:${req.params.id}`)
-  res.json(updated)
+
+  const { name, description, repoUrl, repoBranch, status } = req.body
+
+  try {
+    const design = await prisma.design.updateMany({
+      where: { id: req.params.id, ownerId: user.id },
+      data: {
+        ...(name !== undefined && { name: name.trim() }),
+        ...(description !== undefined && { description: description?.trim() }),
+        ...(repoUrl !== undefined && { repoUrl: repoUrl?.trim() }),
+        ...(repoBranch !== undefined && { repoBranch: repoBranch?.trim() }),
+        ...(status !== undefined && { status }),
+        updatedAt: new Date(),
+      }
+    })
+
+    if (design.count === 0) return res.status(404).json({ error: 'Design not found' })
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
 })
 
+// ============================================================
+// SAVE / AUTOSAVE — shared implementation
+// ============================================================
+
+async function saveCanvasData(req, res, isAutoSave = false) {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
+  const { nodes, edges } = req.body
+  if (!Array.isArray(nodes) || !Array.isArray(edges)) {
+    return res.status(400).json({ error: 'nodes and edges arrays required' })
+  }
+
+  try {
+    const design = await prisma.design.findFirst({
+      where: { id: req.params.id, ownerId: user.id }
+    })
+    if (!design) return res.status(404).json({ error: 'Design not found' })
+
+    // ============================================================
+    // DELETE blocks/edges that are no longer in the canvas
+    // ============================================================
+    
+    // Delete blocks not in the new node set
+    const nodeIds = nodes.map(n => n.id).filter(Boolean)
+    if (nodeIds.length > 0) {
+      await prisma.block.deleteMany({
+        where: { designId: req.params.id, id: { notIn: nodeIds } }
+      })
+    } else {
+      // If no nodes sent, delete ALL blocks for this design
+      await prisma.block.deleteMany({ where: { designId: req.params.id } })
+    }
+
+    // Delete edges not in the new edge set
+    const edgeIds = edges.map(e => e.id).filter(Boolean)
+    if (edgeIds.length > 0) {
+      await prisma.edge.deleteMany({
+        where: { designId: req.params.id, id: { notIn: edgeIds } }
+      })
+    } else {
+      await prisma.edge.deleteMany({ where: { designId: req.params.id } })
+    }
+
+    // ============================================================
+    // Upsert remaining blocks
+    // ============================================================
+    const BATCH_SIZE = 20
+    for (let i = 0; i < nodes.length; i += BATCH_SIZE) {
+      const batch = nodes.slice(i, i + BATCH_SIZE)
+      await Promise.all(batch.map(node => prisma.block.upsert({
+        where: { id: node.id },
+        update: {
+          type: node.data?.type || 'service',
+          label: node.data?.label || 'Untitled',
+          x: node.position?.x ?? 0,
+          y: node.position?.y ?? 0,
+          color: node.data?.color || '#8b5cf6',
+          config: node.data?.config ? JSON.stringify(node.data.config) : '{}',
+          metrics: node.data?.metrics ? JSON.stringify(node.data.metrics) : null,
+          updatedAt: new Date(),
+        },
+        create: {
+          id: node.id,
+          designId: req.params.id,
+          type: node.data?.type || 'service',
+          label: node.data?.label || 'Untitled',
+          x: node.position?.x ?? 0,
+          y: node.position?.y ?? 0,
+          color: node.data?.color || '#8b5cf6',
+          config: node.data?.config ? JSON.stringify(node.data.config) : '{}',
+          metrics: node.data?.metrics ? JSON.stringify(node.data.metrics) : null,
+        }
+      })))
+    }
+
+    // ============================================================
+    // Upsert remaining edges
+    // ============================================================
+    for (let i = 0; i < edges.length; i += BATCH_SIZE) {
+      const batch = edges.slice(i, i + BATCH_SIZE)
+      await Promise.all(batch.map(edge => prisma.edge.upsert({
+        where: { id: edge.id },
+        update: {
+          sourceId: edge.source,
+          targetId: edge.target,
+          connectionType: edge.data?.connectionType || 'http',
+          animated: edge.animated ?? true,
+          label: edge.label,
+        },
+        create: {
+          id: edge.id || `e-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          designId: req.params.id,
+          sourceId: edge.source,
+          targetId: edge.target,
+          connectionType: edge.data?.connectionType || 'http',
+          animated: edge.animated ?? true,
+          label: edge.label,
+        }
+      })))
+    }
+
+    await prisma.design.update({
+      where: { id: req.params.id },
+      data: { updatedAt: new Date() }
+    })
+
+    res.json({ success: true, blocksCount: nodes.length, edgesCount: edges.length, autoSave: isAutoSave })
+  } catch (err) {
+    console.error(isAutoSave ? 'Auto-save error:' : 'Save canvas error:', err)
+    res.status(500).json({ error: err.message })
+  }
+}
+
+// POST /designs/:id/save — manual save
+router.post('/:id/save', (req, res) => saveCanvasData(req, res, false))
+
+// POST /designs/:id/autosave — auto save (same logic, silent)
+router.post('/:id/autosave', (req, res) => saveCanvasData(req, res, true))
+
+// POST /designs/:id/canvas — alias for save (matches api.js)
+router.post('/:id/canvas', (req, res) => saveCanvasData(req, res, false))
+
+// DELETE /designs/:id
 router.delete('/:id', async (req, res) => {
   const user = await getDbUser(req)
   if (!user) return res.status(401).json({ error: 'User not found' })
-  
-  await prisma.design.deleteMany({ where: { id: req.params.id, ownerId: user.id } })
-  await cache.invalidatePattern(`designs:${user.id}*`)
-  await cache.del(`design:${req.params.id}`)
-  res.json({ success: true })
-})
 
-router.post('/:id/canvas', async (req, res) => {
-  const user = await getDbUser(req)
-  if (!user) return res.status(401).json({ error: 'User not found' })
-  
-  // ... your existing canvas save logic
-  const { nodes, edges } = req.body
-  const designId = req.params.id
-  
   try {
-    await prisma.edge.deleteMany({ where: { designId } })
-    await prisma.block.deleteMany({ where: { designId } })
-    
-    const blockMap = new Map()
-    for (const block of nodes) {
-      const created = await prisma.block.create({
-        data: {
-          designId,
-          type: block.data.type,
-          label: block.data.label,
-          x: block.position.x,
-          y: block.position.y,
-          color: block.data.color,
-          config: block.data.config || {},
-          metrics: block.data.metrics || null,
-        }
-      })
-      blockMap.set(block.id, created.id)
-    }
-    
-    for (const edge of edges) {
-      const src = blockMap.get(edge.source)
-      const tgt = blockMap.get(edge.target)
-      if (src && tgt) {
-        await prisma.edge.create({
-          data: {
-            designId,
-            sourceId: src,
-            targetId: tgt,
-            connectionType: edge.data?.connectionType || 'http',
-            animated: edge.animated ?? true,
-            label: edge.data?.label || null,
-          }
-        })
-      }
-    }
-    
-    await prisma.design.update({ where: { id: designId }, data: { updatedAt: new Date() } })
-    await cache.invalidatePattern(`designs:${user.id}*`)
-    await cache.del(`design:${designId}`)
+    const result = await prisma.design.deleteMany({
+      where: { id: req.params.id, ownerId: user.id }
+    })
+    if (result.count === 0) return res.status(404).json({ error: 'Design not found' })
     res.json({ success: true })
   } catch (err) {
-    console.error('[CANVAS SAVE ERROR]', err)
-    res.status(500).json({ error: 'Failed to save canvas', details: err.message })
+    res.status(500).json({ error: err.message })
   }
 })
-
-router.post('/:id/autosave', async (req, res) => {
-  const user = await getDbUser(req)
-  if (!user) return res.status(401).json({ error: 'User not found' })
-  
-  // ... your existing autosave logic
-  const { nodes, edges } = req.body
-  const designId = req.params.id
-  
-  try {
-    await prisma.edge.deleteMany({ where: { designId } })
-    await prisma.block.deleteMany({ where: { designId } })
-    
-    const blockMap = new Map()
-    for (const block of nodes) {
-      const created = await prisma.block.create({
-        data: {
-          designId,
-          type: block.data?.type || 'service',
-          label: block.data?.label || 'Untitled',
-          x: block.position?.x || 0,
-          y: block.position?.y || 0,
-          color: block.data?.color || '#8b5cf6',
-          config: block.data?.config || {},
-          metrics: block.data?.metrics || null,
-        }
-      })
-      blockMap.set(block.id, created.id)
-    }
-    
-    for (const edge of edges) {
-      const src = blockMap.get(edge.source)
-      const tgt = blockMap.get(edge.target)
-      if (src && tgt) {
-        await prisma.edge.create({
-          data: {
-            designId,
-            sourceId: src,
-            targetId: tgt,
-            connectionType: edge.data?.connectionType || 'http',
-            animated: edge.animated ?? true,
-            label: edge.data?.label || null,
-          }
-        })
-      }
-    }
-    
-    await prisma.design.update({ where: { id: designId }, data: { updatedAt: new Date() } })
-    res.json({ success: true, savedAt: new Date().toISOString() })
-  } catch (err) {
-    console.error('[AUTOSAVE ERROR]', err)
-    res.status(500).json({ error: 'Autosave failed', details: err.message })
-  }
-})
-
-function serializeDesign(design) {
-  const nodes = design.blocks.map(block => ({
-    id: block.id,
-    type: 'customBlock',
-    position: { x: block.x, y: block.y },
-    data: {
-      label: block.label,
-      type: block.type,
-      color: block.color,
-      config: typeof block.config === 'string' ? JSON.parse(block.config) : block.config,
-      metrics: block.metrics ? (typeof block.metrics === 'string' ? JSON.parse(block.metrics) : block.metrics) : null,
-    }
-  }))
-  
-  const edges = design.edges.map(edge => ({
-    id: edge.id,
-    source: edge.sourceId,
-    target: edge.targetId,
-    type: 'customEdge',
-    animated: edge.animated,
-    data: {
-      connectionType: edge.connectionType,
-      label: edge.label,
-    }
-  }))
-  
-  const { blocks, edges: _edges, _count, ...rest } = design
-  return { ...rest, nodes, edges }
-}
 
 export default router

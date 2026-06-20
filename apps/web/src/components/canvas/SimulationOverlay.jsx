@@ -1,52 +1,60 @@
-import React, { useEffect, useRef } from 'react'
-import { Play, Loader2, Activity } from 'lucide-react'
-import { animations } from '@/lib/anime'
+import React from 'react'
+import { Loader2, Activity, AlertTriangle, Zap } from 'lucide-react'
+import { useCanvasStore } from '@/stores/canvasStore'
 
 export const SimulationOverlay = ({ progress }) => {
-  const overlayRef = useRef(null)
-  const progressRef = useRef(null)
-
-  useEffect(() => {
-    if (overlayRef.current) {
-      animations.fadeIn(overlayRef.current, 0)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (progressRef.current) {
-      animations.countUp(progressRef.current, 0, progress, 300)
-    }
-  }, [progress])
+  const { simulationMetrics } = useCanvasStore()
 
   return (
-    <div
-      ref={overlayRef}
-      className="absolute top-4 left-1/2 -translate-x-1/2 z-50"
-      style={{ opacity: 0 }}
-    >
-      <div className="glass-panel rounded-xl px-6 py-3 flex items-center gap-4 shadow-2xl">
-        <div className="relative">
-          <div className="w-8 h-8 rounded-full border-2 border-resonance-accent/30 flex items-center justify-center">
-            <Loader2 size={16} className="text-resonance-accent animate-spin" />
-          </div>
+    <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-40 pointer-events-auto">
+      <div className="flex items-center gap-4 px-5 py-2.5 rounded-xl bg-resonance-bg-elevated/95 backdrop-blur-md border border-resonance-border shadow-2xl">
+        {/* Spinner + Status */}
+        <div className="flex items-center gap-2.5">
+          <Loader2 size={16} className="animate-spin text-resonance-accent" />
+          <span className="text-sm font-semibold text-resonance-text-primary">
+            Simulation Running
+          </span>
         </div>
-        <div>
-          <p className="text-sm font-semibold text-resonance-text-primary">Simulation Running</p>
-          <div className="flex items-center gap-2 mt-1">
-            <div className="w-32 h-1.5 bg-resonance-bg-tertiary rounded-full overflow-hidden">
-              <div
-                className="h-full bg-resonance-accent rounded-full transition-all duration-300"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-            <span ref={progressRef} className="text-xs text-resonance-text-muted font-mono">
-              {progress}%
-            </span>
+
+        {/* Progress % */}
+        <div className="flex items-center gap-2">
+          <div className="w-24 h-1.5 bg-resonance-bg-tertiary rounded-full overflow-hidden">
+            <div
+              className="h-full bg-resonance-accent rounded-full transition-all duration-500"
+              style={{ width: `${progress}%` }}
+            />
           </div>
+          <span className="text-xs font-mono font-medium text-resonance-text-secondary w-8">
+            {Math.round(progress)}%
+          </span>
         </div>
-        <div className="flex items-center gap-1 text-xs text-resonance-text-muted">
-          <Activity size={12} />
-          <span>Steady traffic</span>
+
+        {/* Mini metrics */}
+        <div className="flex items-center gap-3 border-l border-resonance-border pl-3">
+          {simulationMetrics && (
+            <>
+              <div className="flex items-center gap-1" title="Throughput">
+                <Zap size={12} className="text-green-400" />
+                <span className="text-[11px] font-mono text-resonance-text-secondary">
+                  {Math.round(simulationMetrics.throughput || 0)}
+                </span>
+              </div>
+              <div className="flex items-center gap-1" title="Error Rate">
+                <AlertTriangle size={12} className={
+                  parseFloat(simulationMetrics.errorRate || 0) > 1 ? 'text-red-400' : 'text-green-400'
+                } />
+                <span className="text-[11px] font-mono text-resonance-text-secondary">
+                  {simulationMetrics.errorRate || '0.00'}%
+                </span>
+              </div>
+              <div className="flex items-center gap-1" title="Avg Latency">
+                <Activity size={12} className="text-blue-400" />
+                <span className="text-[11px] font-mono text-resonance-text-secondary">
+                  {Math.round(simulationMetrics.avgLatency || 0)}ms
+                </span>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

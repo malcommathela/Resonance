@@ -12,6 +12,15 @@ export const BLOCK_TYPES = [
   { id: 'storage', label: 'Storage', icon: 'HardDrive', category: 'data', color: '#14b8a6' },
 ];
 
+export const categories = [
+  { id: 'network', label: 'Network', color: '#8b5cf6' },
+  { id: 'compute', label: 'Compute', color: '#3b82f6' },
+  { id: 'data', label: 'Data', color: '#10b981' },
+  { id: 'messaging', label: 'Messaging', color: '#ef4444' },
+  { id: 'frontend', label: 'Frontend', color: '#6366f1' },
+  { id: 'integration', label: 'Integration', color: '#84cc16' },
+];
+
 export const CONNECTION_TYPES = [
   { id: 'http', label: 'HTTP/REST', color: '#3b82f6' },
   { id: 'grpc', label: 'gRPC', color: '#10b981' },
@@ -20,8 +29,27 @@ export const CONNECTION_TYPES = [
   { id: 'db', label: 'Database', color: '#ef4444' },
 ];
 
+export const CONNECTION_TYPE_META = {
+  http: { label: 'HTTP/REST', color: '#3b82f6', icon: 'Globe' },
+  grpc: { label: 'gRPC', color: '#10b981', icon: 'ArrowRightLeft' },
+  websocket: { label: 'WebSocket', color: '#8b5cf6', icon: 'Wifi' },
+  event: { label: 'Event', color: '#f59e0b', icon: 'Zap' },
+  db: { label: 'Database', color: '#ef4444', icon: 'Database' },
+};
+
 export const TRAFFIC_PATTERNS = [
   { id: 'steady', label: 'Steady', description: 'Constant request rate' },
+  { id: 'spike', label: 'Spike', description: '50x traffic spike at 60%' },
+  { id: 'ramp', label: 'Ramp', description: 'Linear increase to 10x' },
+  { id: 'chaos', label: 'Chaos', description: 'Random traffic spikes' },
+];
+
+export const SCENARIOS = [
+  { id: 'none', label: 'None', description: 'Normal operation' },
+  { id: 'db_slowdown', label: 'DB Slowdown', description: 'Database slows 70% at 40%' },
+  { id: 'cache_eviction', label: 'Cache Eviction', description: 'Cache fails at 50%' },
+  { id: 'region_outage', label: 'Region Outage', description: 'Random block fails at 30%' },
+  { id: 'ddos', label: 'DDoS', description: 'Gateway overwhelmed from start' },
 ];
 
 export const THEMES = {
@@ -70,8 +98,9 @@ export const THEMES = {
 export const DOCKER_COMPOSE_TEMPLATE = (blocks, connections) => {
   const services = {};
   blocks.forEach(block => {
-    const config = block.data.config || {};
-    switch (block.type) {
+    const config = block.data?.config || block.config || {};
+    const blockType = block.data?.type || block.type;
+    switch (blockType) {
       case 'api-gateway':
         services[block.id] = {
           image: 'nginx:alpine',
@@ -88,7 +117,7 @@ export const DOCKER_COMPOSE_TEMPLATE = (blocks, connections) => {
         break;
       case 'service':
         services[block.id] = {
-          image: `${block.data.label.toLowerCase().replace(/\s+/g, '-')}:latest`,
+          image: `${(block.data?.label || block.label || 'service').toLowerCase().replace(/\s+/g, '-')}:latest`,
           environment: {
             PORT: config.port || 3000,
             NODE_ENV: 'production',
@@ -122,7 +151,7 @@ export const DOCKER_COMPOSE_TEMPLATE = (blocks, connections) => {
         break;
       default:
         services[block.id] = {
-          image: `${block.type}:latest`,
+          image: `${blockType}:latest`,
         };
     }
   });
@@ -138,12 +167,3 @@ export const DOCKER_COMPOSE_TEMPLATE = (blocks, connections) => {
     volumes: volumes.reduce((acc, v) => ({ ...acc, [v]: {} }), {}),
   };
 };
-
-
-export const CONNECTION_TYPE_META = {
-  http: { label: 'HTTP/REST', color: '#3b82f6', icon: 'Globe' },
-  grpc: { label: 'gRPC', color: '#10b981', icon: 'ArrowRightLeft' },
-  websocket: { label: 'WebSocket', color: '#8b5cf6', icon: 'Wifi' },
-  event: { label: 'Event', color: '#f59e0b', icon: ' Zap' },
-  db: { label: 'Database', color: '#ef4444', icon: 'Database' },
-}

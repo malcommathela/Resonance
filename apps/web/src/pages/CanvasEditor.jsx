@@ -8,8 +8,6 @@ import {
   useNodesState,
   useEdgesState,
   addEdge,
-  Handle,
-  Position,
   useReactFlow,
   ReactFlowProvider,
   SelectionMode,
@@ -18,12 +16,7 @@ import '@xyflow/react/dist/style.css'
 import {
   Play,
   Pause,
-  Save,
-  Download,
-  Share2,
   GitBranch,
-  MoreHorizontal,
-  X,
   ZoomIn,
   ZoomOut,
   Maximize,
@@ -34,52 +27,20 @@ import {
 import { useCanvasStore } from '@/stores/canvasStore'
 import { useDesignStore } from '@/stores/designStore'
 import { useAutoSave } from '@/hooks/useAutoSave'
-import { animations } from '@/lib/anime'
 import { blockIconMap } from '@/lib/iconMap'
 import { BlockLibrary } from '@/components/canvas/BlockLibrary'
 import { PropertyPanel } from '@/components/canvas/PropertyPanel'
 import { TopToolbar } from '@/components/canvas/TopToolbar'
 import { BottomPanel } from '@/components/canvas/BottomPanel'
 import { SimulationOverlay } from '@/components/canvas/SimulationOverlay'
+import { SimulationControls } from '@/components/canvas/SimulationControls'
+import { AISuggestionsPanel } from '@/components/canvas/AISuggestionsPanel'
 import { ExportModal } from '@/components/canvas/ExportModal'
 import { CustomEdge } from '@/components/canvas/CustomEdge'
+import { CustomBlockNode } from '@/components/canvas/CustomBlockNode'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
-
-const CustomBlockNode = ({ data, selected }) => {
-  const IconComponent = blockIconMap[data.type] || blockIconMap['service']
-  const color = data.color || '#8b5cf6'
-
-  return (
-    <div className={`relative group min-w-[160px] ${selected ? 'ring-2 ring-resonance-accent ring-offset-2 ring-offset-resonance-canvas-bg' : ''}`}>
-      <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-resonance-accent !border-2 !border-resonance-canvas-bg" />
-      <div className="bg-resonance-bg-elevated border border-resonance-border rounded-xl p-3 shadow-lg hover:shadow-xl transition-all duration-200" style={{ borderLeft: `3px solid ${color}` }}>
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${color}15` }}>
-            <IconComponent size={16} style={{ color }} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-resonance-text-primary truncate">{data.label}</p>
-            <p className="text-xs text-resonance-text-muted capitalize">{data.type.replace(/-/g, ' ')}</p>
-          </div>
-        </div>
-        {data.metrics && (
-          <div className="mt-2 pt-2 border-t border-resonance-border space-y-1">
-            <div className="flex justify-between text-xs">
-              <span className="text-resonance-text-muted">RPS</span>
-              <span className="text-resonance-text-primary font-medium">{data.metrics.rps}</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-resonance-text-muted">Latency</span>
-              <span className="text-resonance-text-primary font-medium">{data.metrics.latency}ms</span>
-            </div>
-          </div>
-        )}
-      </div>
-      <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !bg-resonance-accent !border-2 !border-resonance-canvas-bg" />
-    </div>
-  )
-}
+import { api } from '@/services/api'
 
 const nodeTypes = { customBlock: CustomBlockNode }
 const edgeTypes = { customEdge: CustomEdge }
@@ -100,12 +61,14 @@ function CanvasEditorInner() {
     edges: storeEdges,
     selectedNode,
     selectedNodes,
+    selectedEdge,
     simulationRunning,
     activeTab,
     setNodes: setStoreNodes,
     setEdges: setStoreEdges,
     setSelectedNode,
     setSelectedNodes,
+    setSelectedEdge,
     setActiveTab,
     addNode,
     updateNode,
@@ -121,46 +84,48 @@ function CanvasEditorInner() {
     setSimulationMetrics,
     loadDesign: loadCanvasDesign,
     clearCanvas,
+    getAllConnectionTypes,
   } = useCanvasStore()
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(storeEdges)
   const [showExportModal, setShowExportModal] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
+  const [showSuggestions, setShowSuggestions] = useState(false)
   const [logs, setLogs] = useState([])
   const [simulationProgress, setSimulationProgress] = useState(0)
+  const [simulationId, setSimulationId] = useState(null)
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false)
   const [isInitialized, setIsInitialized] = useState(false)
   const [showSaveNewModal, setShowSaveNewModal] = useState(false)
   const [newDesignName, setNewDesignName] = useState('')
+  const [showEdgeTypeMenu, setShowEdgeTypeMenu] = useState(false)
+  const [pendingConnection, setPendingConnection] = useState(null)
 
   const { screenToFlowPosition, fitView, zoomIn, zoomOut } = useReactFlow()
+  const eventSourceRef = useRef(null)
+  const simulationIntervalRef = useRef(null)
 
-  // Ref to prevent sync loops
   const isSyncingFromStore = useRef(false)
   const isSyncingToStore = useRef(false)
 
-  // Auto-save hook
   const { saveStatus: autoSaveStatus } = useAutoSave(id, nodes, edges, id && id !== 'new')
 
-  // Load design from backend
+  // Load design
   useEffect(() => {
     const init = async () => {
       if (id && id !== 'new') {
         try {
-          // Clear store first to prevent stale data sync
           clearCanvas()
           setNodes([])
           setEdges([])
-
           const design = await loadDesign(id)
-
           if (design.nodes?.length > 0 || design.edges?.length > 0) {
             isSyncingFromStore.current = true
             setNodes(design.nodes || [])
             setEdges(design.edges || [])
             loadCanvasDesign(design)
-            setTimeout(() => { isSyncingFromStore.current = false; if (typeof skipNextAutoSave === 'function') skipNextAutoSave() }, 50)
+            setTimeout(() => { isSyncingFromStore.current = false }, 50)
           }
           setIsInitialized(true)
         } catch (err) {
@@ -177,7 +142,7 @@ function CanvasEditorInner() {
     init()
   }, [id, loadDesign, setNodes, setEdges, loadCanvasDesign, clearCanvas])
 
-  // Sync store → local state (for drag-and-drop from BlockLibrary, undo/redo, etc.)
+  // Sync store ↔ local state
   useEffect(() => {
     if (isSyncingToStore.current) return
     isSyncingFromStore.current = true
@@ -192,7 +157,6 @@ function CanvasEditorInner() {
     setTimeout(() => { isSyncingFromStore.current = false }, 0)
   }, [storeEdges, setEdges])
 
-  // Sync local state → store (for auto-save, persistence, etc.)
   useEffect(() => {
     if (isSyncingFromStore.current) return
     isSyncingToStore.current = true
@@ -212,27 +176,11 @@ function CanvasEditorInner() {
     const handleKeyDown = (e) => {
       if (e.metaKey || e.ctrlKey) {
         switch (e.key.toLowerCase()) {
-          case 's': 
-            e.preventDefault()
-            handleManualSave()
-            break
-          case 'e': 
-            e.preventDefault()
-            setShowExportModal(true)
-            break
-          case 'k': 
-            e.preventDefault()
-            setShowKeyboardShortcuts(true)
-            break
-          case 'z':
-            e.preventDefault()
-            if (e.shiftKey) redo()
-            else undo()
-            break
-          case 'y': 
-            e.preventDefault()
-            redo()
-            break
+          case 's': e.preventDefault(); handleManualSave(); break
+          case 'e': e.preventDefault(); setShowExportModal(true); break
+          case 'k': e.preventDefault(); setShowKeyboardShortcuts(true); break
+          case 'z': e.preventDefault(); e.shiftKey ? redo() : undo(); break
+          case 'y': e.preventDefault(); redo(); break
           case 'a':
             if (e.shiftKey) break
             e.preventDefault()
@@ -241,77 +189,76 @@ function CanvasEditorInner() {
         }
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedNodes.length > 0) {
-          deleteSelected()
-        } else if (selectedNode) {
-          removeNode(selectedNode.id)
-        }
+        if (selectedNodes.length > 0) deleteSelected()
+        else if (selectedNode) removeNode(selectedNode.id)
+        else if (selectedEdge) removeEdge(selectedEdge.id)
+      }
+      if (e.key === ' ' && !e.target.matches('input, textarea, [contenteditable]')) {
+        e.preventDefault()
+        handleRunSimulation()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedNode, selectedNodes, nodes, removeNode, deleteSelected, undo, redo])
+  }, [selectedNode, selectedNodes, selectedEdge, nodes, removeNode, removeEdge, deleteSelected, undo, redo])
 
+  // Edge connection with type selection
   const onConnect = useCallback((params) => {
-    const newEdge = { ...params, ...edgeOptions, id: `e-${Date.now()}` }
+    // Show type selector instead of immediately creating
+    setPendingConnection(params)
+    setShowEdgeTypeMenu(true)
+  }, [])
+
+  const handleCreateEdge = useCallback((type) => {
+    if (!pendingConnection) return
+    const newEdge = { ...pendingConnection, ...edgeOptions, id: `e-${Date.now()}`, data: { connectionType: type } }
     setEdges((eds) => addEdge(newEdge, eds))
-    addStoreEdge(params)
-  }, [setEdges, addStoreEdge])
+    addStoreEdge(pendingConnection, type)
+    setPendingConnection(null)
+    setShowEdgeTypeMenu(false)
+  }, [pendingConnection, setEdges, addStoreEdge])
 
-  const onNodeClick = useCallback((_, node) => {
-    setSelectedNode(node)
-  }, [setSelectedNode])
-
+  const onNodeClick = useCallback((_, node) => setSelectedNode(node), [setSelectedNode])
+  const onEdgeClick = useCallback((_, edge) => setSelectedEdge(edge), [setSelectedEdge])
   const onPaneClick = useCallback(() => {
     setSelectedNode(null)
     setSelectedNodes([])
-  }, [setSelectedNode, setSelectedNodes])
+    setSelectedEdge(null)
+    setShowEdgeTypeMenu(false)
+  }, [setSelectedNode, setSelectedNodes, setSelectedEdge])
 
-  const onSelectionChange = useCallback(({ nodes }) => {
+  const onSelectionChange = useCallback(({ nodes, edges }) => {
     setSelectedNodes(nodes)
-  }, [setSelectedNodes])
+    if (edges?.length > 0) setSelectedEdge(edges[0])
+  }, [setSelectedNodes, setSelectedEdge])
 
-  const onDragOver = useCallback((event) => {
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
-  }, [])
+  const onDragOver = useCallback((event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move' }, [])
 
   const onDrop = useCallback((event) => {
     event.preventDefault()
     const type = event.dataTransfer.getData('application/resonance-block')
     if (!type) return
-
-    const position = screenToFlowPosition({
-      x: event.clientX,
-      y: event.clientY,
-    })
-
+    const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
     const newNode = addNode(type, position)
     requestAnimationFrame(() => {
       setTimeout(() => {
         const el = document.querySelector(`[data-id="${newNode.id}"]`)
-        if (el) animations.blockEnter(el)
+        if (el) {
+          el.animate([
+            { opacity: 0, transform: 'scale(0.5) translateY(20px)' },
+            { opacity: 1, transform: 'scale(1) translateY(0)' }
+          ], { duration: 500, easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)' })
+        }
       }, 100)
     })
   }, [screenToFlowPosition, addNode])
 
-  const onNodeDragStop = useCallback((_, node) => {
-    updateNodePosition(node.id, node.position)
-  }, [updateNodePosition])
-
-  const onNodesDelete = useCallback((deletedNodes) => {
-    deletedNodes.forEach(node => removeNode(node.id))
-  }, [removeNode])
-
-  const onEdgesDelete = useCallback((deletedEdges) => {
-    deletedEdges.forEach(edge => removeEdge(edge.id))
-  }, [removeEdge])
+  const onNodeDragStop = useCallback((_, node) => updateNodePosition(node.id, node.position), [updateNodePosition])
+  const onNodesDelete = useCallback((deletedNodes) => deletedNodes.forEach(node => removeNode(node.id)), [removeNode])
+  const onEdgesDelete = useCallback((deletedEdges) => deletedEdges.forEach(edge => removeEdge(edge.id)), [removeEdge])
 
   const handleManualSave = async () => {
-    if (!id || id === 'new') {
-      setShowSaveNewModal(true)
-      return
-    }
+    if (!id || id === 'new') { setShowSaveNewModal(true); return }
     try {
       await saveCanvas(id, { nodes, edges })
       setLogs(prev => [...prev, { type: 'success', message: 'Design saved to cloud', timestamp: Date.now() }])
@@ -320,68 +267,152 @@ function CanvasEditorInner() {
     }
   }
 
-  const handleRunSimulation = () => {
-    if (simulationRunning) { stopSimulation(); return }
+  // === REAL SIMULATION INTEGRATION ===
+  const handleRunSimulation = async (config = {}) => {
+    if (simulationRunning) {
+      if (simulationId) {
+        try { await api.stopSimulation(simulationId) } catch (e) { /* ignore */ }
+      }
+      stopSimulation()
+      if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null }
+      if (simulationIntervalRef.current) { clearInterval(simulationIntervalRef.current); simulationIntervalRef.current = null }
+      setSimulationProgress(0)
+      setSimulationId(null)
+      return
+    }
+
+    if (!id || id === 'new') {
+      setLogs(prev => [...prev, { type: 'warning', message: 'Save design before running simulation', timestamp: Date.now() }])
+      setShowSaveNewModal(true)
+      return
+    }
+
     startSimulation()
     setLogs(prev => [...prev, { type: 'info', message: 'Starting simulation...', timestamp: Date.now() }])
+    setSimulationProgress(0)
 
-    let progress = 0
-    const interval = setInterval(() => {
-      progress += 5
-      setSimulationProgress(progress)
-      if (progress >= 100) {
-        clearInterval(interval)
-        stopSimulation()
-        setSimulationProgress(0)
-        setLogs(prev => [...prev, { type: 'success', message: 'Simulation completed', timestamp: Date.now() }])
-        const metrics = {
-          totalRequests: Math.floor(Math.random() * 50000) + 10000,
-          avgLatency: Math.floor(Math.random() * 100) + 20,
-          p99Latency: Math.floor(Math.random() * 300) + 100,
-          errorRate: (Math.random() * 5).toFixed(2),
-          throughput: Math.floor(Math.random() * 2000) + 500,
-          availability: (99 + Math.random()).toFixed(2),
-          duration: 300,
-        }
-        setSimulationMetrics(metrics)
-        nodes.forEach(node => {
-          updateNode(node.id, {
-            metrics: {
-              rps: Math.floor(Math.random() * 1000) + 100,
-              latency: Math.floor(Math.random() * 100) + 10,
-              errors: Math.floor(Math.random() * 50),
-            }
+    try {
+      const result = await api.runSimulation(id, {
+        trafficPattern: config.trafficPattern || 'steady',
+        rps: config.rps || 100,
+        duration: config.duration || 300,
+        scenario: config.scenario || 'none',
+      })
+
+      const simId = result.simulationId
+      setSimulationId(simId)
+      setLogs(prev => [...prev, { type: 'success', message: `Simulation ${simId} started`, timestamp: Date.now() }])
+
+      // SSE stream
+      const es = new EventSource(
+        `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/simulations/${simId}/stream`,
+        { withCredentials: true }
+      )
+
+      es.onmessage = (event) => {
+        const data = JSON.parse(event.data)
+        setSimulationProgress(data.progress || 0)
+
+        if (data.metrics) {
+          Object.entries(data.metrics).forEach(([blockId, metrics]) => {
+            updateNode(blockId, {
+              metrics: {
+                rps: metrics.throughput || 0,
+                latency: Math.round(metrics.avgLatency || 0),
+                errors: metrics.totalFailed || 0,
+                utilization: metrics.utilization || 0,
+                p95Latency: Math.round(metrics.p95Latency || 0),
+                p99Latency: Math.round(metrics.p99Latency || 0),
+                queueDepth: metrics.queueDepth || 0,
+              }
+            })
           })
-        })
+        }
+
+        if (data.global) {
+          setSimulationMetrics({
+            totalRequests: data.global.totalRequests || 0,
+            avgLatency: data.global.avgLatency || 0,
+            p99Latency: 0,
+            errorRate: data.global.totalRequests > 0
+              ? ((data.global.totalErrors / data.global.totalRequests) * 100).toFixed(2)
+              : '0.00',
+            throughput: data.global.totalRequests / (config.duration || 300),
+            availability: data.global.totalRequests > 0
+              ? (((data.global.totalRequests - data.global.totalErrors) / data.global.totalRequests) * 100).toFixed(2)
+              : '100.00',
+            duration: config.duration || 300,
+          })
+        }
+
+        if (data.currentRps && data.currentRps > (config.rps || 100) * 10) {
+          setLogs(prev => [...prev, { type: 'warning', message: `Traffic spike: ${Math.round(data.currentRps)} RPS`, timestamp: Date.now() }])
+        }
       }
-    }, 150)
+
+      es.onerror = () => { es.close(); eventSourceRef.current = null }
+      eventSourceRef.current = es
+
+      // Poll for completion
+      simulationIntervalRef.current = setInterval(async () => {
+        try {
+          const status = await api.getSimulationStatus(simId)
+          if (status.status === 'completed' || status.status === 'stopped') {
+            clearInterval(simulationIntervalRef.current)
+            simulationIntervalRef.current = null
+            if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null }
+            stopSimulation()
+            setSimulationProgress(100)
+            setSimulationId(null)
+
+            if (status.metrics) {
+              setSimulationMetrics({
+                totalRequests: status.metrics.totalRequests || 0,
+                avgLatency: Math.round(status.metrics.avgLatency || 0),
+                p99Latency: Math.round(status.metrics.p99Latency || 0),
+                errorRate: (status.metrics.errorRate || 0).toFixed(2),
+                throughput: Math.round(status.metrics.throughput || 0),
+                availability: (status.metrics.availability || 100).toFixed(2),
+                duration: status.metrics.duration || (config.duration || 300),
+              })
+            }
+
+            setLogs(prev => [...prev, { type: 'success', message: `Simulation completed — ${status.metrics?.totalRequests?.toLocaleString() || 'N/A'} requests`, timestamp: Date.now() }])
+
+            if (status.metrics && (status.metrics.errorRate > 1 || status.metrics.avgLatency > 200)) {
+              setShowSuggestions(true)
+            }
+          }
+        } catch (err) { console.error('Status poll error:', err) }
+      }, 2000)
+
+    } catch (err) {
+      stopSimulation()
+      setSimulationProgress(0)
+      setLogs(prev => [...prev, { type: 'error', message: `Simulation failed: ${err.message}`, timestamp: Date.now() }])
+    }
   }
+
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) eventSourceRef.current.close()
+      if (simulationIntervalRef.current) clearInterval(simulationIntervalRef.current)
+    }
+  }, [])
 
   const SaveStatusIndicator = () => {
     const status = autoSaveStatus || saveStatus
     if (status === 'idle') return null
-
     const icons = {
       saving: <Loader2 size={14} className="animate-spin text-amber-500" />,
       saved: <CheckCircle2 size={14} className="text-green-500" />,
-      error: <AlertCircle size={14} className="text-red-500" />,
+      error: <AlertCircle size={14} className="text-red-500" />
     }
-
-    const labels = {
-      saving: 'Saving...',
-      saved: 'Saved',
-      error: 'Save failed',
-    }
-
+    const labels = { saving: 'Saving...', saved: 'Saved', error: 'Save failed' }
     return (
       <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-resonance-bg-elevated/80 backdrop-blur-sm border border-resonance-border">
         {icons[status]}
-        <span className={`text-xs font-medium ${
-          status === 'saving' ? 'text-amber-500' : 
-          status === 'saved' ? 'text-green-500' : 'text-red-500'
-        }`}>
-          {labels[status]}
-        </span>
+        <span className={`text-xs font-medium ${status === 'saving' ? 'text-amber-500' : status === 'saved' ? 'text-green-500' : 'text-red-500'}`}>{labels[status]}</span>
       </div>
     )
   }
@@ -411,6 +442,8 @@ function CanvasEditorInner() {
     )
   }
 
+  const allConnectionTypes = getAllConnectionTypes()
+
   return (
     <div className="h-screen flex flex-col bg-resonance-canvas-bg">
       <TopToolbar
@@ -422,12 +455,31 @@ function CanvasEditorInner() {
         onShare={() => setShowShareModal(true)}
         simulationRunning={simulationRunning}
         onRunSimulation={handleRunSimulation}
-        extraActions={<SaveStatusIndicator />}
+        extraActions={
+          <div className="flex items-center gap-2">
+            <SaveStatusIndicator />
+            <button
+              onClick={() => setShowSuggestions(true)}
+              className="p-2 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-secondary hover:text-resonance-accent transition-colors"
+              title="AI Suggestions"
+            >
+              <GitBranch size={16} />
+            </button>
+          </div>
+        }
+        centerContent={
+          <SimulationControls
+            onRun={handleRunSimulation}
+            isRunning={simulationRunning}
+            progress={simulationProgress}
+            metrics={null}
+            simulationId={simulationId}
+          />
+        }
       />
 
       <div className="flex-1 flex overflow-hidden">
         <BlockLibrary />
-
         <div className="flex-1 relative min-h-0">
           <div className="w-full h-full">
             <ReactFlow
@@ -437,6 +489,7 @@ function CanvasEditorInner() {
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               onNodeClick={onNodeClick}
+              onEdgeClick={onEdgeClick}
               onPaneClick={onPaneClick}
               onDragOver={onDragOver}
               onDrop={onDrop}
@@ -462,11 +515,15 @@ function CanvasEditorInner() {
             >
               <Background color="var(--canvas-grid)" gap={20} size={1} variant="dots" />
               <Controls className="!bg-resonance-bg-elevated !border-resonance-border !rounded-xl !shadow-lg" showInteractive={false} />
-              <MiniMap className="!bg-resonance-bg-elevated !border-resonance-border !rounded-xl !shadow-lg" nodeColor={(node) => node.data?.color || '#8b5cf6'} maskColor="rgba(0, 0, 0, 0.2)" />
+              <MiniMap
+                className="!bg-resonance-bg-elevated !border-resonance-border !rounded-xl !shadow-lg"
+                nodeColor={(node) => node.data?.color || '#8b5cf6'}
+                maskColor="rgba(0, 0, 0, 0.2)"
+              />
             </ReactFlow>
           </div>
 
-          {/* Zoom Controls */}
+          {/* Zoom controls */}
           <div className="absolute bottom-20 right-4 z-10 flex flex-col gap-1">
             <button onClick={() => zoomIn({ duration: 300 })} className="w-8 h-8 rounded-lg bg-resonance-bg-elevated border border-resonance-border flex items-center justify-center text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all shadow-lg" title="Zoom In">
               <ZoomIn size={16} />
@@ -479,32 +536,78 @@ function CanvasEditorInner() {
             </button>
           </div>
 
+          {/* Simulation overlay */}
           {simulationRunning && <SimulationOverlay progress={simulationProgress} />}
 
+          {/* Keyboard shortcuts hint */}
           <div className="absolute bottom-4 left-4 z-10">
-            <button onClick={() => setShowKeyboardShortcuts(true)} className="px-2 py-1 rounded-lg bg-resonance-bg-elevated/80 backdrop-blur-sm border border-resonance-border text-xs text-resonance-text-muted hover:text-resonance-text-secondary transition-colors">
+            <button
+              onClick={() => setShowKeyboardShortcuts(true)}
+              className="px-2 py-1 rounded-lg bg-resonance-bg-elevated/80 backdrop-blur-sm border border-resonance-border text-xs text-resonance-text-muted hover:text-resonance-text-secondary transition-colors"
+            >
               Press ⌘K for shortcuts
             </button>
           </div>
-        </div>
 
+          {/* Edge type selector popup */}
+          {showEdgeTypeMenu && pendingConnection && (
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-resonance-bg-elevated border border-resonance-border rounded-xl shadow-2xl p-4 min-w-[200px]">
+              <p className="text-sm font-medium text-resonance-text-primary mb-3">Select Connection Type</p>
+              <div className="space-y-1">
+                {allConnectionTypes.map(type => (
+                  <button
+                    key={type.id}
+                    onClick={() => handleCreateEdge(type.id)}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-resonance-text-secondary hover:bg-resonance-bg-hover hover:text-resonance-text-primary transition-all"
+                  >
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: type.color }} />
+                    <span className="font-medium">{type.label}</span>
+                    <span className="text-xs text-resonance-text-muted ml-auto">{type.id}</span>
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => { setShowEdgeTypeMenu(false); setPendingConnection(null) }}
+                className="mt-2 w-full py-1.5 rounded-lg text-xs text-resonance-text-muted hover:text-resonance-text-secondary hover:bg-resonance-bg-hover transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
         <PropertyPanel />
       </div>
 
       <BottomPanel logs={logs} />
-
       <ExportModal isOpen={showExportModal} onClose={() => setShowExportModal(false)} nodes={nodes} edges={edges} />
+      <AISuggestionsPanel
+        isOpen={showSuggestions}
+        onClose={() => setShowSuggestions(false)}
+        designId={id}
+        simulationId={simulationId}
+        onApply={(result) => {
+          setLogs(prev => [...prev, { type: 'success', message: `Applied: ${result.message}`, timestamp: Date.now() }])
+          if (id && id !== 'new') loadDesign(id)
+        }}
+      />
 
+      {/* Share Modal */}
       <Modal isOpen={showShareModal} onClose={() => setShowShareModal(false)} title="Share Design" size="sm">
         <div className="space-y-4">
           <p className="text-resonance-text-secondary text-sm">Share this design with your team or generate a public link.</p>
           <div className="flex gap-2">
-            <input type="text" value={`https://resonance.dev/design/${id || 'new'}`} readOnly className="input-field flex-1 text-sm" />
+            <input
+              type="text"
+              defaultValue={`https://resonance.dev/design/${id || 'new'}`}
+              readOnly
+              className="input-field flex-1 text-sm bg-resonance-bg-tertiary border border-resonance-border rounded-lg px-3 py-2 text-resonance-text-primary"
+            />
             <Button variant="secondary" onClick={() => navigator.clipboard.writeText(`https://resonance.dev/design/${id || 'new'}`)}>Copy</Button>
           </div>
         </div>
       </Modal>
 
+      {/* Keyboard Shortcuts Modal */}
       <Modal isOpen={showKeyboardShortcuts} onClose={() => setShowKeyboardShortcuts(false)} title="Keyboard Shortcuts" size="sm">
         <div className="space-y-3">
           {[
@@ -539,7 +642,7 @@ function CanvasEditorInner() {
             value={newDesignName}
             onChange={(e) => setNewDesignName(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleCreateAndSave()}
-            className="input-field w-full"
+            className="input-field w-full bg-resonance-bg-tertiary border border-resonance-border rounded-lg px-3 py-2 text-resonance-text-primary placeholder-resonance-text-muted focus:outline-none focus:border-resonance-accent"
             autoFocus
           />
           <div className="flex justify-end gap-3">
@@ -557,5 +660,3 @@ export const CanvasEditor = () => (
     <CanvasEditorInner />
   </ReactFlowProvider>
 )
-
-

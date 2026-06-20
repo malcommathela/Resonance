@@ -306,7 +306,14 @@ router.post('/public-repo', async (req, res) => {
 // ============================================================
 // PROTECTED ROUTES — auth required
 // ============================================================
-router.use(requireAuth())
+async function requireApiAuth(req, res, next) {
+  const auth = getAuth(req)
+  if (!auth?.userId) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  next()
+}
+router.use(requireApiAuth)
 
 // POST /analyze-and-save/:designId
 router.post('/analyze-and-save/:designId', async (req, res) => {

@@ -11,6 +11,7 @@ import {
   ExternalLink,
   Calendar,
   Trash2,
+  Loader2,
 } from 'lucide-react'
 import { useDesignStore } from '@/stores/designStore'
 import { useToast } from '@/components/ui/Toast'
@@ -19,21 +20,42 @@ import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { Modal } from '@/components/ui/Modal'
+import { Input } from '@/components/ui/Input'
+
+const ACCENT_PRESETS = [
+  '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316',
+  '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#a855f7'
+]
 
 export const DesignDetail = () => {
   const { id } = useParams()
   const navigate = useNavigate()
   const { addToast } = useToast()
-  const { loadDesign, currentDesign, deleteDesign, isLoading } = useDesignStore()
+  
+  // FIXED: Select individual store fields for reactivity
+  const currentDesign = useDesignStore(state => state.currentDesign)
+  const isLoading = useDesignStore(state => state.isLoading)
+  const loadDesign = useDesignStore(state => state.loadDesign)
+  const deleteDesign = useDesignStore(state => state.deleteDesign)
+  const updateDesign = useDesignStore(state => state.updateDesign)
+
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
   const [localDesign, setLocalDesign] = useState(null)
+
+  // Edit form state
+  const [editName, setEditName] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editAccent, setEditAccent] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
 
   const containerRef = useRef(null)
 
+  // FIXED: Load design and keep local state in sync
   useEffect(() => {
     if (id) {
       loadDesign(id).then(d => {
-        setLocalDesign(d)
+        if (d) setLocalDesign(d)
       }).catch(() => {
         navigate('/dashboard')
       })
@@ -46,8 +68,24 @@ export const DesignDetail = () => {
     }
   }, [])
 
+  // FIXED: Sync local state when store updates
+  useEffect(() => {
+    if (currentDesign && currentDesign.id === id) {
+      setLocalDesign(currentDesign)
+    }
+  }, [currentDesign, id])
+
   // Use loaded design from store or local state
-  const design = currentDesign || localDesign
+  const design = currentDesign?.id === id ? currentDesign : localDesign
+
+  // Sync edit form when design loads
+  useEffect(() => {
+    if (design) {
+      setEditName(design.name)
+      setEditDescription(design.description || '')
+      setEditAccent(design.accentColor || '#6366f1')
+    }
+  }, [design?.id])
 
   if (isLoading && !design) {
     return (
@@ -69,6 +107,10 @@ export const DesignDetail = () => {
 
   if (!design) return null
 
+  // FIXED: Compute accent and block count with fallbacks
+  const accent = design.accentColor || '#6366f1'
+  const blockCount = design.blocks ?? design.nodeCount ?? design.nodes?.length ?? 0
+
   const handleDelete = async () => {
     try {
       await deleteDesign(design.id)
@@ -77,6 +119,26 @@ export const DesignDetail = () => {
       navigate('/dashboard')
     } catch (err) {
       addToast('Failed to delete design', 'error')
+    }
+  }
+
+  // FIXED: Save and reload to ensure state sync
+    const handleSaveEdit = async () => {
+    if (!editName.trim()) return
+    setIsSaving(true)
+    try {
+      await updateDesign(design.id, {
+        name: editName.trim(),
+        description: editDescription.trim(),
+        accentColor: editAccent
+      })
+      
+      setShowEditModal(false)
+      addToast('Design updated successfully', 'success')
+    } catch (err) {
+      addToast(err.message || 'Failed to update design', 'error')
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -93,7 +155,7 @@ export const DesignDetail = () => {
     <div className="p-6 max-w-5xl mx-auto">
       <div ref={containerRef} style={{ opacity: 0 }}>
         <div className="flex items-start justify-between mb-8">
-          <div>
+          <div className="flex-1 min-w-0">
             <button
               onClick={() => navigate('/dashboard')}
               className="flex items-center gap-1 text-sm text-resonance-text-muted hover:text-resonance-text-secondary transition-colors mb-3"
@@ -102,17 +164,21 @@ export const DesignDetail = () => {
               Back to Dashboard
             </button>
             <div className="flex items-center gap-3 mb-2">
+              <div 
+                className="w-4 h-4 rounded-full shrink-0" 
+                style={{ backgroundColor: accent }} 
+              />
               <h1 className="text-2xl font-bold text-resonance-text-primary">{design.name}</h1>
               {getStatusBadge(design.status)}
             </div>
             <p className="text-resonance-text-secondary">{design.description || 'No description'}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Button
               variant="secondary"
               size="sm"
               icon={Edit3}
-              onClick={() => navigate(`/design/${design.id}`)}
+              onClick={() => setShowEditModal(true)}
             >
               Edit
             </Button>
@@ -135,11 +201,14 @@ export const DesignDetail = () => {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           <Card className="p-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-resonance-accent/10 flex items-center justify-center">
-                <Blocks size={20} className="text-resonance-accent" />
+              <div 
+                className="w-10 h-10 rounded-lg flex items-center justify-center"
+                style={{ backgroundColor: `${accent}15` }}
+              >
+                <Blocks size={20} style={{ color: accent }} />
               </div>
               <div>
-                <p className="text-2xl font-bold text-resonance-text-primary">{design.blocks || 0}</p>
+                <p className="text-2xl font-bold text-resonance-text-primary">{blockCount}</p>
                 <p className="text-xs text-resonance-text-muted">Blocks</p>
               </div>
             </div>
@@ -196,7 +265,8 @@ export const DesignDetail = () => {
                     href={design.repoUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-sm text-resonance-accent hover:underline flex items-center gap-1"
+                    className="text-sm hover:underline flex items-center gap-1"
+                    style={{ color: accent }}
                   >
                     {design.repoUrl}
                     <ExternalLink size={12} />
@@ -238,6 +308,55 @@ export const DesignDetail = () => {
         </Card>
       </div>
 
+      {/* Edit Design Modal */}
+      <Modal
+        isOpen={showEditModal}
+        onClose={() => setShowEditModal(false)}
+        title="Edit Design Details"
+      >
+        <div className="space-y-4">
+          <Input
+            label="Design Name"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            autoFocus
+          />
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-resonance-text-primary">Description</label>
+            <textarea
+              value={editDescription}
+              onChange={(e) => setEditDescription(e.target.value)}
+              placeholder="Add a description..."
+              rows={3}
+              className="w-full px-3 py-2 bg-resonance-bg-tertiary border border-resonance-border rounded-lg text-sm text-resonance-text-primary placeholder-resonance-text-muted focus:outline-none focus:ring-2 focus:ring-resonance-accent/30 focus:border-resonance-accent transition-all resize-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-resonance-text-primary">Accent Color</label>
+            <div className="flex flex-wrap gap-2">
+              {ACCENT_PRESETS.map((color) => (
+                <button
+                  key={color}
+                  onClick={() => setEditAccent(color)}
+                  className={`w-8 h-8 rounded-full border-2 transition-all ${
+                    editAccent === color ? 'border-white scale-110 shadow-lg' : 'border-transparent hover:scale-105'
+                  }`}
+                  style={{ backgroundColor: color }}
+                />
+              ))}
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="ghost" onClick={() => setShowEditModal(false)}>Cancel</Button>
+            <Button onClick={handleSaveEdit} disabled={!editName.trim() || isSaving}>
+              {isSaving ? <Loader2 size={14} className="animate-spin mr-2" /> : null}
+              Save Changes
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Delete Confirmation */}
       <Modal
         isOpen={showDeleteModal}
         onClose={() => setShowDeleteModal(false)}

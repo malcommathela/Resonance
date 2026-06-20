@@ -1,12 +1,12 @@
 import React from 'react'
-import { Search, Bell, Settings, LogOut, ChevronDown, Zap } from 'lucide-react'
+import { Bell, Settings, ChevronDown, Zap } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { Tooltip } from '@/components/ui/Tooltip'
 
 export const Header = () => {
-  const { user, logout } = useAuthStore()
+  const { user } = useAuthStore()
   const { theme } = useThemeStore()
 
   return (
@@ -17,15 +17,6 @@ export const Header = () => {
             <Zap size={16} className="text-white" />
           </div>
           <span className="font-bold text-lg text-resonance-text-primary">Resonance</span>
-        </div>
-        <div className="h-6 w-px bg-resonance-border" />
-        <div className="relative">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-resonance-text-muted" />
-          <input
-            type="text"
-            placeholder="Search designs..."
-            className="w-64 pl-9 pr-4 py-1.5 bg-resonance-bg-tertiary border border-resonance-border rounded-lg text-sm text-resonance-text-primary placeholder-resonance-text-muted focus:outline-none focus:ring-2 focus:ring-resonance-accent/30 focus:border-resonance-accent transition-all"
-          />
         </div>
       </div>
 

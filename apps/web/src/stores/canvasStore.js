@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { BLOCK_TYPES } from '@shared/constants'
+import { BLOCK_TYPES, CONNECTION_TYPES, categories } from '@shared/constants'
 
 const GRID_SIZE = 20
 
@@ -12,11 +12,16 @@ export const useCanvasStore = create((set, get) => ({
   edges: [],
   selectedNode: null,
   selectedNodes: [],
+  selectedEdge: null,
   selectedEdges: [],
   simulationRunning: false,
   simulationMetrics: null,
   activeTab: 'editor',
   zoom: 1,
+
+  // Custom types registry (persisted in memory per session)
+  customBlockTypes: [],
+  customEdgeTypes: [],
 
   // History
   history: [],
@@ -46,6 +51,8 @@ export const useCanvasStore = create((set, get) => ({
       historyIndex: newIndex,
       selectedNode: null,
       selectedNodes: [],
+      selectedEdge: null,
+      selectedEdges: [],
     })
   },
 
@@ -60,12 +67,15 @@ export const useCanvasStore = create((set, get) => ({
       historyIndex: newIndex,
       selectedNode: null,
       selectedNodes: [],
+      selectedEdge: null,
+      selectedEdges: [],
     })
   },
 
-  addNode: (type, position) => {
+  addNode: (type, position, overrides = {}) => {
     get().saveHistory()
-    const blockType = BLOCK_TYPES.find(b => b.id === type)
+    const allTypes = [...BLOCK_TYPES, ...get().customBlockTypes]
+    const blockType = allTypes.find(b => b.id === type)
     const newNode = {
       id: `${type}-${Date.now()}`,
       type: 'customBlock',
@@ -74,11 +84,13 @@ export const useCanvasStore = create((set, get) => ({
         y: snapToGrid(position.y),
       },
       data: {
-        label: blockType.label,
+        label: overrides.label || blockType?.label || type,
         type: type,
-        icon: blockType.icon,
-        color: blockType.color,
-        config: getDefaultConfig(type),
+        icon: overrides.icon || blockType?.icon || 'Server',
+        color: overrides.color || blockType?.color || '#8b5cf6',
+        category: overrides.category || blockType?.category || 'other',
+        config: { ...getDefaultConfig(type), ...(overrides.config || {}) },
+        isCustom: overrides.isCustom || false,
       },
     }
     set({ nodes: [...get().nodes, newNode] })
@@ -121,13 +133,20 @@ export const useCanvasStore = create((set, get) => ({
     })
   },
 
-  addEdge: (edge) => {
+  addEdge: (edge, type = 'http') => {
     get().saveHistory()
     const exists = get().edges.some(
       e => e.source === edge.source && e.target === edge.target
     )
     if (!exists) {
-      set({ edges: [...get().edges, { ...edge, id: `e-${Date.now()}`, type: 'customEdge', data: { connectionType: 'http' } }] })
+      set({
+        edges: [...get().edges, {
+          ...edge,
+          id: `e-${Date.now()}`,
+          type: 'customEdge',
+          data: { connectionType: type, ...edge.data },
+        }]
+      })
     }
   },
 
@@ -144,11 +163,20 @@ export const useCanvasStore = create((set, get) => ({
     })
   },
 
+  updateEdgeData: (id, dataUpdates) => {
+    set({
+      edges: get().edges.map(e =>
+        e.id === id ? { ...e, data: { ...e.data, ...dataUpdates } } : e
+      )
+    })
+  },
+
   setNodes: (nodes) => set({ nodes }),
   setEdges: (edges) => set({ edges }),
-  setSelectedNode: (node) => set({ selectedNode: node }),
-  setSelectedNodes: (nodes) => set({ selectedNodes: nodes, selectedNode: nodes[0] || null }),
-  setSelectedEdges: (edges) => set({ selectedEdges: edges }),
+  setSelectedNode: (node) => set({ selectedNode: node, selectedEdge: null }),
+  setSelectedNodes: (nodes) => set({ selectedNodes: nodes, selectedNode: nodes[0] || null, selectedEdge: null }),
+  setSelectedEdge: (edge) => set({ selectedEdge: edge, selectedNode: null, selectedNodes: [] }),
+  setSelectedEdges: (edges) => set({ selectedEdges: edges, selectedEdge: edges[0] || null, selectedNode: null, selectedNodes: [] }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setZoom: (zoom) => set({ zoom }),
 
@@ -162,20 +190,54 @@ export const useCanvasStore = create((set, get) => ({
       selectedNodes: [],
       selectedEdges: [],
       selectedNode: null,
+      selectedEdge: null,
     })
   },
+
+  // Custom block type creation
+  addCustomBlockType: (blockDef) => {
+    const newType = {
+      id: `custom-${Date.now()}`,
+      ...blockDef,
+      isCustom: true,
+    }
+    set({ customBlockTypes: [...get().customBlockTypes, newType] })
+    return newType
+  },
+
+  removeCustomBlockType: (id) => {
+    set({ customBlockTypes: get().customBlockTypes.filter(b => b.id !== id) })
+  },
+
+  // Custom edge type creation
+  addCustomEdgeType: (edgeDef) => {
+    const newType = {
+      id: `custom-edge-${Date.now()}`,
+      ...edgeDef,
+      isCustom: true,
+    }
+    set({ customEdgeTypes: [...get().customEdgeTypes, newType] })
+    return newType
+  },
+
+  removeCustomEdgeType: (id) => {
+    set({ customEdgeTypes: get().customEdgeTypes.filter(e => e.id !== id) })
+  },
+
+  getAllBlockTypes: () => [...BLOCK_TYPES, ...get().customBlockTypes],
+  getAllConnectionTypes: () => [...CONNECTION_TYPES, ...get().customEdgeTypes],
 
   startSimulation: () => set({ simulationRunning: true, simulationMetrics: null }),
   stopSimulation: () => set({ simulationRunning: false }),
   setSimulationMetrics: (metrics) => set({ simulationMetrics: metrics }),
 
-  // Load design from backend (React Flow format)
   loadDesign: (design) => {
     set({
       nodes: design.nodes || [],
       edges: design.edges || [],
       selectedNode: null,
       selectedNodes: [],
+      selectedEdge: null,
       selectedEdges: [],
       simulationRunning: false,
       simulationMetrics: null,
@@ -186,7 +248,18 @@ export const useCanvasStore = create((set, get) => ({
 
   clearCanvas: () => {
     get().saveHistory()
-    set({ nodes: [], edges: [], selectedNode: null, selectedNodes: [], selectedEdges: [], simulationRunning: false, simulationMetrics: null, history: [], historyIndex: -1 })
+    set({
+      nodes: [],
+      edges: [],
+      selectedNode: null,
+      selectedNodes: [],
+      selectedEdge: null,
+      selectedEdges: [],
+      simulationRunning: false,
+      simulationMetrics: null,
+      history: [],
+      historyIndex: -1,
+    })
   },
 }))
 

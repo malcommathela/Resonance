@@ -123,9 +123,27 @@ model Simulation {
   logs           Json?
   startedAt      DateTime @default(now())
   completedAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   design Design @relation(fields: [designId], references: [id], onDelete: Cascade)
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("simulations")
+}
+
+model OptimizationHistory {
+  id           String   @id @default(cuid())
+  designId     String
+  userId       String
+  simulationId String?
+  ruleId       String
+  ruleName     String
+  appliedAt    DateTime @default(now())
+  status       String   @default("applying")
+  changes      Json?
+  error        String?
+  rolledBackAt DateTime?
+
+  @@map("optimization_history")
 }

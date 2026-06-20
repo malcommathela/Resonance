@@ -1,21 +1,32 @@
 import { create } from 'zustand'
 import { api } from '@/services/api'
 
+// Helper to ensure designs always have computed fields
+const enrichDesign = (design) => {
+  if (!design) return null
+  return {
+    ...design,
+    blocks: design.blocks ?? design.nodeCount ?? design.nodes?.length ?? 0,
+    accentColor: design.accentColor || '#6366f1'
+  }
+}
+
 export const useDesignStore = create((set, get) => ({
   designs: [],
   currentDesign: null,
   isLoading: false,
   isSaving: false,
-  saveStatus: 'idle', // 'idle' | 'saving' | 'saved' | 'error'
+  saveStatus: 'idle',
   error: null,
-  lastDeleted: null, // For undo
+  lastDeleted: null,
 
   loadDesigns: async () => {
     set({ isLoading: true, error: null })
     try {
       const designs = await api.getDesigns()
-      set({ designs, isLoading: false })
-      return designs
+      const enriched = designs.map(enrichDesign)
+      set({ designs: enriched, isLoading: false })
+      return enriched
     } catch (err) {
       set({ error: err.message, isLoading: false })
       throw err
@@ -26,8 +37,9 @@ export const useDesignStore = create((set, get) => ({
     set({ isLoading: true, error: null })
     try {
       const design = await api.getDesign(id)
-      set({ currentDesign: design, isLoading: false })
-      return design
+      const enriched = enrichDesign(design)
+      set({ currentDesign: enriched, isLoading: false })
+      return enriched
     } catch (err) {
       set({ error: err.message, isLoading: false })
       throw err
@@ -38,27 +50,47 @@ export const useDesignStore = create((set, get) => ({
     set({ isLoading: true, error: null })
     try {
       const newDesign = await api.createDesign(design)
+      const enriched = enrichDesign(newDesign)
       set({ 
-        designs: [newDesign, ...get().designs],
-        currentDesign: newDesign,
+        designs: [enriched, ...get().designs],
+        currentDesign: enriched,
         isLoading: false 
       })
-      return newDesign
+      return enriched
     } catch (err) {
       set({ error: err.message, isLoading: false })
       throw err
     }
   },
 
+  // FIXED: Optimistic update that preserves accentColor even if API strips it
   updateDesign: async (id, updates) => {
     try {
+      // Optimistically update local state immediately
+      set(state => ({
+        designs: state.designs.map(d => d.id === id ? { ...d, ...updates } : d),
+        currentDesign: state.currentDesign?.id === id 
+          ? { ...state.currentDesign, ...updates } 
+          : state.currentDesign,
+      }))
+
+      // Send to API
       const updated = await api.updateDesign(id, updates)
-      set({
-        designs: get().designs.map(d => d.id === id ? { ...d, ...updated } : d),
-        currentDesign: get().currentDesign?.id === id ? { ...get().currentDesign, ...updated } : get().currentDesign,
-      })
-      return updated
+      
+      // Merge API response with our updates (API might strip unknown fields like accentColor)
+      const merged = enrichDesign({ ...updated, ...updates })
+      
+      set(state => ({
+        designs: state.designs.map(d => d.id === id ? { ...d, ...merged } : d),
+        currentDesign: state.currentDesign?.id === id 
+          ? { ...state.currentDesign, ...merged } 
+          : state.currentDesign,
+      }))
+      
+      return merged
     } catch (err) {
+      // Revert on error by reloading
+      await get().loadDesigns()
       set({ error: err.message })
       throw err
     }
@@ -75,7 +107,6 @@ export const useDesignStore = create((set, get) => ({
       await api.deleteDesign(id)
       return true
     } catch (err) {
-      // Rollback on error
       set({
         designs: [design, ...get().designs],
         lastDeleted: null,
@@ -101,9 +132,11 @@ export const useDesignStore = create((set, get) => ({
         description: original.description,
         repoUrl: original.repoUrl,
         repoBranch: original.repoBranch,
+        accentColor: original.accentColor,
       })
-      set({ designs: [duplicate, ...get().designs] })
-      return duplicate
+      const enriched = enrichDesign(duplicate)
+      set({ designs: [enriched, ...get().designs] })
+      return enriched
     } catch (err) {
       set({ error: err.message })
       throw err
@@ -114,14 +147,20 @@ export const useDesignStore = create((set, get) => ({
     set({ isSaving: true, saveStatus: 'saving' })
     try {
       await api.saveCanvas(id, { nodes, edges })
-      set({ 
+      
+      const blockCount = nodes?.length || 0
+      
+      set(state => ({
         isSaving: false, 
         saveStatus: 'saved',
-        currentDesign: get().currentDesign ? {
-          ...get().currentDesign,
+        designs: state.designs.map(d => d.id === id ? { ...d, blocks: blockCount, updatedAt: new Date().toISOString() } : d),
+        currentDesign: state.currentDesign?.id === id ? {
+          ...state.currentDesign,
+          blocks: blockCount,
           updatedAt: new Date().toISOString()
-        } : null
-      })
+        } : state.currentDesign
+      }))
+      
       setTimeout(() => set({ saveStatus: 'idle' }), 2000)
     } catch (err) {
       set({ isSaving: false, saveStatus: 'error', error: err.message })
@@ -132,13 +171,19 @@ export const useDesignStore = create((set, get) => ({
   autoSaveCanvas: async (id, { nodes, edges }) => {
     try {
       await api.autoSaveCanvas(id, { nodes, edges })
-      set({ 
+      
+      const blockCount = nodes?.length || 0
+      
+      set(state => ({
         saveStatus: 'saved',
-        currentDesign: get().currentDesign ? {
-          ...get().currentDesign,
+        designs: state.designs.map(d => d.id === id ? { ...d, blocks: blockCount, updatedAt: new Date().toISOString() } : d),
+        currentDesign: state.currentDesign?.id === id ? {
+          ...state.currentDesign,
+          blocks: blockCount,
           updatedAt: new Date().toISOString()
-        } : null
-      })
+        } : state.currentDesign
+      }))
+      
       setTimeout(() => set({ saveStatus: 'idle' }), 2000)
     } catch (err) {
       set({ saveStatus: 'error' })
@@ -146,7 +191,7 @@ export const useDesignStore = create((set, get) => ({
     }
   },
 
-  setCurrentDesign: (design) => set({ currentDesign: design }),
+  setCurrentDesign: (design) => set({ currentDesign: enrichDesign(design) }),
   clearError: () => set({ error: null }),
   clearLastDeleted: () => set({ lastDeleted: null }),
 }))

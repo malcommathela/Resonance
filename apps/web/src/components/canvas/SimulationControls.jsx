@@ -94,9 +94,19 @@ export const SimulationControls = ({ onRun, isRunning, progress, metrics, simula
         >
           <Settings2 size={16} />
         </button>
+
+        {/* Live metrics mini-badge when running */}
+        {isRunning && liveMetrics && (
+          <div className="flex items-center gap-2 px-2 py-1 rounded-lg bg-resonance-bg-tertiary border border-resonance-border">
+            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-xs font-mono text-resonance-text-secondary">
+              {liveMetrics.progress?.toFixed(0)}%
+            </span>
+          </div>
+        )}
       </div>
 
-      {/* Live Metrics Mini-Panel */}
+      {/* Live Metrics Panel — positioned relative to canvas, not absolute */}
       {isRunning && liveMetrics && (
         <div className="absolute top-14 right-4 z-20 w-72 bg-resonance-bg-elevated border border-resonance-border rounded-xl shadow-xl p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -132,7 +142,7 @@ export const SimulationControls = ({ onRun, isRunning, progress, metrics, simula
               <div key={blockId} className="flex items-center gap-2 text-xs">
                 <div className="w-16 truncate text-resonance-text-muted">{blockId.slice(0, 8)}</div>
                 <div className="flex-1 h-1.5 bg-resonance-bg-tertiary rounded-full overflow-hidden">
-                  <div 
+                  <div
                     className={`h-full rounded-full transition-all ${
                       blockMetrics.utilization > 0.9 ? 'bg-red-500' :
                       blockMetrics.utilization > 0.7 ? 'bg-amber-500' :
