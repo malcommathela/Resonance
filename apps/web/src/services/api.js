@@ -102,7 +102,7 @@ class ApiService {
   }
 
   async saveCanvas(id, { nodes, edges }) {
-    return this.request(`/designs/${id}/save`, {
+    return this.request(`/designs/${id}/canvas`, {
       method: 'POST',
       body: JSON.stringify({ nodes, edges }),
     })
