@@ -6,7 +6,7 @@ export const SimulationOverlay = ({ progress }) => {
   const { simulationMetrics } = useCanvasStore()
 
   return (
-    <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-40 pointer-events-auto">
+    <div className="absolute top-10 left-1/2 -translate-x-1/2 z-40 pointer-events-auto">
       <div className="flex items-center gap-4 px-5 py-2.5 rounded-xl bg-resonance-bg-elevated/95 backdrop-blur-md border border-resonance-border shadow-2xl">
         {/* Spinner + Status */}
         <div className="flex items-center gap-2.5">

@@ -149,25 +149,19 @@ export const api = new ApiService()
 // FIXED: Properly initialize token getter with Clerk
 export function useApiWithAuth() {
   const { getToken, isSignedIn, isLoaded } = useAuth()
-  const hasSetGetter = useRef(false)
 
-  useEffect(() => {
-    if (!isLoaded || hasSetGetter.current) return
-
-    // Set the token getter to call Clerk's getToken with the proper template
+  // Set getter synchronously — no race condition
+  if (isLoaded) {
     api.setTokenGetter(async () => {
       if (!isSignedIn || !getToken) return null
       try {
-        // Get JWT with no template (uses default session token)
         return await getToken()
       } catch (err) {
         console.error('Clerk getToken failed:', err)
         return null
       }
     })
-
-    hasSetGetter.current = true
-  }, [isLoaded, isSignedIn, getToken])
+  }
 
   return { api, isLoaded, isSignedIn }
 }

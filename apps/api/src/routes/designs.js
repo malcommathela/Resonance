@@ -65,7 +65,17 @@ router.get('/', async (req, res) => {
         _count: { select: { blocks: true, edges: true, simulations: true } }
       }
     })
-    res.json(designs)
+
+    // Transform _count to flat fields for frontend
+    const transformed = designs.map(d => ({
+      ...d,
+      blocks: d._count.blocks,
+      edges: d._count.edges,
+      simulations: d._count.simulations,
+      _count: undefined,
+    }))
+
+    res.json(transformed)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

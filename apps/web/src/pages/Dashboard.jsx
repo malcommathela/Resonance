@@ -28,6 +28,7 @@ export const Dashboard = () => {
   const [showEditModal, setShowEditModal] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
   const [newDesignName, setNewDesignName] = useState('')
+  const [newDesignDescription, setNewDesignDescription] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState('grid')
   const [selectedDesigns, setSelectedDesigns] = useState(new Set())
@@ -73,10 +74,12 @@ export const Dashboard = () => {
     try {
       const design = await createDesign({ 
         name: newDesignName.trim(),
+        description: newDesignDescription.trim(),
         accentColor: getRandomAccent()
       })
       setShowNewModal(false)
       setNewDesignName('')
+      setNewDesignDescription('')
       addToast('Design created successfully', 'success')
       navigate(`/design/${design.id}`)
     } catch (err) {
@@ -319,16 +322,14 @@ export const Dashboard = () => {
         {/* Toolbar */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-resonance-text-muted" />
-              <Input
-                type="text"
-                placeholder="Search designs..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 w-64"
-              />
-            </div>
+            <Input
+              type="text"
+              placeholder="Search designs..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              icon={Search}
+              className="w-64"
+            />
 
             {/* Filter tabs */}
             <div className="flex items-center bg-resonance-bg-secondary rounded-lg p-1 border border-resonance-border">
@@ -460,6 +461,16 @@ export const Dashboard = () => {
             onKeyDown={(e) => e.key === 'Enter' && handleCreateDesign()}
             autoFocus
           />
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-resonance-text-primary">Description</label>
+            <textarea
+              value={newDesignDescription}
+              onChange={(e) => setNewDesignDescription(e.target.value)}
+              placeholder="Add a description..."
+              rows={3}
+              className="w-full px-3 py-2 bg-resonance-bg-tertiary border border-resonance-border rounded-lg text-sm text-resonance-text-primary placeholder-resonance-text-muted focus:outline-none focus:ring-2 focus:ring-resonance-accent/30 focus:border-resonance-accent transition-all resize-none"
+            />
+          </div>
           <div className="flex justify-end gap-3">
             <Button variant="ghost" onClick={() => setShowNewModal(false)}>Cancel</Button>
             <Button onClick={handleCreateDesign} disabled={!newDesignName.trim()}>
