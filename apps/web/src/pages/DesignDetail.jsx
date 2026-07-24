@@ -11,7 +11,7 @@ import { useToast } from '@/components/ui/Toast'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
-import { DesignDetailSkeleton, ReportListSkeleton, AuditLogSkeleton } from '@/components/ui/Skeletons'
+import { DesignDetailSkeleton, ReportListSkeleton, AuditLogSkeleton } from '@/components/ui/skeletons'
 
 /* ------------------------------------------------------------------ */
 // Helpers
