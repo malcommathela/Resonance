@@ -26,7 +26,7 @@ import { animations } from '@/lib/anime'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
-import { SettingsSkeleton } from '@/components/ui/Skeletons'
+import { SettingsSkeleton } from '@/components/ui/skeletons'
 import { api } from '@/services/api'
 
 const tabs = [

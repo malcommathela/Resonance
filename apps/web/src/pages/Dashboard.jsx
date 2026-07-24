@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/Input'
 import { getRandomAccent } from '@/components/ui/DesignCard'
 import { GitHubImportModal } from '@/components/canvas/GitHubImportModal'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
-import { DashboardSkeleton } from '@/components/ui/Skeletons'
+import { DashboardSkeleton } from '@/components/ui/skeletons'
 import {
   Loader2, Plus, Search, Github, Sun, Moon, Bell, Trash2, X, Layers,
   FolderOpen, Activity, Zap, DollarSign, Pencil, Copy, Clock, GitBranch
