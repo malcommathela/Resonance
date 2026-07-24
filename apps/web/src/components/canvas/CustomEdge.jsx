@@ -2,13 +2,27 @@ import React, { useMemo, useState, useCallback } from 'react'
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath } from '@xyflow/react'
 import { useCanvasStore } from '@/stores/canvasStore'
 import { CONNECTION_TYPE_META } from '@shared/constants'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, AlertTriangle, XCircle } from 'lucide-react'
 
 function hexToRgba(hex, alpha) {
   const r = parseInt(hex.slice(1, 3), 16)
   const g = parseInt(hex.slice(3, 5), 16)
   const b = parseInt(hex.slice(5, 7), 16)
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+/* Tokenized semantic colors for edge states */
+const EDGE_STATE_COLORS = {
+  circuitOpen: 'rgb(var(--error-rgb))',
+  retryStorm: 'rgb(var(--warning-rgb))',
+  highLatency: 'rgb(var(--warning-rgb))',
+}
+
+const VALIDATION_COLORS = {
+  critical: 'rgb(var(--error-rgb))',
+  warning: 'rgb(var(--warning-rgb))',
+  info: 'rgb(var(--text-muted-rgb))',
+  risk: 'rgb(var(--warning-rgb))',
 }
 
 export const CustomEdge = ({
@@ -20,9 +34,16 @@ export const CustomEdge = ({
   sourcePosition,
   targetPosition,
   data,
-  selected,
+  selected: rfSelected,
 }) => {
-  const { updateEdgeData, getAllConnectionTypes, simulationRunning } = useCanvasStore()
+  const {
+    updateEdgeData,
+    getAllConnectionTypes,
+    simulationRunning,
+    selectedEdgeId,
+    validationHighlight,
+  } = useCanvasStore()
+
   const [showTypeMenu, setShowTypeMenu] = useState(false)
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition,
@@ -43,6 +64,52 @@ export const CustomEdge = ({
   const bgColor = hexToRgba(meta.color, 0.08)
   const particleColor = data?.customColor || meta.color
 
+  const isSelected = useMemo(() => {
+    if (selectedEdgeId !== null) return selectedEdgeId === id
+    return rfSelected || false
+  }, [selectedEdgeId, id, rfSelected])
+
+  const isValidationHighlighted = useMemo(() => {
+    if (!validationHighlight) return false
+    return validationHighlight.elementType === 'edge' && validationHighlight.elementId === id
+  }, [validationHighlight, id])
+
+  const validationSeverity = validationHighlight?.severity || 'warning'
+  const validationColor = VALIDATION_COLORS[validationSeverity] || VALIDATION_COLORS.warning
+
+  const circuitOpen = data?.circuitOpen === true
+  const retryCount = data?.retryCount || 0
+  const isRetryStorm = retryCount > 10
+  const edgeLatency = data?.latencyMs || 0
+
+  let strokeColor = data?.customColor || meta.color
+  let strokeWidth = isSelected ? 3 : 2
+  let strokeDasharray = connectionType === 'event' ? '5,5' : 'none'
+  let opacity = 0.6
+
+  if (circuitOpen) {
+    strokeColor = EDGE_STATE_COLORS.circuitOpen
+    strokeWidth = isSelected ? 5 : 4
+    strokeDasharray = '8,4'
+    opacity = 1
+  } else if (isRetryStorm) {
+    strokeColor = EDGE_STATE_COLORS.retryStorm
+    strokeWidth = isSelected ? 4 : 3
+    opacity = 1
+  } else if (edgeLatency > 500) {
+    strokeColor = EDGE_STATE_COLORS.highLatency
+    strokeWidth = isSelected ? 3 : 2
+  }
+
+  if (isValidationHighlighted) {
+    strokeColor = validationColor
+    strokeWidth = isSelected ? 4 : 3
+    strokeDasharray = '6,3'
+    opacity = 1
+  }
+
+  const showParticles = simulationRunning && !circuitOpen
+
   return (
     <>
       <defs>
@@ -56,15 +123,101 @@ export const CustomEdge = ({
       <BaseEdge
         path={edgePath}
         style={{
-          stroke: data?.customColor || meta.color,
-          strokeWidth: selected ? 3 : 2,
-          strokeDasharray: connectionType === 'event' ? '5,5' : 'none',
-          opacity: 0.6,
-          transition: 'all 0.2s ease',
+          stroke: strokeColor,
+          strokeWidth,
+          strokeDasharray,
+          opacity,
+          transition: 'all 0.3s ease',
+          ...(isValidationHighlighted && {
+            filter: `drop-shadow(0 0 6px ${validationColor})`,
+            animation: 'pulse-edge-validation 1.2s ease-in-out infinite',
+          }),
+          ...(isRetryStorm && !isValidationHighlighted && {
+            filter: `drop-shadow(0 0 4px ${strokeColor})`,
+            animation: 'pulse-edge 1.5s ease-in-out infinite',
+          }),
         }}
       />
 
-      {simulationRunning && (
+      {/* Circuit breaker badge */}
+      {circuitOpen && (
+        <g pointerEvents="none">
+          <rect
+            x={labelX - 44}
+            y={labelY - 12}
+            width={88}
+            height={20}
+            rx={10}
+            fill="rgb(var(--error-rgb))"
+            opacity={0.92}
+          />
+          <text
+            x={labelX}
+            y={labelY + 3}
+            textAnchor="middle"
+            fill="white"
+            fontSize="9"
+            fontWeight="600"
+            fontFamily="system-ui, sans-serif"
+          >
+            CIRCUIT OPEN
+          </text>
+        </g>
+      )}
+
+      {/* Retry storm badge */}
+      {!circuitOpen && isRetryStorm && (
+        <g pointerEvents="none">
+          <rect
+            x={labelX - 40}
+            y={labelY - 12}
+            width={80}
+            height={20}
+            rx={10}
+            fill="rgb(var(--warning-rgb))"
+            opacity={0.92}
+          />
+          <text
+            x={labelX}
+            y={labelY + 3}
+            textAnchor="middle"
+            fill="white"
+            fontSize="9"
+            fontWeight="600"
+            fontFamily="system-ui, sans-serif"
+          >
+            RETRY STORM
+          </text>
+        </g>
+      )}
+
+      {/* Validation highlight badge */}
+      {isValidationHighlighted && (
+        <g pointerEvents="none">
+          <rect
+            x={labelX - 36}
+            y={labelY - 12}
+            width={72}
+            height={20}
+            rx={10}
+            fill={validationColor}
+            opacity={0.92}
+          />
+          <text
+            x={labelX}
+            y={labelY + 3}
+            textAnchor="middle"
+            fill="white"
+            fontSize="9"
+            fontWeight="600"
+            fontFamily="system-ui, sans-serif"
+          >
+            VALIDATION
+          </text>
+        </g>
+      )}
+
+      {showParticles && (
         <g pointerEvents="none">
           {[0, 0.6, 1.2].map((delay, i) => (
             <ellipse key={i} rx={4 - i * 0.7} ry={2 - i * 0.3} fill={`url(#${gradientId})`} opacity={0.9 - i * 0.2}>
@@ -95,12 +248,13 @@ export const CustomEdge = ({
             onClick={() => setShowTypeMenu(!showTypeMenu)}
             className="flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
             style={{
-              backgroundColor: bgColor,
-              borderColor: meta.color,
-              color: meta.color,
+              backgroundColor: circuitOpen ? 'rgb(var(--error-rgb) / 0.08)' : isRetryStorm ? 'rgb(var(--warning-rgb) / 0.08)' : bgColor,
+              borderColor: circuitOpen ? 'rgb(var(--error-rgb))' : isRetryStorm ? 'rgb(var(--warning-rgb))' : meta.color,
+              color: circuitOpen ? 'rgb(var(--error-rgb))' : isRetryStorm ? 'rgb(var(--warning-rgb))' : meta.color,
             }}
             title="Click to change connection type"
           >
+            {circuitOpen ? <XCircle size={10} className="mr-0.5" /> : isRetryStorm ? <AlertTriangle size={10} className="mr-0.5" /> : null}
             {data?.label || meta.label}
             <ChevronDown size={10} />
           </button>
@@ -134,6 +288,15 @@ export const CustomEdge = ({
           )}
         </div>
       </EdgeLabelRenderer>
+
+      {isValidationHighlighted && (
+        <style>{`
+          @keyframes pulse-edge-validation {
+            0%, 100% { filter: drop-shadow(0 0 4px ${validationColor}); }
+            50% { filter: drop-shadow(0 0 10px ${validationColor}); }
+          }
+        `}</style>
+      )}
     </>
   )
 }

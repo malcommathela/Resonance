@@ -25,6 +25,8 @@ import { useThemeStore } from '@/stores/themeStore'
 import { animations } from '@/lib/anime'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { SettingsSkeleton } from '@/components/ui/Skeletons'
 import { api } from '@/services/api'
 
 const tabs = [
@@ -43,13 +45,20 @@ const accentColors = [
 
 export const Settings = () => {
   const [activeTab, setActiveTab] = useState('profile')
+  const [isLoading, setIsLoading] = useState(true)
   const { user, logout, updateUser } = useAuthStore()
   const { theme, setTheme, accentColor, setAccentColor, animationsEnabled, setAnimationsEnabled } = useThemeStore()
   const contentRef = useRef(null)
 
+  // Simulate initial load for skeleton demo
   useEffect(() => {
-    if (contentRef.current) animations.fadeInUp(contentRef.current, 0)
-  }, [activeTab])
+    const timer = setTimeout(() => setIsLoading(false), 300)
+    return () => clearTimeout(timer)
+  }, [])
+
+  useEffect(() => {
+    if (contentRef.current && !isLoading) animations.fadeInUp(contentRef.current, 0)
+  }, [activeTab, isLoading])
 
   const renderContent = () => {
     switch (activeTab) {
@@ -61,6 +70,14 @@ export const Settings = () => {
       case 'integrations': return <IntegrationSettings />
       default: return null
     }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-resonance-bg-primary">
+        <SettingsSkeleton />
+      </div>
+    )
   }
 
   return (
@@ -325,7 +342,7 @@ const IntegrationSettings = () => {
                 <Check size={14} />Active
               </span>
             ) : (
-              <a 
+              <a
                 href="/login"
                 className="inline-flex items-center gap-1.5 px-4 py-2 bg-resonance-accent text-white rounded-lg text-sm font-medium hover:bg-resonance-accent/90 transition-all"
               >

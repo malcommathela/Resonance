@@ -1,88 +1,235 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { GoogleGenAI } from '@google/genai'
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+
+// ============================================================================
+// MODEL CONFIGURATION
+// ============================================================================
+
+const MODEL_CONFIG = Object.freeze({
+  architectureModel: 'gemini-2.5-flash',
+  insightsModel: 'gemini-2.5-flash',
+  maxArchitectureTokens: 8192,
+  maxInsightTokens: 4096,
+  defaultTemperature: 0.1,
+})
+
+// ============================================================================
+// ARCHITECTURE GENERATION
+// ============================================================================
 
 export async function generateArchitecture(files) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
-  const prompt = buildPrompt(files)
+  const prompt = buildArchitecturePrompt(files)
 
   console.log('[Gemini] Analyzing', files.length, 'files')
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 8192,
+    const result = await genAI.models.generateContent({
+      model: MODEL_CONFIG.architectureModel,
+      contents: prompt,
+      config: {
+        temperature: MODEL_CONFIG.defaultTemperature,
+        maxOutputTokens: MODEL_CONFIG.maxArchitectureTokens,
         responseMimeType: 'application/json',
-      }
+      },
     })
 
-    const response = await result.response
-    const text = response.text()
+    logResponseMeta(result, 'Architecture')
 
-    console.log('[Gemini] Raw response length:', text?.length)
-
-    if (!text) {
-      throw new Error('Empty response from Gemini')
+    const parsed = extractStructuredOutput(result)
+    if (!parsed) {
+      throw new Error('Empty or unparsable response from Gemini')
     }
 
-    const parsed = parseGeminiJson(text)
     console.log('[Gemini] Nodes:', parsed.nodes?.length, 'Edges:', parsed.edges?.length)
-
     return normalizeArchitecture(parsed)
   } catch (err) {
-    console.error('[Gemini] Error:', err.message)
+    console.error('[Gemini] Architecture generation error:', err.message)
     throw err
   }
 }
 
-function parseGeminiJson(text) {
-  let jsonText = text.trim()
+// ============================================================================
+// AI INSIGHTS GENERATION
+// ============================================================================
 
-  // Extract JSON from code blocks
-  const codeBlockMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/)
-  if (codeBlockMatch) {
-    jsonText = codeBlockMatch[1].trim()
+export async function generateInsights(prompt, options = {}) {
+  console.log('[Gemini Insights] Prompt length:', prompt?.length, 'chars')
+
+  const config = {
+    temperature: options.temperature ?? MODEL_CONFIG.defaultTemperature,
+    maxOutputTokens: options.maxOutputTokens ?? MODEL_CONFIG.maxInsightTokens,
+    responseMimeType: 'application/json',
   }
 
-  // Remove leading/trailing non-JSON
-  const jsonStart = jsonText.indexOf('{')
-  const jsonEnd = jsonText.lastIndexOf('}')
-  if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
-    jsonText = jsonText.slice(jsonStart, jsonEnd + 1)
+  if (options.responseSchema) {
+    config.responseSchema = options.responseSchema
   }
 
   try {
-    return JSON.parse(jsonText)
-  } catch (originalErr) {
-    console.warn('[Gemini] Initial JSON parse failed, attempting repair...')
-  }
+    const result = await genAI.models.generateContent({
+      model: MODEL_CONFIG.insightsModel,
+      contents: prompt,
+      config,
+    })
 
-  // JSON repair heuristics
-  let repaired = jsonText
-  repaired = repaired.replace(/,\s*([\]\}])/g, '$1')
+    logResponseMeta(result, 'Insights')
 
-  const openBraces = (repaired.match(/\{/g) || []).length
-  const closeBraces = (repaired.match(/\}/g) || []).length
-  const openBrackets = (repaired.match(/\[/g) || []).length
-  const closeBrackets = (repaired.match(/\]/g) || []).length
+    const parsed = extractStructuredOutput(result)
 
-  for (let i = 0; i < openBraces - closeBraces; i++) repaired += '}'
-  for (let i = 0; i < openBrackets - closeBrackets; i++) repaired += ']'
+    if (!parsed) {
+      throw new Error('Empty or unparsable response from Gemini')
+    }
 
-  const lastBrace = repaired.lastIndexOf('}')
-  if (lastBrace !== -1) repaired = repaired.slice(0, lastBrace + 1)
-
-  try {
-    return JSON.parse(repaired)
-  } catch (repairErr) {
-    console.error('[Gemini] JSON repair failed. Raw:', jsonText.slice(0, 500))
-    throw new Error('AI returned invalid JSON. Please try again with a different repository.')
+    console.log('[Gemini Insights] Parsed successfully.')
+    return parsed
+  } catch (err) {
+    console.error('[Gemini Insights] Error:', err.message)
+    throw err
   }
 }
 
-function buildPrompt(files) {
+// ============================================================================
+// UNIFIED STRUCTURED OUTPUT EXTRACTION
+// ============================================================================
+
+function extractStructuredOutput(result) {
+  if (!result) return null
+
+  // Attempt 1: SDK v2+ structured output
+  if (result.parsed && typeof result.parsed === 'object') {
+    console.log('[Gemini] Using SDK structured output (result.parsed)')
+    return result.parsed
+  }
+
+  if (result.response?.parsed && typeof result.response.parsed === 'object') {
+    console.log('[Gemini] Using SDK structured output (result.response.parsed)')
+    return result.response.parsed
+  }
+
+  // Attempt 2: Output field (some SDK versions)
+  if (result.output && typeof result.output === 'object') {
+    console.log('[Gemini] Using SDK output field')
+    return result.output
+  }
+
+  // Attempt 3: Text parsing (fallback)
+  const text = result.text
+  if (!text || typeof text !== 'string') {
+    console.warn('[Gemini] No text field in response')
+    return null
+  }
+
+  console.log('[Gemini] Falling back to text parsing, length:', text.length)
+  return safeJsonParse(text)
+}
+
+// ============================================================================
+// DEBUG LOGGING
+// ============================================================================
+
+function logResponseMeta(result, label) {
+  try {
+    // FIX: @google/genai SDK returns candidates directly on result, not nested under result.response
+    const candidate = result?.candidates?.[0]
+    const finishReason = candidate?.finishReason
+    const usage = result?.usageMetadata
+    const textLen = result?.text?.length ?? 0
+
+    console.log(`[Gemini ${label}] Finish reason:`, finishReason)
+    console.log(`[Gemini ${label}] Usage:`, JSON.stringify(usage))
+    console.log(`[Gemini ${label}] Text length:`, textLen)
+
+    if (finishReason === 'MAX_TOKENS') {
+      console.warn(`[Gemini ${label}] WARNING: Response truncated due to MAX_TOKENS. Increase maxOutputTokens.`)
+    }
+    if (finishReason === 'SAFETY') {
+      console.warn(`[Gemini ${label}] WARNING: Response blocked by SAFETY filters.`)
+    }
+    if (finishReason === 'RECITATION') {
+      console.warn(`[Gemini ${label}] WARNING: Response blocked by RECITATION.`)
+    }
+  } catch (e) {
+    // Non-fatal
+  }
+}
+
+// ============================================================================
+// ROBUST JSON PARSER (truncation-aware)
+// ============================================================================
+
+function safeJsonParse(raw) {
+  if (!raw || typeof raw !== 'string') {
+    return null
+  }
+
+  let text = raw.trim()
+
+  // Remove markdown fences
+  text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+
+  // Direct parse
+  try {
+    return JSON.parse(text)
+  } catch {}
+
+  // Extract outermost JSON object using proper brace tracking
+  const start = text.indexOf('{')
+  if (start === -1) return null
+
+  let depth = 0
+  let inString = false
+  let escape = false
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+
+    if (escape) {
+      escape = false
+      continue
+    }
+    if (ch === '\\') {
+      escape = true
+      continue
+    }
+    if (ch === '"') {
+      inString = !inString
+      continue
+    }
+    if (inString) continue
+
+    if (ch === '{') depth++
+    if (ch === '}') {
+      depth--
+      if (depth === 0) {
+        const candidate = text.substring(start, i + 1)
+
+        // Try direct parse
+        try {
+          return JSON.parse(candidate)
+        } catch {}
+
+        // Try removing trailing commas
+        const repaired = candidate.replace(/,\s*([}\]])/g, '$1')
+        try {
+          return JSON.parse(repaired)
+        } catch {}
+
+        return null
+      }
+    }
+  }
+
+  // If we reach here, the JSON is incomplete (no matching closing brace)
+  console.error('[Gemini] Incomplete JSON — model response was truncated.')
+  return null
+}
+
+// ============================================================================
+// ARCHITECTURE PROMPT BUILDER
+// ============================================================================
+
+function buildArchitecturePrompt(files) {
   const fileSummary = files.map(f => {
     const content = f.content.length > 3000
       ? f.content.slice(0, 3000) + '\n... [truncated]'
@@ -177,6 +324,10 @@ IMPORTANT:
 - Ensure all arrays and objects are properly closed`
 }
 
+// ============================================================================
+// ARCHITECTURE NORMALIZER
+// ============================================================================
+
 function normalizeArchitecture(parsed) {
   const nodes = (parsed.nodes || []).map((n, i) => ({
     id: n.id || `node-${i}`,
@@ -208,7 +359,6 @@ function normalizeArchitecture(parsed) {
 
   console.log('[Gemini] Valid edges:', edges.length)
 
-  // Fallback edges if AI failed to generate any
   if (edges.length === 0 && nodes.length > 1) {
     console.log('[Gemini] Creating fallback edges...')
     const byType = (type) => nodes.filter(n => n.type === type)
@@ -255,3 +405,9 @@ function normalizeArchitecture(parsed) {
     }
   }
 }
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
+
+export { MODEL_CONFIG }

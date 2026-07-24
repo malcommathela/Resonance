@@ -1,692 +1,612 @@
 import { Router } from 'express'
-import { requireAuth, getAuth, clerkClient } from '@clerk/express'
+import { getAuth } from '@clerk/express'
 import { prisma } from '../lib/db.js'
+import { validateArchitecture, validateSimulationInput } from '../simulation/validation.js'
+import { DeterministicRNG, createSimulationSeed } from '@resonance/shared/deterministic'
+import { enqueueSimulation, getJobState } from '../simulation/worker/queue.js'
+import { redisSubscriber } from '../lib/redis.js'
+import { acquireLock, designLockKey } from '../simulation/utils/lock.js'
+import { logAuditEvent } from '../simulation/utils/audit.js'
+import {
+  getCachedSimulationStatus,
+  invalidateSimulationStatus,
+  getCachedReport,
+  cacheReport,
+  getCachedSimulationList,
+} from '../simulation/utils/cache.js'
+import {
+  simulationCreateLimiter,
+  sseLimiter,
+  reportLimiter,
+} from '../middleware/rateLimit.js'
 
 const router = Router()
 
-// ============================================================
-// IN-MEMORY STATE (replaces Redis entirely)
-// ============================================================
-const tickCache = new Map()        // simId -> latest tick data
-const statusCache = new Map()      // cacheKey -> { data, timestamp }
-const CACHE_TTL_MS = 800
+// ============================================================================
+// AUTH MIDDLEWARE
+// ============================================================================
+
+router.use(async (req, res, next) => {
+  const auth = getAuth(req)
+  if (auth?.userId) {
+    req.userId = auth.userId
+    return next()
+  }
+
+  const authHeader = req.headers.authorization
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7)
+    try {
+      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
+      if (payload?.sub) {
+        req.userId = payload.sub
+        return next()
+      }
+    } catch (err) {
+      console.error('[AUTH] Bearer token decode failed:', err.message)
+    }
+  }
+
+  return res.status(401).json({ error: 'Unauthorized' })
+})
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+async function getDesign(req, designId) {
+  const user = await prisma.user.findUnique({
+    where: { clerkId: req.userId },
+    select: { id: true }
+  })
+  if (!user) return null
+
+  const design = await prisma.design.findFirst({
+    where: { id: designId, ownerId: user.id },
+    include: { blocks: true, edges: true }
+  })
+
+  if (design) {
+    console.log('[SIMULATION] Loaded design:', design.id)
+    console.log('[SIMULATION] Blocks:', design.blocks.map(b => ({ id: b.id, type: b.type, label: b.label })))
+    console.log('[SIMULATION] Edges:', design.edges.map(e => ({ id: e.id, source: e.sourceId, target: e.targetId, type: e.connectionType })))
+  }
+
+  return design
+}
 
 async function getDbUser(req) {
-  const auth = getAuth(req)
-  if (!auth?.userId) return null
-  let user = await prisma.user.findUnique({
-    where: { clerkId: auth.userId },
-    select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
+  return prisma.user.findUnique({
+    where: { clerkId: req.userId },
+    select: { id: true }
   })
-  if (!user) {
-    try {
-      const clerkUser = await clerkClient.users.getUser(auth.userId)
-      const primaryEmail = clerkUser.emailAddresses?.[0]?.emailAddress
-      user = await prisma.user.create({
-        data: {
-          clerkId: auth.userId,
-          email: primaryEmail || `user-${auth.userId}@clerk.dev`,
-          name: `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || clerkUser.username || 'User',
-          avatar: clerkUser.imageUrl,
-          tier: 'free',
-        },
-        select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
-      })
-    } catch (err) {
-      console.error('[AUTO-CREATE] Failed:', err.message)
-      return null
-    }
-  }
-  return user
 }
 
-async function requireApiAuth(req, res, next) {
-  const auth = getAuth(req)
-  if (!auth?.userId) {
-    return res.status(401).json({ error: 'Unauthorized' })
-  }
-  next()
-}
-router.use(requireApiAuth)
-
-// ============================================================
-// M/M/c QUEUEING SIMULATION ENGINE
-// ============================================================
-
-class MMCQueue {
-  constructor(blockId, blockType, config) {
-    this.blockId = blockId
-    this.blockType = blockType
-    this.config = config || {}
-    const base = this.getBaseConfig(blockType)
-    this.servers = Math.max(1, this.config.replicas || base.defaultReplicas)
-    this.baseServiceRate = base.serviceRate
-    this.capacity = base.capacity * this.servers
-    this.failureRate = base.failureRate
-    this.baseLatency = base.baseLatency
-    const cpuCores = this.parseCpu(this.config.cpu)
-    this.serviceRate = this.baseServiceRate * cpuCores * (1 + 0.1 * (this.servers - 1))
-    const memoryMB = this.parseMemory(this.config.memory)
-    this.capacity += Math.floor(memoryMB / 100)
-    if (blockType === 'database') this.applyDatabaseTuning()
-    else if (blockType === 'cache') this.applyCacheTuning()
-    else if (blockType === 'message-queue') this.applyQueueTuning()
-    this.queue = []
-    this.busyServers = 0
-    this.totalProcessed = 0
-    this.totalFailed = 0
-    this.totalDropped = 0
-    this.latencies = []
-    this.utilizationHistory = []
-    this.processingRequests = new Map()
-    this.isDegraded = false
-    this.degradationFactor = 1.0
-  }
-
-  getBaseConfig(type) {
-    const configs = {
-      'api-gateway':    { serviceRate: 8000,  capacity: 5000,  failureRate: 0.0005, baseLatency: 2,  defaultReplicas: 2 },
-      'service':        { serviceRate: 500,   capacity: 800,   failureRate: 0.002,  baseLatency: 15, defaultReplicas: 2 },
-      'database':       { serviceRate: 150,   capacity: 150,   failureRate: 0.001,  baseLatency: 8,  defaultReplicas: 1 },
-      'cache':          { serviceRate: 50000, capacity: 50000,  failureRate: 0.0001, baseLatency: 1,  defaultReplicas: 1 },
-      'message-queue':  { serviceRate: 8000,  capacity: 100000, failureRate: 0.0005, baseLatency: 5,  defaultReplicas: 3 },
-      'load-balancer':  { serviceRate: 20000, capacity: 20000,  failureRate: 0.0002, baseLatency: 1,  defaultReplicas: 2 },
-      'cdn':            { serviceRate: 50000, capacity: 100000,  failureRate: 0.0001, baseLatency: 0.5, defaultReplicas: 3 },
-      'client':         { serviceRate: 50,    capacity: 100,    failureRate: 0,      baseLatency: 0,  defaultReplicas: 1 },
-      'external-api':   { serviceRate: 100,   capacity: 500,    failureRate: 0.01,   baseLatency: 80, defaultReplicas: 1 },
-      'storage':        { serviceRate: 300,   capacity: 2000,   failureRate: 0.001,  baseLatency: 25, defaultReplicas: 1 },
-    }
-    return configs[type] || configs['service']
-  }
-
-  parseCpu(cpuStr) {
-    if (!cpuStr) return 1
-    const match = String(cpuStr).match(/([0-9.]+)/)
-    return match ? parseFloat(match[1]) : 1
-  }
-
-  parseMemory(memStr) {
-    if (!memStr) return 512
-    const match = String(memStr).match(/([0-9.]+)/)
-    if (!match) return 512
-    const val = parseFloat(match[1])
-    if (String(memStr).toLowerCase().includes('gi')) return val * 1024
-    if (String(memStr).toLowerCase().includes('mi')) return val
-    return val
-  }
-
-  applyDatabaseTuning() {
-    const engine = this.config.engine || 'postgres'
-    const multipliers = { postgres: 1.0, mysql: 0.9, mongodb: 1.1, redis: 2.0 }
-    this.serviceRate *= (multipliers[engine] || 1.0)
-    const poolSize = this.config.connectionPool || this.config.maxConnections || 20
-    this.capacity = Math.min(this.capacity, poolSize * 2)
-  }
-
-  applyCacheTuning() {
-    const eviction = this.config.eviction || 'allkeys-lru'
-    const hitRates = { 'allkeys-lru': 0.85, 'allkeys-lfu': 0.90, 'volatile-lru': 0.80, 'noeviction': 0.95 }
-    this.expectedHitRate = hitRates[eviction] || 0.85
-    const maxMem = this.parseMemory(this.config.maxMemory)
-    this.capacity = Math.max(this.capacity, maxMem * 100)
-  }
-
-  applyQueueTuning() {
-    const partitions = this.config.partitions || 1
-    const replication = this.config.replication || 1
-    this.serviceRate *= Math.sqrt(partitions) * (0.5 + replication * 0.5)
-    this.servers = partitions
-  }
-
-  degrade(factor, failureMultiplier = 1) {
-    this.isDegraded = true
-    this.degradationFactor = factor
-    this.serviceRate *= factor
-    this.failureRate = Math.min(this.failureRate * failureMultiplier, 0.5)
-  }
-
-  process(requests, timeDelta) {
-    const results = []
-    const effectiveServiceRate = this.serviceRate * this.degradationFactor
-    for (const req of requests) {
-      const inSystem = this.queue.length + this.busyServers
-      if (inSystem < this.capacity) {
-        this.queue.push({ ...req, queuedAt: Date.now() })
-      } else {
-        this.totalDropped++
-        results.push({ ...req, dropped: true, latency: 0, blockId: this.blockId })
-      }
-    }
-    const canStart = Math.min(this.queue.length, this.servers - this.busyServers)
-    for (let i = 0; i < canStart; i++) {
-      const req = this.queue.shift()
-      this.busyServers++
-      const serviceTime = this.generateServiceTime(effectiveServiceRate)
-      this.processingRequests.set(req.id, { startTime: Date.now(), serviceTime, req })
-    }
-    const now = Date.now()
-    for (const [reqId, proc] of this.processingRequests.entries()) {
-      if (now - proc.startTime >= proc.serviceTime) {
-        this.processingRequests.delete(reqId)
-        this.busyServers--
-        this.totalProcessed++
-        const totalLatency = now - proc.req.queuedAt + proc.serviceTime + this.baseLatency
-        if (Math.random() < this.failureRate) {
-          this.totalFailed++
-          this.latencies.push(totalLatency)
-          results.push({ ...proc.req, failed: true, latency: totalLatency, blockId: this.blockId })
-        } else {
-          this.latencies.push(totalLatency)
-          results.push({ ...proc.req, latency: totalLatency, blockId: this.blockId })
-        }
-      }
-    }
-    const utilization = this.busyServers / this.servers
-    this.utilizationHistory.push(utilization)
-    if (this.utilizationHistory.length > 100) this.utilizationHistory.shift()
-    return results
-  }
-
-  generateServiceTime(rate) {
-    const k = 2
-    let sum = 0
-    for (let i = 0; i < k; i++) {
-      sum += -Math.log(Math.random()) / (rate / k)
-    }
-    return sum * 1000
-  }
-
-  getMetrics() {
-    const latencies = this.latencies.slice(-1000)
-    const sorted = [...latencies].sort((a, b) => a - b)
-    const avgLatency = latencies.length > 0 ? latencies.reduce((a, b) => a + b, 0) / latencies.length : 0
-    return {
-      blockId: this.blockId,
-      blockType: this.blockType,
-      queueDepth: this.queue.length,
-      busyServers: this.busyServers,
-      totalServers: this.servers,
-      utilization: this.busyServers / this.servers,
-      avgUtilization: this.utilizationHistory.reduce((a, b) => a + b, 0) / Math.max(this.utilizationHistory.length, 1),
-      totalProcessed: this.totalProcessed,
-      totalFailed: this.totalFailed,
-      totalDropped: this.totalDropped,
-      errorRate: this.totalProcessed > 0 ? (this.totalFailed / (this.totalProcessed + this.totalFailed)) * 100 : 0,
-      dropRate: (this.totalProcessed + this.totalFailed + this.totalDropped) > 0 
-        ? (this.totalDropped / (this.totalProcessed + this.totalFailed + this.totalDropped)) * 100 : 0,
-      avgLatency: Math.round(avgLatency),
-      p50Latency: Math.round(sorted[Math.floor(sorted.length * 0.5)] || 0),
-      p95Latency: Math.round(sorted[Math.floor(sorted.length * 0.95)] || 0),
-      p99Latency: Math.round(sorted[Math.floor(sorted.length * 0.99)] || 0),
-      throughput: this.totalProcessed,
-      isDegraded: this.isDegraded,
-      config: { replicas: this.servers, serviceRate: Math.round(this.serviceRate), capacity: this.capacity }
-    }
+function getClientInfo(req) {
+  return {
+    ipAddress: req.headers['x-forwarded-for'] || req.ip || null,
+    userAgent: req.headers['user-agent'] || null,
   }
 }
 
-const NETWORK_LATENCY = { http: 8, grpc: 3, websocket: 5, event: 12, db: 3 }
+// ============================================================================
+// POST /simulations/:designId/run — P5.1 Worker Queue Integration
+// ============================================================================
+// CHANGED: Replaced inline memory-store rate limiter with Redis-backed
+// simulationCreateLimiter (5 req/min per user, shared across all instances).
+// ============================================================================
 
-function generateTraffic(pattern, baseRps, elapsed, duration) {
-  switch (pattern) {
-    case 'steady': return baseRps
-    case 'spike': {
-      const spikeStart = duration * 0.6
-      const spikeEnd = spikeStart + duration * 0.1
-      const spikePeak = spikeStart + (spikeEnd - spikeStart) * 0.5
-      if (elapsed >= spikeStart && elapsed <= spikeEnd) {
-        const normalized = (elapsed - spikePeak) / ((spikeEnd - spikeStart) / 2)
-        return baseRps * (1 + 49 * Math.exp(-normalized * normalized))
-      }
-      return baseRps
-    }
-    case 'ramp': return baseRps * (1 + (elapsed / duration) * 9)
-    case 'chaos': {
-      const noise = Math.sin(elapsed * 0.8) * 0.3 + Math.sin(elapsed * 2.3) * 0.2 + Math.random() * 0.5
-      return baseRps * Math.max(0.1, 1 + noise * 5)
-    }
-    default: return baseRps
-  }
-}
-
-function applyScenario(blockModels, scenario, elapsed, duration) {
-  if (!scenario || scenario === 'none') return
-  switch (scenario) {
-    case 'db_slowdown': {
-      if (elapsed > duration * 0.4) {
-        for (const [id, model] of blockModels) {
-          if (model.blockType === 'database') model.degrade(0.3, 3)
-        }
-      }
-      break
-    }
-    case 'cache_eviction': {
-      if (elapsed > duration * 0.5) {
-        for (const [id, model] of blockModels) {
-          if (model.blockType === 'cache') model.degrade(0.1, 10)
-        }
-      }
-      break
-    }
-    case 'region_outage': {
-      const outageStart = duration * 0.3
-      const outageEnd = duration * 0.5
-      if (elapsed > outageStart && elapsed < outageEnd) {
-        const blockIds = Array.from(blockModels.keys())
-        const victim = blockIds[Math.floor(Math.random() * blockIds.length)]
-        const model = blockModels.get(victim)
-        if (model) model.degrade(0.01, 50)
-      }
-      break
-    }
-    case 'ddos': {
-      for (const [id, model] of blockModels) {
-        if (model.blockType === 'api-gateway' || model.blockType === 'load-balancer') {
-          model.capacity = Math.floor(model.capacity * 0.3)
-        }
-      }
-      break
-    }
-  }
-}
-
-function buildSimulationGraph(blocks, edges) {
-  const blockModels = new Map()
-  const adjacency = new Map()
-  const edgeWeights = new Map()
-  for (const block of blocks) {
-    const model = new MMCQueue(block.id, block.data?.type || 'service', block.data?.config || {})
-    blockModels.set(block.id, model)
-    adjacency.set(block.id, [])
-    edgeWeights.set(block.id, [])
-  }
-  for (const edge of edges) {
-    const targets = adjacency.get(edge.source) || []
-    const weights = edgeWeights.get(edge.source) || []
-    const connectionType = edge.data?.connectionType || 'http'
-    const weight = edge.data?.weight || 1
-    const latency = NETWORK_LATENCY[connectionType] || 10
-    targets.push({ targetId: edge.target, connectionType, weight, latency })
-    weights.push({ targetId: edge.target, weight })
-    adjacency.set(edge.source, targets)
-    edgeWeights.set(edge.source, weights)
-  }
-  for (const [sourceId, weights] of edgeWeights) {
-    const totalWeight = weights.reduce((sum, t) => sum + t.weight, 0)
-    if (totalWeight > 0) {
-      edgeWeights.set(sourceId, weights.map(t => ({ ...t, targetId: t.targetId, weight: t.weight / totalWeight })))
-    }
-  }
-  return { blockModels, adjacency, edgeWeights }
-}
-
-function runTick(blockModels, adjacency, edgeWeights, trafficRps, timeDelta) {
-  const metrics = {}
-  const requestCounts = new Map()
-  const allTargets = new Set()
-  for (const targets of adjacency.values()) targets.forEach(t => allTargets.add(t.targetId))
-  const entryBlocks = Array.from(adjacency.keys()).filter(id => !allTargets.has(id))
-  const requestsPerEntry = Math.max(1, Math.floor(trafficRps * timeDelta / Math.max(entryBlocks.length, 1)))
-  for (const entryId of entryBlocks) {
-    const requests = Array.from({ length: requestsPerEntry }, (_, i) => ({
-      id: `req-${Date.now()}-${Math.random().toString(36).slice(2, 9)}-${i}`,
-      path: [entryId],
-      accumulatedLatency: 0,
-      startTime: Date.now(),
-    }))
-    requestCounts.set(entryId, requests)
-  }
-  const processed = new Set()
-  const queue = [...entryBlocks]
-  while (queue.length > 0) {
-    const blockId = queue.shift()
-    if (processed.has(blockId)) continue
-    processed.add(blockId)
-    const model = blockModels.get(blockId)
-    const incomingRequests = requestCounts.get(blockId) || []
-    const results = model.process(incomingRequests, timeDelta)
-    metrics[blockId] = model.getMetrics()
-    const targets = adjacency.get(blockId) || []
-    const weights = edgeWeights.get(blockId) || []
-    const successful = results.filter(r => !r.dropped && !r.failed)
-    for (const req of successful) {
-      if (targets.length === 0) continue
-      const rand = Math.random()
-      let cumulative = 0
-      let selectedTarget = targets[0]
-      for (const weighted of weights) {
-        cumulative += weighted.weight
-        if (rand <= cumulative) {
-          selectedTarget = targets.find(t => t.targetId === weighted.targetId)
-          break
-        }
-      }
-      if (!selectedTarget) continue
-      const targetRequests = requestCounts.get(selectedTarget.targetId) || []
-      targetRequests.push({
-        ...req,
-        path: [...req.path, selectedTarget.targetId],
-        accumulatedLatency: req.accumulatedLatency + selectedTarget.latency + req.latency,
-      })
-      requestCounts.set(selectedTarget.targetId, targetRequests)
-      if (!processed.has(selectedTarget.targetId)) queue.push(selectedTarget.targetId)
-    }
-  }
-  return { metrics, requestCounts }
-}
-
-const activeSimulations = new Map()
-
-// ============================================================
-// POST /simulations/:id/run
-// Only 2 DB writes: start and completion
-// ============================================================
-router.post('/:id/run', async (req, res) => {
-  const user = await getDbUser(req)
-  if (!user) return res.status(401).json({ error: 'User not found' })
-
-  const { id } = req.params
-  const { trafficPattern = 'steady', rps = 100, duration = 300, scenario = 'none', warmupSeconds = 5 } = req.body
-
+router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
   try {
-    const design = await prisma.design.findFirst({
-      where: { id, ownerId: user.id },
-      include: { blocks: true, edges: true }
-    })
+    const { designId } = req.params
+    console.log('[SIMULATION] Run request body:', JSON.stringify(req.body))
+
+    const {
+      trafficPattern = 'steady',
+      rps = 100,
+      duration = 300,
+      scenario = 'none',
+      monteCarloPasses = 1,
+      confidenceLevel = 0.95,
+      growthScenario = null,
+      generateReport = true,
+      deterministicSeed = null,
+      targetBlockId = null,
+      targetEdgeId = null,
+      trafficParams = {},
+    } = req.body
+
+    // 1. Fetch design
+    const design = await getDesign(req, designId)
     if (!design) return res.status(404).json({ error: 'Design not found' })
 
-    const blocks = design.blocks.map(b => ({
-      id: b.id,
-      data: {
-        type: b.type,
-        label: b.label,
-        config: typeof b.config === 'string' ? JSON.parse(b.config) : b.config,
-      }
-    }))
+    const user = await getDbUser(req)
+    if (!user) return res.status(401).json({ error: 'User not found' })
 
-    const edges = design.edges.map(e => ({
-      id: e.id,
-      source: e.sourceId,
-      target: e.targetId,
-      data: { connectionType: e.connectionType, weight: e.data?.weight || 1 }
-    }))
+    // 2. VALIDATE ARCHITECTURE
+    console.log('[SIMULATION] Validating architecture:', design.blocks.length, 'blocks,', design.edges.length, 'edges')
+    const validation = validateSimulationInput(
+      { trafficPattern, rps, duration, scenario, monteCarloPasses, confidenceLevel, growthScenario, deterministicSeed },
+      design.blocks,
+      design.edges
+    )
+    console.log('[SIMULATION] Validation result:', JSON.stringify({
+      canSimulate: validation.canSimulate,
+      criticalCount: validation.criticalCount,
+      warningCount: validation.warningCount,
+      findings: validation.findings.map(f => ({ severity: f.severity, type: f.type, message: f.message }))
+    }, null, 2))
 
-    const { blockModels, adjacency, edgeWeights } = buildSimulationGraph(blocks, edges)
+    if (!validation.canSimulate) {
+      await logAuditEvent({
+        userId: user.id,
+        designId,
+        simulationId: null,
+        action: 'simulation_rejected',
+        details: {
+          reason: 'validation_failed',
+          criticalCount: validation.criticalCount,
+          warningCount: validation.warningCount,
+        },
+        clientInfo: getClientInfo(req),
+      })
 
-    // DB WRITE #1: create simulation record
+      return res.status(400).json({
+        error: 'Architecture validation failed',
+        findings: validation.findings,
+        topologyScore: validation.topologyScore,
+        confidenceScore: validation.confidenceScore,
+      })
+    }
+
+    // 3. PER-DESIGN CONCURRENCY LOCK
+    const lockKey = designLockKey(designId)
+    const lock = await acquireLock(lockKey, 600)
+    if (!lock) {
+      return res.status(423).json({
+        error: 'A simulation is already running for this design. Please wait for it to complete.',
+        code: 'CONCURRENT_SIMULATION_BLOCKED',
+      })
+    }
+
+    // 4. Create simulation record
+    const seed = deterministicSeed || createSimulationSeed(designId, { trafficPattern, rps, duration, scenario })
+    const inputSnapshot = {
+      id: designId,
+      name: design.name,
+      version: `${Date.now()}`,
+      snapshotAt: new Date().toISOString(),
+      blocks: design.blocks,
+      edges: design.edges,
+    }
+
     const simulation = await prisma.simulation.create({
       data: {
-        designId: id,
+        designId,
         userId: user.id,
+        status: 'pending',
+        progress: 0,
         trafficPattern,
         rps,
         duration,
-        status: 'running',
+        scenario: scenario === 'none' ? null : scenario,
+        monteCarloPasses,
+        confidenceLevel,
+        growthScenario,
+        generateReport,
+        deterministicSeed: seed,
+        engineVersion: '2.0.0',
+        reportVersion: '1.0.0',
+        inputSnapshot,
+        assumptions: {
+          queueModel: 'M/M/1 approximation with capacity limits',
+          networkModel: 'protocol-specific latency + jitter + packet loss',
+          failureModel: 'targeted per-block with cascading propagation',
+          scalingModel: 'instantaneous horizontal/vertical/auto-scaling',
+          latencyDecomposition: 'network + serialization + encryption + compression + processing + queue',
+          resourceModel: 'CPU + memory + thread pool + connection pool contention',
+        },
+        validationResult: validation,
+        confidenceScore: validation.confidenceScore,
       }
     })
 
-    const simState = {
-      simulationId: simulation.id,
-      blockModels, adjacency, edgeWeights,
-      trafficPattern, rps, duration, scenario,
-      elapsed: 0, warmupElapsed: 0,
-      tickInterval: null, logs: [],
-      globalMetrics: { totalRequests: 0, totalErrors: 0, totalDropped: 0, latencies: [] },
-      isWarmup: true,
-      startTime: Date.now(),
-    }
-
-    activeSimulations.set(simulation.id, simState)
-
-    const timeDelta = 0.1
-
-    simState.tickInterval = setInterval(async () => {
-      simState.elapsed += timeDelta
-
-      if (simState.isWarmup) {
-        simState.warmupElapsed += timeDelta
-        if (simState.warmupElapsed >= warmupSeconds) {
-          simState.isWarmup = false
-          for (const model of blockModels.values()) {
-            model.totalProcessed = 0
-            model.totalFailed = 0
-            model.totalDropped = 0
-            model.latencies = []
-          }
-          simState.globalMetrics = { totalRequests: 0, totalErrors: 0, totalDropped: 0, latencies: [] }
-        }
-      }
-
-      const currentRps = generateTraffic(trafficPattern, rps, simState.elapsed, duration)
-      applyScenario(blockModels, scenario, simState.elapsed, duration)
-
-      const { metrics } = runTick(blockModels, adjacency, edgeWeights, currentRps, timeDelta)
-
-      let tickRequests = 0, tickErrors = 0, tickDropped = 0
-      const tickLatencies = []
-
-      for (const [blockId, blockMetrics] of Object.entries(metrics)) {
-        tickRequests += blockMetrics.totalProcessed
-        tickErrors += blockMetrics.totalFailed
-        tickDropped += blockMetrics.totalDropped
-        tickLatencies.push(...blockModels.get(blockId).latencies.slice(-10))
-      }
-
-      if (!simState.isWarmup) {
-        simState.globalMetrics.totalRequests += tickRequests
-        simState.globalMetrics.totalErrors += tickErrors
-        simState.globalMetrics.totalDropped += tickDropped
-        simState.globalMetrics.latencies.push(...tickLatencies)
-      }
-
-      const tickData = {
-        elapsed: simState.elapsed,
-        progress: Math.min((simState.elapsed / duration) * 100, 100),
-        metrics,
-        global: simState.isWarmup ? null : simState.globalMetrics,
-        currentRps,
-        isWarmup: simState.isWarmup,
-        scenarioActive: scenario !== 'none' && simState.elapsed > duration * 0.3,
-      }
-
-      // IN-MEMORY ONLY — no Redis, no DB
-      tickCache.set(simulation.id, tickData)
-
-      if (simState.elapsed >= duration) {
-        clearInterval(simState.tickInterval)
-
-        const allLatencies = simState.globalMetrics.latencies
-        const sorted = [...allLatencies].sort((a, b) => a - b)
-        const effectiveDuration = duration - warmupSeconds
-
-        const finalMetrics = {
-          totalRequests: simState.globalMetrics.totalRequests,
-          avgLatency: allLatencies.length > 0 ? allLatencies.reduce((a, b) => a + b, 0) / allLatencies.length : 0,
-          p50Latency: sorted[Math.floor(sorted.length * 0.5)] || 0,
-          p95Latency: sorted[Math.floor(sorted.length * 0.95)] || 0,
-          p99Latency: sorted[Math.floor(sorted.length * 0.99)] || 0,
-          errorRate: simState.globalMetrics.totalRequests > 0
-            ? (simState.globalMetrics.totalErrors / simState.globalMetrics.totalRequests) * 100 : 0,
-          dropRate: (simState.globalMetrics.totalRequests + simState.globalMetrics.totalErrors + simState.globalMetrics.totalDropped) > 0
-            ? (simState.globalMetrics.totalDropped / (simState.globalMetrics.totalRequests + simState.globalMetrics.totalErrors + simState.globalMetrics.totalDropped)) * 100 : 0,
-          throughput: effectiveDuration > 0 ? simState.globalMetrics.totalRequests / effectiveDuration : 0,
-          availability: simState.globalMetrics.totalRequests > 0
-            ? ((simState.globalMetrics.totalRequests - simState.globalMetrics.totalErrors) / simState.globalMetrics.totalRequests) * 100 : 100,
-          duration, warmupSeconds,
-          blocksAnalyzed: blocks.length,
-          edgesAnalyzed: edges.length,
-        }
-
-        // DB WRITE #2: update completion
-        await prisma.simulation.update({
-          where: { id: simulation.id },
-          data: { status: 'completed', completedAt: new Date(), metrics: finalMetrics, logs: simState.logs }
-        })
-
-        activeSimulations.delete(simulation.id)
-        tickCache.delete(simulation.id)
-      }
-    }, 100)
-
-    res.status(201).json({
-      simulationId: simulation.id,
-      status: 'running',
-      duration,
-      warmupSeconds,
-      blocksCount: blocks.length,
-      edgesCount: edges.length,
-      message: 'Simulation started',
+    // 5. ENQUEUE TO WORKER QUEUE
+    await enqueueSimulation({
+      simId: simulation.id,
+      design: {
+        id: design.id,
+        name: design.name,
+        ownerId: design.ownerId,
+        blocks: design.blocks,
+        edges: design.edges,
+      },
+      config: {
+        seed,
+        trafficPattern,
+        rps,
+        duration,
+        scenario,
+        monteCarloPasses,
+        confidenceLevel,
+        growthScenario,
+        generateReport,
+        deterministicSeed,
+        targetBlockId,
+        targetEdgeId,
+        trafficParams,
+        validation,
+        startedAt: simulation.startedAt,
+        assumptions: {
+          queueModel: 'M/M/1 approximation with capacity limits',
+          networkModel: 'protocol-specific latency + jitter + packet loss',
+          failureModel: 'targeted per-block with cascading propagation',
+          scalingModel: 'instantaneous horizontal/vertical/auto-scaling',
+          latencyDecomposition: 'network + serialization + encryption + compression + processing + queue',
+          resourceModel: 'CPU + memory + thread pool + connection pool contention',
+        },
+      },
+      userId: user.id,
+      clientInfo: getClientInfo(req),
     })
 
+    await lock.release()
+
+    // 6. Audit log
+    await logAuditEvent({
+      userId: user.id,
+      designId,
+      simulationId: simulation.id,
+      action: 'simulation_enqueued',
+      details: {
+        trafficPattern,
+        rps,
+        duration,
+        scenario,
+        monteCarloPasses,
+        growthScenario,
+      },
+      clientInfo: getClientInfo(req),
+    })
+
+    res.json({
+      simulationId: simulation.id,
+      status: 'pending',
+      validation: {
+        canSimulate: true,
+        topologyScore: validation.topologyScore,
+        confidenceScore: validation.confidenceScore,
+        findings: validation.findings,
+      }
+    })
   } catch (err) {
-    console.error('Simulation error:', err)
+    console.error('[SIMULATION] Run error:', err)
     res.status(500).json({ error: err.message })
   }
 })
 
-// ============================================================
-// GET /simulations/:id/status — cached, minimal DB
-// ============================================================
+// ============================================================================
+// GET /simulations/:id/status
+// ============================================================================
+
 router.get('/:id/status', async (req, res) => {
-  const user = await getDbUser(req)
-  if (!user) return res.status(401).json({ error: 'User not found' })
-
-  const simId = req.params.id
-  const cacheKey = `status:${simId}:${user.id}`
-
   try {
-    const cached = statusCache.get(cacheKey)
-    if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
-      return res.json(cached.data)
+    const { id } = req.params
+
+    const simulation = await prisma.simulation.findUnique({
+      where: { id },
+      include: { design: { select: { owner: { select: { clerkId: true } } } } }
+    })
+
+    if (!simulation) return res.status(404).json({ error: 'Not found' })
+    if (simulation.design.owner.clerkId !== req.userId) {
+      return res.status(403).json({ error: 'Forbidden' })
     }
 
-    const simulation = await prisma.simulation.findFirst({
-      where: { id: simId, userId: user.id },
-      select: {
-        id: true, status: true, trafficPattern: true, rps: true,
-        duration: true, metrics: true, startedAt: true, completedAt: true,
-        createdAt: true, updatedAt: true,
-      }
+    const cached = await getCachedSimulationStatus(id, prisma)
+
+    res.json({
+      status: cached.status,
+      progress: cached.progress,
+      metrics: cached.metrics,
+      globalMetrics: cached.globalMetrics,
+      currentRps: cached.currentRps,
+      validationResult: cached.validationResult,
+      confidenceScore: cached.confidenceScore,
+      errorMessage: cached.errorMessage,
+      completedAt: cached.completedAt,
     })
-    if (!simulation) return res.status(404).json({ error: 'Simulation not found' })
-
-    const tickData = tickCache.get(simId)
-    const result = { ...simulation, metrics: simulation.metrics || tickData?.global, live: tickData || null }
-
-    statusCache.set(cacheKey, { data: result, timestamp: Date.now() })
-    res.json(result)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
 
-// ============================================================
-// POST /simulations/:id/stop
-// ============================================================
-router.post('/:id/stop', async (req, res) => {
-  const user = await getDbUser(req)
-  if (!user) return res.status(401).json({ error: 'User not found' })
+// ============================================================================
+// SSE SHARED REDIS SUBSCRIBER
+// ============================================================================
+
+const sseClients = new Map()
+
+redisSubscriber.on('message', (channel, message) => {
+  const match = channel.match(/^sim:([^:]+):progress$/)
+  if (!match) return
+  const simId = match[1]
+  const clients = sseClients.get(simId)
+  if (!clients || clients.size === 0) return
 
   try {
-    const sim = activeSimulations.get(req.params.id)
-    if (sim) {
-      clearInterval(sim.tickInterval)
-      activeSimulations.delete(req.params.id)
-      await prisma.simulation.update({
-        where: { id: req.params.id },
-        data: { status: 'stopped', completedAt: new Date() }
-      })
-      tickCache.delete(req.params.id)
+    const data = JSON.parse(message)
+    clients.forEach((sendEvent) => {
+      try {
+        sendEvent(data)
+      } catch (e) {
+        // Client disconnected mid-write
+      }
+    })
+  } catch (e) {
+    // Ignore malformed messages
+  }
+})
+
+// ============================================================================
+// GET /simulations/:id/stream — SSE with Redis Pub/Sub Bridge
+// ============================================================================
+// CHANGED: Added sseLimiter to prevent connection exhaustion.
+// Each user is limited to 10 new SSE connections per minute across all instances.
+// ============================================================================
+
+router.get('/:id/stream', sseLimiter, async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const simulation = await prisma.simulation.findUnique({
+      where: { id },
+      include: { design: { select: { owner: { select: { clerkId: true } } } } }
+    })
+
+    if (!simulation) return res.status(404).json({ error: 'Not found' })
+    if (simulation.design.owner.clerkId !== req.userId) {
+      return res.status(403).json({ error: 'Forbidden' })
     }
+
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no')
+
+    const sendEvent = (data) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`)
+      if (res.flush) res.flush()
+    }
+
+    if (!sseClients.has(id)) sseClients.set(id, new Set())
+    sseClients.get(id).add(sendEvent)
+
+    const isFirstClient = sseClients.get(id).size === 1
+    const redisChannel = `sim:${id}:progress`
+    if (isFirstClient) {
+      await redisSubscriber.subscribe(redisChannel)
+    }
+
+    sendEvent({
+      progress: simulation.progress,
+      status: simulation.status,
+      metrics: simulation.metrics || {},
+      global: simulation.globalMetrics || {},
+      currentRps: simulation.currentRps,
+      validationResult: simulation.validationResult,
+      confidenceScore: simulation.confidenceScore,
+    })
+
+    if (['completed', 'stopped', 'failed'].includes(simulation.status)) {
+      sseClients.get(id).delete(sendEvent)
+      if (sseClients.get(id).size === 0) {
+        sseClients.delete(id)
+        await redisSubscriber.unsubscribe(redisChannel).catch(() => {})
+      }
+      return res.end()
+    }
+
+    const heartbeat = setInterval(() => {
+      sendEvent({ heartbeat: true, _t: Date.now() })
+    }, 15000)
+
+    req.on('close', async () => {
+      clearInterval(heartbeat)
+      sseClients.get(id)?.delete(sendEvent)
+
+      if (sseClients.get(id)?.size === 0) {
+        sseClients.delete(id)
+        await redisSubscriber.unsubscribe(redisChannel).catch(() => {})
+      }
+    })
+
+  } catch (err) {
+    console.error('[SSE] Stream error:', err.message)
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message })
+    } else {
+      res.end()
+    }
+  }
+})
+
+// ============================================================================
+// POST /simulations/:id/stop
+// ============================================================================
+
+router.post('/:id/stop', async (req, res) => {
+  try {
+    const { id } = req.params
+    const simulation = await prisma.simulation.findUnique({
+      where: { id },
+      include: { design: { select: { owner: { select: { clerkId: true } } } } }
+    })
+
+    if (!simulation) return res.status(404).json({ error: 'Not found' })
+    if (simulation.design.owner.clerkId !== req.userId) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+
+    const { removeJob } = await import('../simulation/worker/queue.js')
+    await removeJob(`sim-${id}`).catch(() => {})
+
+    await prisma.simulation.update({
+      where: { id },
+      data: { status: 'stopped', progress: 100 }
+    })
+
+    await invalidateSimulationStatus(id)
+
+    const user = await getDbUser(req)
+    await logAuditEvent({
+      userId: user?.id,
+      designId: simulation.designId,
+      simulationId: id,
+      action: 'simulation_stopped',
+      details: { reason: 'user_requested' },
+      clientInfo: getClientInfo(req),
+    })
+
     res.json({ success: true })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
 
-// ============================================================
-// GET /simulations/:id/stream — SSE, memory only
-// ============================================================
-router.get('/:id/stream', async (req, res) => {
-  const user = await getDbUser(req)
-  if (!user) return res.status(401).json({ error: 'User not found' })
+// ============================================================================
+// GET /simulations/:id/report — P5.5 Cached Report
+// ============================================================================
+// CHANGED: Added reportLimiter (30 req/min per user) to protect DB from
+// repeated heavy report queries.
+// ============================================================================
 
+router.get('/:id/report', reportLimiter, async (req, res) => {
   try {
-    const sim = await prisma.simulation.findFirst({
-      where: { id: req.params.id, userId: user.id },
-      select: { id: true, status: true }
+    const { id } = req.params
+
+    const simulation = await prisma.simulation.findUnique({
+      where: { id },
+      include: {
+        design: { select: { owner: { select: { clerkId: true } } } },
+      }
     })
-    if (!sim) return res.status(404).json({ error: 'Not found' })
 
-    res.setHeader('Content-Type', 'text/event-stream')
-    res.setHeader('Cache-Control', 'no-cache')
-    res.setHeader('Connection', 'keep-alive')
-    res.flushHeaders?.()
-
-    const tickData = tickCache.get(req.params.id)
-    if (tickData) {
-      res.write(`data: ${JSON.stringify(tickData)}\n\n`)
+    if (!simulation) return res.status(404).json({ error: 'Not found' })
+    if (simulation.design.owner.clerkId !== req.userId) {
+      return res.status(403).json({ error: 'Forbidden' })
     }
 
-    let pollCount = 0
-    const MAX_POLLS = 6000
-    const POLL_MS = 500
-
-    const sendTick = async () => {
-      pollCount++
-      if (pollCount > MAX_POLLS) {
-        res.write('event: end\n')
-        res.write('data: {\"reason\":\"timeout\"}\n\n')
-        res.end()
-        return
-      }
-
-      try {
-        // MEMORY ONLY — no DB, no Redis
-        const data = tickCache.get(req.params.id)
-        if (data) {
-          res.write(`data: ${JSON.stringify(data)}\n\n`)
-        }
-
-        const isActive = activeSimulations.has(req.params.id)
-
-        // Check DB only every 10 polls (5s)
-        let dbStatus = sim.status
-        if (pollCount % 10 === 0) {
-          const dbSim = await prisma.simulation.findUnique({
-            where: { id: req.params.id },
-            select: { status: true }
-          })
-          if (dbSim) dbStatus = dbSim.status
-        }
-
-        if (dbStatus === 'running' && isActive) {
-          setTimeout(sendTick, POLL_MS)
-        } else if (dbStatus === 'completed' || dbStatus === 'stopped' || dbStatus === 'failed') {
-          const finalData = tickCache.get(req.params.id)
-          if (finalData) {
-            res.write(`data: ${JSON.stringify({ ...finalData, progress: 100, status: dbStatus })}\n\n`)
-          }
-          res.write('event: end\n')
-          res.write(`data: {\"status\":\"${dbStatus}\"}\n\n`)
-          res.end()
-        } else {
-          res.write('event: end\n')
-          res.write('data: {\"status\":\"unknown\"}\n\n')
-          res.end()
-        }
-      } catch (err) {
-        console.error('SSE poll error:', err)
-        res.write('event: error\n')
-        res.write(`data: {\"error\":\"${err.message}\"}\n\n`)
-        res.end()
-      }
+    const cached = await getCachedReport(id, prisma)
+    if (cached) {
+      return res.json(cached)
     }
 
-    sendTick()
+    const report = await prisma.simulationReport.findFirst({
+      where: { simulationId: id },
+    })
 
-    req.on('close', () => {})
+    if (!report) {
+      return res.status(404).json({ error: 'Report not yet generated' })
+    }
 
+    await cacheReport(id, report)
+
+    res.json(report)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ============================================================================
+// GET /designs/:designId/simulations — P5.5 Paginated List with Cache
+// ============================================================================
+
+router.get('/design/:designId/list', async (req, res) => {
+  try {
+    const { designId } = req.params
+    const limit = Math.min(parseInt(req.query.limit || '10', 10), 50)
+    const offset = parseInt(req.query.offset || '0', 10)
+
+    const design = await prisma.design.findUnique({
+      where: { id: designId },
+      include: { owner: { select: { clerkId: true } } }
+    })
+
+    if (!design) return res.status(404).json({ error: 'Design not found' })
+    if (design.owner.clerkId !== req.userId) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+
+    const list = await getCachedSimulationList(designId, { limit, offset }, prisma)
+
+    res.json({
+      data: list,
+      pagination: { limit, offset, designId },
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ============================================================================
+// GET /simulations/:id/audit — P5.4 Audit Trail
+// ============================================================================
+
+router.get('/:id/audit', async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const simulation = await prisma.simulation.findUnique({
+      where: { id },
+      include: { design: { select: { owner: { select: { clerkId: true } } } } }
+    })
+
+    if (!simulation) return res.status(404).json({ error: 'Not found' })
+    if (simulation.design.owner.clerkId !== req.userId) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+
+    const auditTrail = await prisma.auditLog.findMany({
+      where: { simulationId: id },
+      orderBy: { createdAt: 'asc' },
+    })
+
+    res.json({
+      simulationId: id,
+      count: auditTrail.length,
+      events: auditTrail,
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ============================================================================
+// GET /simulations/:id/job-state — P5.1 BullMQ Job State
+// ============================================================================
+
+router.get('/:id/job-state', async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const simulation = await prisma.simulation.findUnique({
+      where: { id },
+      include: { design: { select: { owner: { select: { clerkId: true } } } } }
+    })
+
+    if (!simulation) return res.status(404).json({ error: 'Not found' })
+    if (simulation.design.owner.clerkId !== req.userId) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+
+    const jobState = await getJobState(`sim-${id}`)
+
+    res.json({
+      simulationId: id,
+      dbStatus: simulation.status,
+      queueStatus: jobState,
+    })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

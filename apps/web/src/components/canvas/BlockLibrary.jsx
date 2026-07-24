@@ -4,6 +4,9 @@ import {
   ChevronRight,
   ChevronDown,
   Plus,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Blocks,
 } from 'lucide-react'
 import { BLOCK_TYPES, categories } from '@shared/constants'
 import { libraryIconMap } from '@/lib/iconMap'
@@ -11,7 +14,7 @@ import { useCanvasStore } from '@/stores/canvasStore'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 
-export const BlockLibrary = () => {
+export const BlockLibrary = ({ collapsed = false, onToggleCollapse }) => {
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedCategories, setExpandedCategories] = useState(categories.map(c => c.id))
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -37,18 +40,96 @@ export const BlockLibrary = () => {
     event.dataTransfer.effectAllowed = 'move'
   }
 
+  // === COLLAPSED STATE ===
+  if (collapsed) {
+    return (
+      <div
+        className="shrink-0 bg-resonance-bg-sidebar border-r border-resonance-border flex flex-col items-center py-3 gap-2 overflow-hidden"
+        style={{ width: 48, transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)' }}
+      >
+        <button
+          onClick={onToggleCollapse}
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-colors"
+          title="Expand Block Library"
+        >
+          <PanelLeftOpen size={16} />
+        </button>
+
+        <div className="w-6 h-px bg-resonance-border my-1" />
+
+        {/* Quick-access block icons */}
+        {categories.slice(0, 6).map(category => {
+          const categoryBlocks = allBlockTypes.filter(b => b.category === category.id)
+          const firstBlock = categoryBlocks[0]
+          if (!firstBlock) return null
+          const IconComponent = libraryIconMap[firstBlock.icon] || libraryIconMap['Server']
+          return (
+            <button
+              key={category.id}
+              draggable
+              onDragStart={(e) => onDragStart(e, firstBlock.id)}
+              className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-resonance-bg-hover transition-colors group relative"
+              title={category.label}
+            >
+              <IconComponent size={16} style={{ color: firstBlock.color }} />
+              {/* Tooltip on hover */}
+              <span className="absolute left-full ml-2 px-2 py-1 bg-resonance-bg-elevated border border-resonance-border rounded-lg text-xs text-resonance-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                {category.label}
+              </span>
+            </button>
+          )
+        })}
+
+        <div className="w-6 h-px bg-resonance-border my-1" />
+
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-resonance-text-muted hover:text-resonance-accent hover:bg-resonance-bg-hover transition-colors"
+          title="Create Custom Block"
+        >
+          <Plus size={16} />
+        </button>
+
+        <CreateCustomBlockModal
+          isOpen={showCreateModal}
+          onClose={() => setShowCreateModal(false)}
+          onCreate={(blockDef) => {
+            addCustomBlockType(blockDef)
+            setShowCreateModal(false)
+          }}
+        />
+      </div>
+    )
+  }
+
+  // === EXPANDED STATE ===
   return (
-    <div className="w-64 bg-resonance-bg-sidebar border-r border-resonance-border flex flex-col shrink-0">
+    <div
+      className="shrink-0 bg-resonance-bg-sidebar border-r border-resonance-border flex flex-col overflow-hidden"
+      style={{ width: 280, transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)' }}
+    >
       <div className="p-3 border-b border-resonance-border">
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold text-resonance-text-primary">Block Library</h3>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="p-1 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted hover:text-resonance-accent transition-colors"
-            title="Create Custom Block"
-          >
-            <Plus size={14} />
-          </button>
+          <div className="flex items-center gap-2">
+            <Blocks size={14} className="text-resonance-text-muted" />
+            <h3 className="text-sm font-semibold text-resonance-text-primary">Block Library</h3>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="p-1 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted hover:text-resonance-accent transition-colors"
+              title="Create Custom Block"
+            >
+              <Plus size={14} />
+            </button>
+            <button
+              onClick={onToggleCollapse}
+              className="p-1 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted hover:text-resonance-text-primary transition-colors"
+              title="Collapse Block Library"
+            >
+              <PanelLeftClose size={14} />
+            </button>
+          </div>
         </div>
         <div className="relative">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-resonance-text-muted" />

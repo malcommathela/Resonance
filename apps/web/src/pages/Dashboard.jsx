@@ -2,20 +2,86 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@clerk/clerk-react'
 import { useDesignStore } from '@/stores/designStore'
+import { useThemeStore } from '@/stores/themeStore'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
-import { DesignCard, getRandomAccent } from '@/components/ui/DesignCard'
+import { getRandomAccent } from '@/components/ui/DesignCard'
 import { GitHubImportModal } from '@/components/canvas/GitHubImportModal'
-import { 
-  Loader2, Plus, Search, Github, LayoutGrid, List, Trash2, X, Layers,
-  FolderOpen, GitBranch, Clock, Activity, Zap, FolderGit, FileCode
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { DashboardSkeleton } from '@/components/ui/Skeletons'
+import {
+  Loader2, Plus, Search, Github, Sun, Moon, Bell, Trash2, X, Layers,
+  FolderOpen, Activity, Zap, DollarSign, Pencil, Copy, Clock, GitBranch
 } from 'lucide-react'
 import { api } from '@/services/api'
+
+/* ------------------------------------------------------------------ */
+// Helpers
+/* ------------------------------------------------------------------ */
+
+const formatRelativeTime = (date) => {
+  const now = new Date()
+  const diff = Math.floor((now - date) / 1000)
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`
+  return `${Math.floor(diff / 604800)}w ago`
+}
+
+const MiniRing = ({ value }) => {
+  const circumference = 2 * Math.PI * 18
+  const offset = circumference - (value / 100) * circumference
+  return (
+    <div className="relative w-11 h-11 flex-shrink-0">
+      <svg width="44" height="44" viewBox="0 0 44 44" className="transform -rotate-90">
+        <circle cx="22" cy="22" r="18" fill="none" stroke="currentColor" strokeWidth="4" className="text-resonance-border" />
+        <circle
+          cx="22" cy="22" r="18" fill="none"
+          stroke="url(#ringGrad)" strokeWidth="4"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+        />
+        <defs>
+          <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#DCFC5C" />
+            <stop offset="100%" stopColor="#0062D6" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <span className="absolute inset-0 flex items-center justify-center text-[11px] font-bold tabular-nums text-resonance-text-primary">
+        {value}
+      </span>
+    </div>
+  )
+}
+
+const StatusBadge = ({ status }) => {
+  const config = {
+    draft:     { bg: 'bg-resonance-bg-tertiary', text: 'text-resonance-text-muted', dot: 'bg-resonance-text-muted', label: 'Draft' },
+    review:    { bg: 'bg-amber-500/10', text: 'text-amber-700 dark:text-amber-400', dot: 'bg-amber-500', label: 'In Review' },
+    production:{ bg: 'bg-emerald-500/10', text: 'text-emerald-700 dark:text-emerald-400', dot: 'bg-emerald-500', label: 'Production' },
+    archived:  { bg: 'bg-resonance-bg-tertiary', text: 'text-resonance-text-muted', dot: 'bg-resonance-text-muted', label: 'Archived' },
+  }
+  const c = config[status] || config.draft
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-xs font-medium ${c.bg} ${c.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
+      {c.label}
+    </span>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+// Dashboard
+/* ------------------------------------------------------------------ */
 
 export const Dashboard = () => {
   const navigate = useNavigate()
   const { isSignedIn, isLoaded: authLoaded } = useAuth()
+  const { theme, toggleTheme } = useThemeStore()
 
   const designs = useDesignStore(state => state.designs)
   const isLoading = useDesignStore(state => state.isLoading)
@@ -30,21 +96,18 @@ export const Dashboard = () => {
   const [newDesignName, setNewDesignName] = useState('')
   const [newDesignDescription, setNewDesignDescription] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
-  const [viewMode, setViewMode] = useState('grid')
+  const [activeFilter, setActiveFilter] = useState('all')
   const [selectedDesigns, setSelectedDesigns] = useState(new Set())
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [toasts, setToasts] = useState([])
-  const [activeFilter, setActiveFilter] = useState('all')
+  const [isImporting, setIsImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState('')
 
   // Edit state
   const [editingDesign, setEditingDesign] = useState(null)
   const [editName, setEditName] = useState('')
   const [editDescription, setEditDescription] = useState('')
   const [editAccent, setEditAccent] = useState('')
-
-  // Import loading state
-  const [isImporting, setIsImporting] = useState(false)
-  const [importProgress, setImportProgress] = useState('')
 
   useEffect(() => {
     if (authLoaded && isSignedIn) {
@@ -60,19 +123,66 @@ export const Dashboard = () => {
     }, 4000)
   }, [])
 
-  // Overview stats
+  /* ------------------------ Real data transforms ------------------------ */
+
+  const enrichedDesigns = useMemo(() => {
+    return designs.map(d => {
+      const status =
+        d.status === 'active' ? 'production'
+        : d.status === 'review' ? 'review'
+        : d.status === 'archived' ? 'archived'
+        : 'draft'
+
+      const projectedCost = d.latestSimulation?.projectedMonthlyCost
+        ? `$${(d.latestSimulation.projectedMonthlyCost / 1000).toFixed(1)}k`
+        : '—'
+
+      const lastSim = d.latestSimulation?.createdAt
+        ? formatRelativeTime(new Date(d.latestSimulation.createdAt))
+        : formatRelativeTime(new Date(d.updatedAt))
+
+      return {
+        ...d,
+        score: d.latestReport?.overallScore || 0,
+        status,
+        projectedCost,
+        edges: d.edges || 0,
+        lastSim,
+        team: d.team || [],
+        scenario: d.latestSimulation?.scenario || 'No simulations',
+      }
+    })
+  }, [designs])
+
+  /* ------------------------ Stats ------------------------ */
+
   const stats = useMemo(() => {
     const total = designs.length
-    const active = designs.filter(d => d.status === 'active').length
-    const withRepo = designs.filter(d => d.repoUrl).length
-    const totalBlocks = designs.reduce((sum, d) => sum + (d.blocks || 0), 0)
-    return { total, active, withRepo, totalBlocks }
+    const sims = designs.reduce((sum, d) => sum + (d.simulations || 0), 0)
+
+    const scored = designs.filter(d => d.latestReport?.overallScore != null)
+    const avgScore = scored.length
+      ? Math.round(scored.reduce((s, d) => s + d.latestReport.overallScore, 0) / scored.length)
+      : 0
+
+    const totalMonthly = designs.reduce(
+      (sum, d) => sum + (d.latestSimulation?.projectedMonthlyCost || 0),
+      0
+    )
+    const costText =
+      totalMonthly > 1000 ? `$${(totalMonthly / 1000).toFixed(1)}k`
+      : totalMonthly > 0 ? `$${totalMonthly.toFixed(0)}`
+      : '—'
+
+    return { total, sims, avgScore, costText }
   }, [designs])
+
+  /* ------------------------ Handlers ------------------------ */
 
   const handleCreateDesign = async () => {
     if (!newDesignName.trim()) return
     try {
-      const design = await createDesign({ 
+      const design = await createDesign({
         name: newDesignName.trim(),
         description: newDesignDescription.trim(),
         accentColor: getRandomAccent()
@@ -130,7 +240,6 @@ export const Dashboard = () => {
   const handleGitHubImport = async (importData) => {
     setIsImporting(true)
     setImportProgress('Creating design...')
-
     try {
       const design = await createDesign({
         name: importData.repo.name,
@@ -142,22 +251,18 @@ export const Dashboard = () => {
 
       if (importData.preGenerated) {
         setImportProgress('Saving architecture...')
-
         await api.saveCanvas(design.id, {
           nodes: importData.preGenerated.nodes,
           edges: importData.preGenerated.edges,
         })
-
         await updateDesign(design.id, {
           blocks: importData.preGenerated.nodes?.length || 0
         })
-
         if (importData.preGenerated.metadata?.description) {
           await api.updateDesign(design.id, {
             description: `${design.description} | AI: ${importData.preGenerated.metadata.description}`,
           })
         }
-
         addToast(`AI: ${importData.preGenerated.metadata?.description || 'Architecture generated'}`, 'success')
       } else {
         setImportProgress('Analyzing codebase...')
@@ -231,176 +336,186 @@ export const Dashboard = () => {
     })
   }
 
-  // Filter designs
+  /* ------------------------ Filters ------------------------ */
+
   const filteredDesigns = useMemo(() => {
-    let filtered = designs.filter(d =>
+    let filtered = enrichedDesigns.filter(d =>
       d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (d.description && d.description.toLowerCase().includes(searchQuery.toLowerCase()))
     )
 
-    if (activeFilter === 'repo') {
-      filtered = filtered.filter(d => d.repoUrl)
-    } else if (activeFilter === 'normal') {
-      filtered = filtered.filter(d => !d.repoUrl)
-    } else if (activeFilter === 'active') {
-      filtered = filtered.filter(d => d.status === 'active')
-    } else if (activeFilter === 'draft') {
+    if (activeFilter === 'draft') {
       filtered = filtered.filter(d => d.status === 'draft')
+    } else if (activeFilter === 'review') {
+      filtered = filtered.filter(d => d.status === 'review')
+    } else if (activeFilter === 'production') {
+      filtered = filtered.filter(d => d.status === 'production')
+    } else if (activeFilter === 'archived') {
+      filtered = filtered.filter(d => d.status === 'archived')
     }
 
     return filtered
-  }, [designs, searchQuery, activeFilter])
+  }, [enrichedDesigns, searchQuery, activeFilter])
 
   const ACCENT_PRESETS = [
     '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316',
     '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#a855f7'
   ]
 
+  const filterTabs = [
+    { id: 'all', label: 'All Designs' },
+    { id: 'draft', label: 'Draft' },
+    { id: 'review', label: 'In Review' },
+    { id: 'production', label: 'Production' },
+    { id: 'archived', label: 'Archived' },
+  ]
+
+  const statCards = [
+    { label: 'Total Designs', value: stats.total, icon: FolderOpen },
+    { label: 'Simulations Run', value: stats.sims, icon: Zap },
+    { label: 'Avg. Score', value: stats.avgScore, icon: Activity },
+    { label: 'Projected Cost', value: stats.costText, icon: DollarSign },
+  ]
+
+  /* ------------------------ Render ------------------------ */
+
+  // === SKELETON LOADING STATE ===
+  if (isLoading && designs.length === 0) {
+    return (
+      <div className="min-h-screen bg-resonance-bg-primary">
+        <DashboardSkeleton />
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-resonance-bg-primary">
-      {/* Overview Stats */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-4">
-        <div className="flex items-start justify-between mb-6">
+      <div className="max-w-[1200px] mx-auto px-6 lg:px-12 py-8">
+
+        {/* Top Header */}
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between mb-8 gap-4 animate-[fadeIn_400ms_ease-out_forwards]">
           <div>
-            <h1 className="text-2xl font-bold text-resonance-text-primary">Overview</h1>
-            <p className="text-sm text-resonance-text-secondary mt-1">All your system designs and simulations</p>
+            <h1 className="text-[30px] font-semibold leading-9 tracking-tight text-resonance-text-primary">
+              Dashboard
+            </h1>
+            <p className="text-sm text-resonance-text-secondary mt-1">
+              Manage your architecture designs and simulations
+            </p>
           </div>
-          <div className="flex items-center gap-3">
+
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-resonance-text-muted" />
+              <input
+                type="text"
+                placeholder="Search designs..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 pr-4 py-2.5 w-64 bg-resonance-bg-secondary border border-resonance-border rounded-xl text-sm text-resonance-text-primary placeholder:text-resonance-text-muted outline-none focus:border-resonance-text-primary transition-colors"
+              />
+            </div>
+
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-xl text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
+              title="Toggle theme"
+            >
+              {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+
+            <button
+              className="relative p-2 rounded-xl text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
+              title="Notifications"
+            >
+              <Bell size={18} />
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 border-2 border-resonance-bg-primary" />
+            </button>
+
             <Button onClick={() => setShowImportModal(true)} variant="secondary" className="gap-2">
               <Github size={16} />
               Import from GitHub
             </Button>
+
             <Button onClick={() => setShowNewModal(true)} className="gap-2">
               <Plus size={16} />
-              Create Design
+              New Design
             </Button>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          <div className="bg-resonance-bg-secondary border border-resonance-border rounded-xl p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-lg bg-resonance-accent/10 flex items-center justify-center">
-                <FolderOpen size={20} className="text-resonance-accent" />
+        {/* Stats Bar */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8 animate-[fadeIn_400ms_ease-out_50ms_forwards] opacity-0">
+          {statCards.map((stat) => {
+            const Icon = stat.icon
+            return (
+              <div
+                key={stat.label}
+                className="bg-resonance-bg-secondary border border-resonance-border rounded-xl p-5 hover:border-resonance-text-secondary hover:-translate-y-0.5 transition-all duration-150"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-[13px] font-medium uppercase tracking-wide text-resonance-text-secondary">
+                    {stat.label}
+                  </span>
+                  <Icon size={16} className="text-resonance-text-secondary" />
+                </div>
+                <div className="text-[28px] font-bold tabular-nums tracking-tight text-resonance-text-primary">
+                  {stat.value}
+                </div>
               </div>
-            </div>
-            <p className="text-2xl font-bold text-resonance-text-primary">{stats.total}</p>
-            <p className="text-xs text-resonance-text-muted mt-1">Total Designs</p>
-          </div>
-          <div className="bg-resonance-bg-secondary border border-resonance-border rounded-xl p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center">
-                <Activity size={20} className="text-green-500" />
-              </div>
-            </div>
-            <p className="text-2xl font-bold text-resonance-text-primary">{stats.active}</p>
-            <p className="text-xs text-resonance-text-muted mt-1">Active</p>
-          </div>
-          <div className="bg-resonance-bg-secondary border border-resonance-border rounded-xl p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
-                <Clock size={20} className="text-amber-500" />
-              </div>
-            </div>
-            <p className="text-2xl font-bold text-resonance-text-primary">{stats.totalBlocks}</p>
-            <p className="text-xs text-resonance-text-muted mt-1">Simulations</p>
-          </div>
-          <div className="bg-resonance-bg-secondary border border-resonance-border rounded-xl p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                <GitBranch size={20} className="text-blue-500" />
-              </div>
-            </div>
-            <p className="text-2xl font-bold text-resonance-text-primary">{stats.withRepo}</p>
-            <p className="text-xs text-resonance-text-muted mt-1">Connected Repos</p>
-          </div>
+            )
+          })}
         </div>
-      </div>
 
-      {/* Designs Section */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
-        {/* Toolbar */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <Input
-              type="text"
-              placeholder="Search designs..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              icon={Search}
-              className="w-64"
-            />
-
-            {/* Filter tabs */}
-            <div className="flex items-center bg-resonance-bg-secondary rounded-lg p-1 border border-resonance-border">
-              {[
-                { id: 'all', label: 'All' },
-                { id: 'active', label: 'Active' },
-                { id: 'draft', label: 'Draft' },
-                { id: 'repo', label: 'From GitHub' },
-                { id: 'normal', label: 'Manual' },
-              ].map((filter) => (
-                <button
-                  key={filter.id}
-                  onClick={() => setActiveFilter(filter.id)}
-                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                    activeFilter === filter.id 
-                      ? 'bg-resonance-accent text-white' 
-                      : 'text-resonance-text-muted hover:text-resonance-text-primary'
-                  }`}
-                >
-                  {filter.label}
-                </button>
-              ))}
-            </div>
+        {/* Filters */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-5 gap-3 animate-[fadeIn_400ms_ease-out_100ms_forwards] opacity-0">
+          <div className="flex gap-1 bg-resonance-bg-secondary border border-resonance-border rounded-xl p-1 overflow-x-auto">
+            {filterTabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveFilter(tab.id)}
+                className={`px-3.5 py-1.5 rounded-lg text-[13px] font-medium whitespace-nowrap transition-all duration-150 ${
+                  activeFilter === tab.id
+                    ? 'bg-resonance-text-primary text-resonance-bg-secondary'
+                    : 'text-resonance-text-secondary hover:text-resonance-text-primary'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="flex items-center bg-resonance-bg-secondary rounded-lg p-1 border border-resonance-border">
-              <button
-                onClick={() => setViewMode('grid')}
-                className={`p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-resonance-accent text-white' : 'text-resonance-text-muted hover:text-resonance-text-primary'}`}
-              >
-                <LayoutGrid size={16} />
-              </button>
-              <button
-                onClick={() => setViewMode('list')}
-                className={`p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-resonance-accent text-white' : 'text-resonance-text-muted hover:text-resonance-text-primary'}`}
-              >
-                <List size={16} />
-              </button>
-            </div>
+          <div className="flex gap-2">
+            <button className="inline-flex items-center gap-2 px-3 py-1.5 bg-resonance-bg-secondary border border-resonance-border rounded-lg text-xs font-medium text-resonance-text-primary hover:bg-resonance-bg-hover transition-all">
+              <Clock size={14} /> Sort
+            </button>
+            <button className="inline-flex items-center gap-2 px-3 py-1.5 bg-resonance-bg-secondary border border-resonance-border rounded-lg text-xs font-medium text-resonance-text-primary hover:bg-resonance-bg-hover transition-all">
+              <GitBranch size={14} /> Filter
+            </button>
           </div>
         </div>
 
-        {/* Bulk Actions Bar */}
+        {/* Bulk Actions */}
         {selectedDesigns.size > 0 && (
-          <div className="sticky top-0 z-20 bg-resonance-accent/10 border border-resonance-accent/30 rounded-xl backdrop-blur-sm mb-6 animate-slide-down">
+          <div className="sticky top-0 z-20 bg-resonance-accent/10 border border-resonance-accent/30 rounded-xl backdrop-blur-sm mb-6 animate-[slide-down_200ms_ease-out_forwards]">
             <div className="px-4 py-3 flex items-center justify-between">
-              <span className="text-sm font-medium text-resonance-accent">
+              <span className="text-sm font-medium text-resonance-neutral">
                 {selectedDesigns.size} selected
               </span>
               <div className="flex items-center gap-2">
                 <Button variant="ghost" size="sm" onClick={() => setSelectedDesigns(new Set())}>
-                  <X size={14} className="mr-1" />
-                  Clear
+                  <X size={14} className="mr-1" /> Clear
                 </Button>
                 <Button variant="danger" size="sm" onClick={() => setShowDeleteConfirm(true)}>
-                  <Trash2 size={14} className="mr-1" />
-                  Delete
+                  <Trash2 size={14} className="mr-1" /> Delete
                 </Button>
               </div>
             </div>
           </div>
         )}
 
-        {/* Create New Card + Design Grid */}
-        {isLoading ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 size={32} className="animate-spin text-resonance-accent" />
-          </div>
-        ) : filteredDesigns.length === 0 ? (
-          <div className="text-center py-20">
+        {/* Design Grid */}
+        {filteredDesigns.length === 0 ? (
+          <div className="text-center py-20 animate-[fadeIn_400ms_ease-out_forwards]">
             <Layers size={48} className="mx-auto text-resonance-text-muted mb-4" />
             <h3 className="text-lg font-semibold text-resonance-text-primary mb-2">
               {searchQuery ? 'No designs found' : 'No designs yet'}
@@ -410,175 +525,240 @@ export const Dashboard = () => {
             </p>
             <div className="flex gap-3 justify-center">
               <Button onClick={() => setShowImportModal(true)} variant="secondary">
-                <Github size={16} className="mr-2" />
-                Import from GitHub
+                <Github size={16} className="mr-2" /> Import from GitHub
               </Button>
               <Button onClick={() => setShowNewModal(true)}>
-                <Plus size={16} className="mr-2" />
-                Create Design
+                <Plus size={16} className="mr-2" /> Create Design
               </Button>
             </div>
           </div>
         ) : (
-          <div className={viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' : 'space-y-4'}>
-            {/* Create New Card */}
-            <div 
-              className="rounded-xl border border-dashed border-resonance-border bg-resonance-bg-secondary/50 hover:bg-resonance-bg-secondary transition-all cursor-pointer flex flex-col items-center justify-center min-h-[240px] group"
-              onClick={() => setShowNewModal(true)}
-            >
-              <div className="w-14 h-14 rounded-2xl bg-resonance-bg-tertiary flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                <Plus size={28} className="text-resonance-text-muted" />
-              </div>
-              <p className="text-sm font-medium text-resonance-text-primary">Create new design</p>
-              <p className="text-xs text-resonance-text-muted mt-1">Start from scratch</p>
-            </div>
-
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 animate-[fadeIn_400ms_ease-out_150ms_forwards] opacity-0">
             {filteredDesigns.map((design) => (
-              <DesignCard
+              <div
                 key={design.id}
-                design={design}
-                viewMode={viewMode}
-                selected={selectedDesigns.has(design.id)}
-                onSelect={() => toggleSelection(design.id)}
-                onClick={() => navigate(`/design/${design.id}`)}
-                onEdit={handleEditDesign}
-                onDelete={handleDeleteDesign}
-                onDuplicate={handleDuplicateDesign}
-              />
+                onClick={() => navigate(`/designs/${design.id}`)}
+                className="group bg-resonance-bg-secondary border border-resonance-border rounded-xl overflow-hidden cursor-pointer hover:border-resonance-text-secondary hover:-translate-y-1 hover:shadow-[0_8px_24px_rgba(0,0,0,0.06)] transition-all duration-150 relative"
+              >
+                {/* Gradient shell top border */}
+                <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-[#DCFC5C] via-[#0062D6] to-[#000000] opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
+
+                <div className="p-5">
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div className="min-w-0 flex-1">
+                      <StatusBadge status={design.status} />
+                      <h3 className="text-base font-semibold mt-2 mb-1 truncate text-resonance-text-primary">
+                        {design.name}
+                      </h3>
+                      <p className="text-[13px] text-resonance-text-secondary line-clamp-2">
+                        {design.description || 'No description'}
+                      </p>
+                    </div>
+                    <MiniRing value={design.score} />
+                  </div>
+
+                  {/* Metrics */}
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    <div className="bg-resonance-bg-tertiary rounded-lg p-3">
+                      <div className="text-[11px] uppercase tracking-wider text-resonance-text-secondary mb-1">Last Sim</div>
+                      <div className="text-lg font-bold tabular-nums text-resonance-text-primary">{design.lastSim}</div>
+                      <div className="text-xs text-resonance-text-secondary mt-0.5">{design.scenario}</div>
+                    </div>
+                    <div className="bg-resonance-bg-tertiary rounded-lg p-3">
+                      <div className="text-[11px] uppercase tracking-wider text-resonance-text-secondary mb-1">Projected Cost</div>
+                      <div className="text-lg font-bold tabular-nums text-resonance-text-primary">{design.projectedCost}</div>
+                      <div className="text-xs text-resonance-text-secondary mt-0.5">/month</div>
+                    </div>
+                    <div className="bg-resonance-bg-tertiary rounded-lg p-3">
+                      <div className="text-[11px] uppercase tracking-wider text-resonance-text-secondary mb-1">Blocks</div>
+                      <div className="text-lg font-bold tabular-nums text-resonance-text-primary">{design.blocks || 0}</div>
+                      <div className="text-xs text-resonance-text-secondary mt-0.5">nodes</div>
+                    </div>
+                    <div className="bg-resonance-bg-tertiary rounded-lg p-3">
+                      <div className="text-[11px] uppercase tracking-wider text-resonance-text-secondary mb-1">Edges</div>
+                      <div className="text-lg font-bold tabular-nums text-resonance-text-primary">{design.edges}</div>
+                      <div className="text-xs text-resonance-text-secondary mt-0.5">connections</div>
+                    </div>
+                  </div>
+
+                  {/* Footer */}
+                  <div className="flex items-center justify-between pt-3 border-t border-resonance-border">
+                    <div className="flex items-center">
+                      {design.team.map((member, i) => (
+                        <div
+                          key={i}
+                          className="w-6 h-6 rounded-full border-2 border-resonance-bg-secondary flex items-center justify-center text-[9px] font-bold -ml-2 first:ml-0"
+                          style={{
+                            backgroundColor: i === 0 ? '#DCFC5C' : i === 1 ? '#6B7280' : '#9CA3AF',
+                            color: i === 0 ? '#000000' : '#ffffff'
+                          }}
+                        >
+                          {member.initials}
+                        </div>
+                      ))}
+                      {design.team.length > 3 && (
+                        <span className="ml-1 text-[9px] font-medium text-resonance-text-secondary">
+                          +{design.team.length - 3}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-resonance-text-secondary">Updated {design.lastSim}</span>
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleEditDesign(design) }}
+                          className="p-1.5 rounded-md text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDuplicateDesign(design) }}
+                          className="p-1.5 rounded-md text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
+                        >
+                          <Copy size={14} />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDeleteDesign(design.id) }}
+                          className="p-1.5 rounded-md text-resonance-text-secondary hover:text-red-500 hover:bg-red-500/10 transition-all"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             ))}
           </div>
         )}
-      </div>
 
-      {/* New Design Modal */}
-      <Modal isOpen={showNewModal} onClose={() => setShowNewModal(false)} title="Create New Design">
-        <div className="space-y-4">
-          <Input
-            label="Design Name"
-            placeholder="e.g., E-Commerce Platform"
-            value={newDesignName}
-            onChange={(e) => setNewDesignName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleCreateDesign()}
-            autoFocus
-          />
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-resonance-text-primary">Description</label>
-            <textarea
-              value={newDesignDescription}
-              onChange={(e) => setNewDesignDescription(e.target.value)}
-              placeholder="Add a description..."
-              rows={3}
-              className="w-full px-3 py-2 bg-resonance-bg-tertiary border border-resonance-border rounded-lg text-sm text-resonance-text-primary placeholder-resonance-text-muted focus:outline-none focus:ring-2 focus:ring-resonance-accent/30 focus:border-resonance-accent transition-all resize-none"
-            />
-          </div>
-          <div className="flex justify-end gap-3">
-            <Button variant="ghost" onClick={() => setShowNewModal(false)}>Cancel</Button>
-            <Button onClick={handleCreateDesign} disabled={!newDesignName.trim()}>
-              Create Design
-            </Button>
-          </div>
-        </div>
-      </Modal>
+        {/* ---------- Modals ---------- */}
 
-      {/* Edit Design Modal */}
-      <Modal isOpen={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Design">
-        <div className="space-y-4">
-          <Input
-            label="Design Name"
-            placeholder="Design name"
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-            autoFocus
-          />
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-resonance-text-primary">Description</label>
-            <textarea
-              value={editDescription}
-              onChange={(e) => setEditDescription(e.target.value)}
-              placeholder="Add a description..."
-              rows={3}
-              className="w-full px-3 py-2 bg-resonance-bg-tertiary border border-resonance-border rounded-lg text-sm text-resonance-text-primary placeholder-resonance-text-muted focus:outline-none focus:ring-2 focus:ring-resonance-accent/30 focus:border-resonance-accent transition-all resize-none"
+        {/* New Design */}
+        <Modal isOpen={showNewModal} onClose={() => setShowNewModal(false)} title="Create New Design">
+          <div className="space-y-4">
+            <Input
+              label="Design Name"
+              placeholder="e.g., E-Commerce Platform"
+              value={newDesignName}
+              onChange={(e) => setNewDesignName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleCreateDesign()}
+              autoFocus
             />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-resonance-text-primary">Accent Color</label>
-            <div className="flex flex-wrap gap-2">
-              {ACCENT_PRESETS.map((color) => (
-                <button
-                  key={color}
-                  onClick={() => setEditAccent(color)}
-                  className={`w-8 h-8 rounded-full border-2 transition-all ${
-                    editAccent === color ? 'border-white scale-110 shadow-lg' : 'border-transparent hover:scale-105'
-                  }`}
-                  style={{ backgroundColor: color }}
-                />
-              ))}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-resonance-text-primary">Description</label>
+              <textarea
+                value={newDesignDescription}
+                onChange={(e) => setNewDesignDescription(e.target.value)}
+                placeholder="Add a description..."
+                rows={3}
+                className="w-full px-3 py-2 bg-resonance-bg-tertiary border border-resonance-border rounded-xl text-sm text-resonance-text-primary placeholder:text-resonance-text-muted outline-none focus:ring-2 focus:ring-resonance-accent/30 focus:border-resonance-accent transition-all resize-none"
+              />
+            </div>
+            <div className="flex justify-end gap-3">
+              <Button variant="ghost" onClick={() => setShowNewModal(false)}>Cancel</Button>
+              <Button onClick={handleCreateDesign} disabled={!newDesignName.trim()}>
+                Create Design
+              </Button>
             </div>
           </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <Button variant="ghost" onClick={() => setShowEditModal(false)}>Cancel</Button>
-            <Button onClick={handleSaveEdit} disabled={!editName.trim()}>
-              Save Changes
-            </Button>
-          </div>
-        </div>
-      </Modal>
+        </Modal>
 
-      {/* GitHub Import Modal */}
-      <GitHubImportModal
-        isOpen={showImportModal}
-        onClose={() => !isImporting && setShowImportModal(false)}
-        onImport={handleGitHubImport}
-      />
-
-      {/* Delete Confirmation */}
-      <Modal isOpen={showDeleteConfirm} onClose={() => setShowDeleteConfirm(false)} title="Delete Designs" size="sm">
-        <div className="space-y-4">
-          <p className="text-resonance-text-secondary">
-            Are you sure you want to delete {selectedDesigns.size} design{selectedDesigns.size !== 1 ? 's' : ''}? This action cannot be undone.
-          </p>
-          <div className="flex justify-end gap-3">
-            <Button variant="ghost" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
-            <Button variant="danger" onClick={handleBulkDelete}>Delete</Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Toasts */}
-      <div className="fixed bottom-4 right-4 z-50 space-y-2">
-        {toasts.map(toast => (
-          <div
-            key={toast.id}
-            className={`px-4 py-3 rounded-lg shadow-lg border flex items-center gap-2 min-w-[300px] animate-slide-up ${
-              toast.type === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-400' :
-              toast.type === 'success' ? 'bg-green-500/10 border-green-500/30 text-green-400' :
-              'bg-resonance-bg-secondary border-resonance-border text-resonance-text-primary'
-            }`}
-          >
-            <span className="text-sm">{toast.message}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* Import Loading Overlay */}
-      {isImporting && (
-        <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center animate-fade-in">
-          <div className="bg-resonance-bg-secondary border border-resonance-border rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl animate-scale-in">
-            <div className="flex flex-col items-center gap-4">
-              <Loader2 size={40} className="animate-spin text-resonance-accent" />
-              <div className="text-center">
-                <h3 className="text-lg font-semibold text-resonance-text-primary mb-1">
-                  Importing from GitHub
-                </h3>
-                <p className="text-sm text-resonance-text-secondary">{importProgress}</p>
+        {/* Edit Design */}
+        <Modal isOpen={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Design">
+          <div className="space-y-4">
+            <Input
+              label="Design Name"
+              placeholder="Design name"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              autoFocus
+            />
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-resonance-text-primary">Description</label>
+              <textarea
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                placeholder="Add a description..."
+                rows={3}
+                className="w-full px-3 py-2 bg-resonance-bg-tertiary border border-resonance-border rounded-xl text-sm text-resonance-text-primary placeholder:text-resonance-text-muted outline-none focus:ring-2 focus:ring-resonance-accent/30 focus:border-resonance-accent transition-all resize-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-resonance-text-primary">Accent Color</label>
+              <div className="flex flex-wrap gap-2">
+                {ACCENT_PRESETS.map((color) => (
+                  <button
+                    key={color}
+                    onClick={() => setEditAccent(color)}
+                    className={`w-8 h-8 rounded-full border-2 transition-all ${
+                      editAccent === color ? 'border-white scale-110 shadow-lg' : 'border-transparent hover:scale-105'
+                    }`}
+                    style={{ backgroundColor: color }}
+                  />
+                ))}
               </div>
-              <div className="w-full h-1.5 bg-resonance-bg-tertiary rounded-full overflow-hidden">
-                <div className="h-full bg-resonance-accent rounded-full animate-progress" />
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <Button variant="ghost" onClick={() => setShowEditModal(false)}>Cancel</Button>
+              <Button onClick={handleSaveEdit} disabled={!editName.trim()}>
+                Save Changes
+              </Button>
+            </div>
+          </div>
+        </Modal>
+
+        {/* GitHub Import */}
+        <GitHubImportModal
+          isOpen={showImportModal}
+          onClose={() => !isImporting && setShowImportModal(false)}
+          onImport={handleGitHubImport}
+        />
+
+        {/* Delete Confirmation */}
+        <Modal isOpen={showDeleteConfirm} onClose={() => setShowDeleteConfirm(false)} title="Delete Designs" size="sm">
+          <div className="space-y-4">
+            <p className="text-resonance-text-secondary">
+              Are you sure you want to delete {selectedDesigns.size} design{selectedDesigns.size !== 1 ? 's' : ''}? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <Button variant="ghost" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
+              <Button variant="danger" onClick={handleBulkDelete}>Delete</Button>
+            </div>
+          </div>
+        </Modal>
+
+        {/* Toasts */}
+        <div className="fixed bottom-4 right-4 z-50 space-y-2">
+          {toasts.map(toast => (
+            <div
+              key={toast.id}
+              className={`px-4 py-3 rounded-xl shadow-lg border flex items-center gap-2 min-w-[300px] animate-slide-up ${
+                toast.type === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-400' :
+                toast.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                'bg-resonance-bg-secondary border-resonance-border text-resonance-text-primary'
+              }`}
+            >
+              <span className="text-sm">{toast.message}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Import Loading Overlay */}
+        {isImporting && (
+          <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center animate-fade-in">
+            <div className="bg-resonance-bg-secondary border border-resonance-border rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl animate-scale-in">
+              <div className="flex flex-col items-center gap-4">
+                <LoadingSpinner size="lg" message={importProgress} />
+                <div className="w-full h-1.5 bg-resonance-bg-tertiary rounded-full overflow-hidden">
+                  <div className="h-full bg-resonance-accent rounded-full animate-progress" />
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }

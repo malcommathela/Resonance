@@ -8,6 +8,7 @@ export const Badge = ({ children, variant = 'default', className = '' }) => {
     error: 'bg-red-500/10 text-red-500 border border-red-500/20',
     accent: 'bg-resonance-accent/10 text-resonance-accent border border-resonance-accent/20',
     draft: 'bg-resonance-bg-tertiary text-resonance-text-muted border border-resonance-border',
+    beta: 'bg-resonance-accent text-resonance-neutral border border-resonance-accent',
   }
 
   return (
