@@ -73,8 +73,12 @@ export function createSimulationWorker(concurrency = 2) {
     }
   )
 
+  // FIX 2: Log actual processing time, not queue wait + processing
   worker.on('completed', (job) => {
-    console.log(`[WORKER] Job ${job.id} completed in ${Date.now() - job.timestamp}ms`)
+    const processingMs = job.finishedOn && job.processedOn
+      ? job.finishedOn - job.processedOn
+      : Date.now() - (job.processedOn || job.timestamp)
+    console.log(`[WORKER] Job ${job.id} completed in ${processingMs}ms`)
   })
 
   worker.on('failed', (job, err) => {

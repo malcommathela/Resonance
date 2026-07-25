@@ -751,25 +751,6 @@ export async function runSimulationPass(blocks, edges, arrivalEvents, scenario, 
   injectFailures(state, scenario, duration, rng, options.targetBlockId, options.targetEdgeId)
   // === END BATCH 5C ===
 
-  // ==========================================================================
-  // TIME-COMPRESSED REAL-TIME PACING
-  // ==========================================================================
-  // Goal: Simulation feels substantial but never exceeds ~3 minutes wall-clock.
-  //
-  // For short simulations (<= 60s): run 1:1 real-time (~30-60s wall-clock)
-  // For medium (61-180s): linear scale to ~3 minutes
-  // For long (>= 181s): capped at 3 minutes (180s wall-clock)
-  //
-  // Ratio = simulated_seconds / wall_clock_seconds
-  // ==========================================================================
-
-  const TARGET_MAX_WALL_SECONDS = 180 // 3 minutes cap
-  const REALTIME_THRESHOLD_SECONDS = 60 // Run 1:1 below this
-
-  const simRatio = duration <= REALTIME_THRESHOLD_SECONDS
-    ? 1.0 // 1:1 real-time
-    : duration / TARGET_MAX_WALL_SECONDS // Compress: 300s sim = 300/180 = 1.67 sim-sec per wall-sec
-
   const wallClockStart = Date.now()
   let lastSnapshotTime = 0
   let lastStreamWallTime = 0
@@ -819,23 +800,6 @@ export async function runSimulationPass(blocks, edges, arrivalEvents, scenario, 
         break
     }
 
-    // ------------------------------------------------------------------------
-    // REAL-TIME PACING: Sleep if engine is ahead of wall-clock schedule
-    // ------------------------------------------------------------------------
-    const elapsedSimulatedSeconds = state.time
-    const elapsedWallMs = Date.now() - wallClockStart
-    const expectedWallMs = (elapsedSimulatedSeconds / simRatio) * 1000
-
-    if (expectedWallMs > elapsedWallMs) {
-      const sleepMs = expectedWallMs - elapsedWallMs
-      // Only sleep if meaningful (>= 2ms) to avoid micro-sleeps killing throughput
-      if (sleepMs >= 2) {
-        // CRITICAL FIX: cap raised to 100ms to reduce setTimeout overhead
-        await new Promise(r => setTimeout(r, Math.min(sleepMs, 100)))
-      }
-    }
-
-    // CRITICAL FIX: check stop signal after any await
     if (shouldStop && shouldStop()) break
 
     // ------------------------------------------------------------------------
