@@ -1,3 +1,4 @@
+import { api } from '@/services/api'
 import React, { useState, useEffect, useRef } from 'react'
 import {
   Play,
@@ -27,6 +28,7 @@ import {
   GROWTH_SCENARIOS,
 } from '@shared/constants'
 import { getValidationSummary, SEVERITY } from '@/lib/validation'
+
 
 const SETTINGS_KEY = 'resonance-simulation-settings'
 
@@ -122,32 +124,56 @@ export const SimulationControls = ({ onRun, isRunning, progress, metrics, simula
   }, [duration])
   // === END BATCH 5C ===
 
-  // Stream live metrics via SSE
+  // Stream live metrics via SSE (fetch-based, supports Clerk headers)
   useEffect(() => {
     if (isRunning && simulationId) {
-      const es = new EventSource(
-        `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/simulations/${simulationId}/stream`,
-        { withCredentials: true }
-      )
+      const ctrl = new AbortController()
 
-      es.onmessage = (event) => {
-        const data = JSON.parse(event.data)
-        setLiveMetrics(data)
+      const connect = async () => {
+        const { fetchEventSource } = await import('@microsoft/fetch-event-source')
+        const token = await api.getAuthToken()
+
+        await fetchEventSource(
+          `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/simulations/${simulationId}/stream`,
+          {
+            method: 'GET',
+            headers: {
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            credentials: 'include',
+            signal: ctrl.signal,
+            openWhenHidden: true,
+            onmessage: (msg) => {
+              try {
+                const data = JSON.parse(msg.data)
+                setLiveMetrics(data)
+              } catch (e) {
+                // ignore malformed payloads
+              }
+            },
+            onerror: (err) => {
+              // Stop retrying on auth errors
+              if (err?.status === 401) {
+                console.error('[SSE] 401 Unauthorized — stopping stream')
+                ctrl.abort()
+                return
+              }
+            },
+          }
+        )
       }
 
-      es.onerror = () => {
-        es.close()
-      }
-
-      eventSourceRef.current = es
+      connect()
 
       return () => {
-        es.close()
+        ctrl.abort()
+        setLiveMetrics(null)
       }
     } else {
       setLiveMetrics(null)
       if (eventSourceRef.current) {
         eventSourceRef.current.close()
+        eventSourceRef.current = null
       }
     }
   }, [isRunning, simulationId])
