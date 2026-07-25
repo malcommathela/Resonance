@@ -121,6 +121,7 @@ function CanvasEditorInner() {
     removeNode,
     addEdge: addStoreEdge,
     removeEdge,
+    updateEdge,        // <-- FIX: added missing store action
     undo,
     redo,
     deleteSelected,
@@ -436,7 +437,7 @@ function CanvasEditorInner() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (eventSourceRef.current) eventSourceRef.current.close()
+      if (eventSourceRef.current) eventSourceRef.current.abort()
       if (simulationIntervalRef.current) clearInterval(simulationIntervalRef.current)
     }
   }, [])
@@ -802,7 +803,7 @@ function CanvasEditorInner() {
       simulationIntervalRef.current = null
     }
     if (eventSourceRef.current) {
-      eventSourceRef.current.close()
+      eventSourceRef.current.abort()
       eventSourceRef.current = null
     }
 
@@ -848,179 +849,201 @@ function CanvasEditorInner() {
       setSimulationId(simId)
       setLogs(prev => [...prev, { type: 'success', message: `Simulation ${simId} started`, timestamp: Date.now() }])
 
-      // SSE stream
-      const es = new EventSource(
+      // SSE stream — switched to fetch-event-source for Clerk Bearer token auth
+      const { fetchEventSource } = await import('@microsoft/fetch-event-source')
+      const token = await api.getAuthToken()
+      const ctrl = new AbortController()
+      eventSourceRef.current = ctrl
+
+      fetchEventSource(
         `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/simulations/${simId}/stream`,
-        { withCredentials: true }
+        {
+          method: 'GET',
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            Accept: 'text/event-stream',
+          },
+          credentials: 'include',
+          signal: ctrl.signal,
+          openWhenHidden: true,
+          onmessage: (event) => {
+            const data = JSON.parse(event.data)
+
+            // Ignore heartbeats
+            if (data.heartbeat) return
+
+            if (data.error) {
+              console.error('SSE error:', data.error)
+              return
+            }
+
+            setSimulationProgress(data.progress || 0)
+
+            // === BATCH 5B: LIVE BLOCK METRICS (expanded) ===
+            const blockMetricsMap = {}
+            if (data.metrics && Object.keys(data.metrics).length > 0) {
+              Object.entries(data.metrics).forEach(([blockId, metrics]) => {
+                // Existing visual node update (kept for backward compat)
+                updateNode(blockId, {
+                  metrics: {
+                    rps: metrics.throughputRps || 0,
+                    latency: Math.round(metrics.avgLatencyMs || 0),
+                    errors: metrics.failedRequests || 0,
+                    utilization: metrics.utilization || 0,
+                    p95Latency: Math.round(metrics.p95LatencyMs || 0),
+                    p99Latency: Math.round(metrics.p99LatencyMs || 0),
+                    queueDepth: metrics.queueDepth || 0,
+                  }
+                })
+
+                // Expanded block metrics for overlay
+                blockMetricsMap[blockId] = {
+                  utilization: metrics.utilization || 0,
+                  queueDepth: metrics.queueDepth || 0,
+                  currentReplicas: metrics.currentReplicas || 1,
+                  cpuPercent: metrics.resources?.cpuPercent || 0,
+                  memoryPercent: metrics.resources?.memoryPercent || 0,
+                  threadPoolUtilization: metrics.resources?.threadPoolUtilization || 0,
+                  circuitOpen: metrics.circuitOpen || false,
+                  retryCount: metrics.retryCount || 0,
+                }
+              })
+              setSimulationBlockMetrics(blockMetricsMap)
+            }
+
+            // === BATCH 5B: LIVE EDGE METRICS ===
+            const edgeMetricsMap = {}
+            if (data.edges && Object.keys(data.edges).length > 0) {
+              Object.entries(data.edges).forEach(([edgeId, edgeMetrics]) => {
+                edgeMetricsMap[edgeId] = {
+                  circuitOpen: edgeMetrics.circuitOpen || false,
+                  errorRate: edgeMetrics.errorRate || 0,
+                  retryCount: edgeMetrics.retryCount || 0,
+                  latencyMs: edgeMetrics.latencyMs || 0,
+                }
+                // Push visual state into edge data so CustomEdge re-renders
+                updateEdge(edgeId, {
+                  data: {
+                    circuitOpen: edgeMetrics.circuitOpen || false,
+                    retryCount: edgeMetrics.retryCount || 0,
+                    latencyMs: edgeMetrics.latencyMs || 0,
+                  }
+                })
+              })
+              setSimulationEdgeMetrics(edgeMetricsMap)
+            }
+
+            // === BATCH 5B: LIVE GLOBAL METRICS (expanded) ===
+            let globalMetricsSnapshot = null
+            if (data.global && Object.keys(data.global).length > 0) {
+              const global = data.global
+              const totalRequests = global.totalRequests || 0
+              const failedRequests = global.failedRequests || 0
+              const droppedRequests = global.droppedRequests || 0
+              const totalErrors = failedRequests + droppedRequests
+
+              globalMetricsSnapshot = {
+                totalRequests: totalRequests,
+                avgLatency: Math.round(global.avgLatencyMs || 0),
+                p99Latency: Math.round(global.p99LatencyMs || 0),
+                errorRate: totalRequests > 0
+                  ? ((totalErrors / totalRequests) * 100).toFixed(2)
+                  : '0.00',
+                throughput: Math.round(global.throughputRps || 0),
+                availability: totalRequests > 0
+                  ? (((totalRequests - totalErrors) / totalRequests) * 100).toFixed(2)
+                  : '100.00',
+                duration: config.duration || 300,
+                // Expanded
+                percentiles: {
+                  p50: global.p50LatencyMs || global.avgLatencyMs || 0,
+                  p75: global.p75LatencyMs || 0,
+                  p90: global.p90LatencyMs || 0,
+                  p95: global.p95LatencyMs || 0,
+                  p99: global.p99LatencyMs || 0,
+                  p999: global.p999LatencyMs || 0,
+                },
+                costEstimate: {
+                  hourlyCost: global.totalSimulatedCost && global.duration
+                    ? (global.totalSimulatedCost / (global.duration / 3600))
+                    : 0,
+                  projectedMonthly: global.projectedMonthlyCost || 0,
+                },
+              }
+
+              setSimulationMetrics(globalMetricsSnapshot)
+            }
+
+            // === BATCH 5B: ALERTS (server or derived) ===
+            const alerts = []
+            if (data.alerts && Array.isArray(data.alerts)) {
+              alerts.push(...data.alerts)
+            } else {
+              // Derive from edge metrics
+              Object.entries(edgeMetricsMap).forEach(([edgeId, em]) => {
+                if (em.circuitOpen) {
+                  alerts.push({ type: 'circuit_open', edgeId, message: `Circuit breaker open on ${edgeId}` })
+                }
+                if (em.retryCount > 10) {
+                  alerts.push({ type: 'retry_storm', edgeId, message: `Retry storm detected on ${edgeId}` })
+                }
+              })
+              // Derive from block metrics
+              Object.entries(blockMetricsMap).forEach(([blockId, bm]) => {
+                if (bm.utilization > 0.95) {
+                  alerts.push({ type: 'saturation', blockId, message: `Block ${blockId} is saturated` })
+                }
+              })
+            }
+            if (alerts.length > 0) {
+              setSimulationAlerts(alerts)
+            }
+
+            // === TRAFFIC SPIKE WARNINGS ===
+            if (data.currentRps && data.currentRps > (config.rps || 100) * 10) {
+              setLogs(prev => [...prev, {
+                type: 'warning',
+                message: `Traffic spike: ${Math.round(data.currentRps)} RPS`,
+                timestamp: Date.now()
+              }])
+            }
+
+            // === COMPLETION DETECTION ===
+            if (data.status === 'completed' || data.status === 'stopped' || data.status === 'failed') {
+              ctrl.abort()
+              eventSourceRef.current = null
+              stopSimulation()
+              setSimulationProgress(100)
+              setSimulationId(null)
+
+              setLogs(prev => [...prev, {
+                type: data.status === 'failed' ? 'error' : 'success',
+                message: data.status === 'failed'
+                  ? `Simulation failed: ${data.errorMessage || 'Unknown error'}`
+                  : `Simulation completed`,
+                timestamp: Date.now()
+              }])
+
+              // === BATCH 5E: AUTO-OPEN REPORT MODAL ON COMPLETION ===
+              if (data.status === 'completed' || data.status === 'stopped') {
+                handleSimulationComplete(simId, data.status, globalMetricsSnapshot || data.global)
+              }
+              // === END BATCH 5E ===
+            }
+          },
+          onerror: (err) => {
+            // Stop retrying on auth errors
+            if (err?.status === 401) {
+              console.error('[SSE] 401 Unauthorized — stopping stream')
+              ctrl.abort()
+              eventSourceRef.current = null
+              return
+            }
+            // Let fetch-event-source retry with backoff for transient errors
+            throw err
+          },
+        }
       )
-
-      es.onmessage = (event) => {
-        const data = JSON.parse(event.data)
-
-        // Ignore heartbeats
-        if (data.heartbeat) return
-
-        if (data.error) {
-          console.error('SSE error:', data.error)
-          return
-        }
-
-        setSimulationProgress(data.progress || 0)
-
-        // === BATCH 5B: LIVE BLOCK METRICS (expanded) ===
-        const blockMetricsMap = {}
-        if (data.metrics && Object.keys(data.metrics).length > 0) {
-          Object.entries(data.metrics).forEach(([blockId, metrics]) => {
-            // Existing visual node update (kept for backward compat)
-            updateNode(blockId, {
-              metrics: {
-                rps: metrics.throughputRps || 0,
-                latency: Math.round(metrics.avgLatencyMs || 0),
-                errors: metrics.failedRequests || 0,
-                utilization: metrics.utilization || 0,
-                p95Latency: Math.round(metrics.p95LatencyMs || 0),
-                p99Latency: Math.round(metrics.p99LatencyMs || 0),
-                queueDepth: metrics.queueDepth || 0,
-              }
-            })
-
-            // Expanded block metrics for overlay
-            blockMetricsMap[blockId] = {
-              utilization: metrics.utilization || 0,
-              queueDepth: metrics.queueDepth || 0,
-              currentReplicas: metrics.currentReplicas || 1,
-              cpuPercent: metrics.resources?.cpuPercent || 0,
-              memoryPercent: metrics.resources?.memoryPercent || 0,
-              threadPoolUtilization: metrics.resources?.threadPoolUtilization || 0,
-              circuitOpen: metrics.circuitOpen || false,
-              retryCount: metrics.retryCount || 0,
-            }
-          })
-          setSimulationBlockMetrics(blockMetricsMap)
-        }
-
-        // === BATCH 5B: LIVE EDGE METRICS ===
-        const edgeMetricsMap = {}
-        if (data.edges && Object.keys(data.edges).length > 0) {
-          Object.entries(data.edges).forEach(([edgeId, edgeMetrics]) => {
-            edgeMetricsMap[edgeId] = {
-              circuitOpen: edgeMetrics.circuitOpen || false,
-              errorRate: edgeMetrics.errorRate || 0,
-              retryCount: edgeMetrics.retryCount || 0,
-              latencyMs: edgeMetrics.latencyMs || 0,
-            }
-            // Push visual state into edge data so CustomEdge re-renders
-            updateEdge(edgeId, {
-              data: {
-                circuitOpen: edgeMetrics.circuitOpen || false,
-                retryCount: edgeMetrics.retryCount || 0,
-                latencyMs: edgeMetrics.latencyMs || 0,
-              }
-            })
-          })
-          setSimulationEdgeMetrics(edgeMetricsMap)
-        }
-
-        // === BATCH 5B: LIVE GLOBAL METRICS (expanded) ===
-        let globalMetricsSnapshot = null
-        if (data.global && Object.keys(data.global).length > 0) {
-          const global = data.global
-          const totalRequests = global.totalRequests || 0
-          const failedRequests = global.failedRequests || 0
-          const droppedRequests = global.droppedRequests || 0
-          const totalErrors = failedRequests + droppedRequests
-
-          globalMetricsSnapshot = {
-            totalRequests: totalRequests,
-            avgLatency: Math.round(global.avgLatencyMs || 0),
-            p99Latency: Math.round(global.p99LatencyMs || 0),
-            errorRate: totalRequests > 0
-              ? ((totalErrors / totalRequests) * 100).toFixed(2)
-              : '0.00',
-            throughput: Math.round(global.throughputRps || 0),
-            availability: totalRequests > 0
-              ? (((totalRequests - totalErrors) / totalRequests) * 100).toFixed(2)
-              : '100.00',
-            duration: config.duration || 300,
-            // Expanded
-            percentiles: {
-              p50: global.p50LatencyMs || global.avgLatencyMs || 0,
-              p75: global.p75LatencyMs || 0,
-              p90: global.p90LatencyMs || 0,
-              p95: global.p95LatencyMs || 0,
-              p99: global.p99LatencyMs || 0,
-              p999: global.p999LatencyMs || 0,
-            },
-            costEstimate: {
-              hourlyCost: global.totalSimulatedCost && global.duration
-                ? (global.totalSimulatedCost / (global.duration / 3600))
-                : 0,
-              projectedMonthly: global.projectedMonthlyCost || 0,
-            },
-          }
-
-          setSimulationMetrics(globalMetricsSnapshot)
-        }
-
-        // === BATCH 5B: ALERTS (server or derived) ===
-        const alerts = []
-        if (data.alerts && Array.isArray(data.alerts)) {
-          alerts.push(...data.alerts)
-        } else {
-          // Derive from edge metrics
-          Object.entries(edgeMetricsMap).forEach(([edgeId, em]) => {
-            if (em.circuitOpen) {
-              alerts.push({ type: 'circuit_open', edgeId, message: `Circuit breaker open on ${edgeId}` })
-            }
-            if (em.retryCount > 10) {
-              alerts.push({ type: 'retry_storm', edgeId, message: `Retry storm detected on ${edgeId}` })
-            }
-          })
-          // Derive from block metrics
-          Object.entries(blockMetricsMap).forEach(([blockId, bm]) => {
-            if (bm.utilization > 0.95) {
-              alerts.push({ type: 'saturation', blockId, message: `Block ${blockId} is saturated` })
-            }
-          })
-        }
-        if (alerts.length > 0) {
-          setSimulationAlerts(alerts)
-        }
-
-        // === TRAFFIC SPIKE WARNINGS ===
-        if (data.currentRps && data.currentRps > (config.rps || 100) * 10) {
-          setLogs(prev => [...prev, {
-            type: 'warning',
-            message: `Traffic spike: ${Math.round(data.currentRps)} RPS`,
-            timestamp: Date.now()
-          }])
-        }
-
-        // === COMPLETION DETECTION ===
-        if (data.status === 'completed' || data.status === 'stopped' || data.status === 'failed') {
-          es.close()
-          eventSourceRef.current = null
-          stopSimulation()
-          setSimulationProgress(100)
-          setSimulationId(null)
-
-          setLogs(prev => [...prev, {
-            type: data.status === 'failed' ? 'error' : 'success',
-            message: data.status === 'failed'
-              ? `Simulation failed: ${data.errorMessage || 'Unknown error'}`
-              : `Simulation completed`,
-            timestamp: Date.now()
-          }])
-
-          // === BATCH 5E: AUTO-OPEN REPORT MODAL ON COMPLETION ===
-          if (data.status === 'completed' || data.status === 'stopped') {
-            handleSimulationComplete(simId, data.status, globalMetricsSnapshot || data.global)
-          }
-          // === END BATCH 5E ===
-        }
-      }
-
-      es.onerror = () => { es.close(); eventSourceRef.current = null }
 
       // Poll for completion (fallback if SSE drops)
       simulationIntervalRef.current = setInterval(async () => {
@@ -1029,7 +1052,7 @@ function CanvasEditorInner() {
           if (status.status === 'completed' || status.status === 'stopped' || status.status === 'failed') {
             clearInterval(simulationIntervalRef.current)
             simulationIntervalRef.current = null
-            if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null }
+            if (eventSourceRef.current) { eventSourceRef.current.abort(); eventSourceRef.current = null }
             stopSimulation()
             setSimulationProgress(100)
             setSimulationId(null)
@@ -1094,7 +1117,7 @@ function CanvasEditorInner() {
           if (err.status === 401 || err.status === 403) {
             clearInterval(simulationIntervalRef.current)
             simulationIntervalRef.current = null
-            if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null }
+            if (eventSourceRef.current) { eventSourceRef.current.abort(); eventSourceRef.current = null }
             stopSimulation()
             setSimulationProgress(0)
             setSimulationId(null)

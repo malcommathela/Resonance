@@ -14,7 +14,7 @@ import { asyncHandler } from './middleware/asyncHandler.js'
 import { requestId } from './middleware/requestId.js'
 import { checkRedisHealth } from './lib/redis.js'
 import { prisma } from './lib/db.js'
-import { simulationQueue } from './simulation/worker/queue.js'
+import { simulationQueue, createSimulationWorker } from './simulation/worker/queue.js'
 import { sendAlert, trackErrorForAlert } from './lib/alerting.js'
 
 import simulationRoutes from './routes/simulations.js'
@@ -28,7 +28,6 @@ import reverseEngineRoutes from './routes/reverseEngine.js'
 
 // ============================================================================
 // SENTRY — L12: Error Tracking & Performance Monitoring
-// Must initialize before any other imports so it can instrument everything.
 // ============================================================================
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
@@ -46,9 +45,6 @@ Sentry.init({
 const app = express()
 const PORT = process.env.PORT || 3001
 
-// ============================================================================
-// TRUST PROXY — critical for accurate req.ip behind load balancers
-// ============================================================================
 app.set('trust proxy', process.env.TRUST_PROXY_COUNT || 1)
 
 // ============================================================================
@@ -64,7 +60,7 @@ app.use(express.json({ limit: '10mb' }))
 app.use(sanitizeInput)
 
 // ============================================================================
-// REQUEST TRACING — L12: correlation IDs + structured request logging
+// REQUEST TRACING
 // ============================================================================
 app.use(requestId)
 app.use(requestLogger)
@@ -75,17 +71,17 @@ app.use(requestLogger)
 app.use(clerkMiddleware())
 
 // ============================================================================
-// GLOBAL RATE LIMITING (skips /health, /live, /ready)
+// GLOBAL RATE LIMITING
 // ============================================================================
 app.use(globalLimiter)
 
 // ============================================================================
-// L13: STATUS PROBES — liveness + readiness for orchestrators
+// L13: STATUS PROBES
 // ============================================================================
 app.use(statusRoutes)
 
 // ============================================================================
-// HEALTH CHECK — with dependency validation (legacy endpoint)
+// HEALTH CHECK
 // ============================================================================
 app.get('/health', asyncHandler(async (req, res) => {
   const health = {
@@ -97,9 +93,9 @@ app.get('/health', asyncHandler(async (req, res) => {
     database: 'unknown',
     redis: 'unknown',
     queue: 'unknown',
+    worker: 'unknown',
   }
 
-  // DB check
   try {
     await prisma.$queryRaw`SELECT 1`
     health.database = 'ok'
@@ -109,20 +105,16 @@ app.get('/health', asyncHandler(async (req, res) => {
     logger.error({ err: err.message, requestId: req.requestId }, 'Health check: DB failed')
   }
 
-  // Redis check
   try {
     const redisHealth = await checkRedisHealth()
     health.redis = redisHealth.ioredis
-    if (redisHealth.ioredis !== 'ok') {
-      health.status = 'degraded'
-    }
+    if (redisHealth.ioredis !== 'ok') health.status = 'degraded'
   } catch (err) {
     health.redis = 'error'
     health.status = 'degraded'
     logger.error({ err: err.message, requestId: req.requestId }, 'Health check: Redis failed')
   }
 
-  // Queue check
   try {
     const queueJobs = await simulationQueue.getJobCounts()
     health.queue = { status: 'ok', jobs: queueJobs }
@@ -132,12 +124,15 @@ app.get('/health', asyncHandler(async (req, res) => {
     logger.error({ err: err.message, requestId: req.requestId }, 'Health check: Queue failed')
   }
 
+  // Worker health
+  health.worker = worker?.isRunning?.() ? 'ok' : 'stopped'
+
   const statusCode = health.status === 'ok' ? 200 : 503
   res.status(statusCode).json(health)
 }))
 
 // ============================================================================
-// API ROUTES — with tenant context (auth + ownership + RLS)
+// API ROUTES
 // ============================================================================
 app.use('/simulations', asyncHandler(tenantContext), simulationRoutes)
 app.use('/designs', asyncHandler(tenantContext), designRoutes)
@@ -148,15 +143,13 @@ app.use('/team', asyncHandler(tenantContext), teamRoutes)
 app.use('/analyze', reverseEngineRoutes)
 
 // ============================================================================
-// ERROR HANDLING — L12: Sentry → alerting → structured logs
+// ERROR HANDLING
 // ============================================================================
-// Sentry v8: expressErrorHandler() captures exceptions before our custom handler
 app.use(Sentry.expressErrorHandler())
 
 app.use((err, req, res, next) => {
   const status = err.status || err.statusCode || 500
 
-  // L12: Alert on 5xx spikes (debounced)
   if (status >= 500) {
     trackErrorForAlert(err)
     sendAlert({
@@ -189,35 +182,48 @@ app.use((err, req, res, next) => {
   })
 })
 
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found', requestId: req.requestId })
 })
 
 // ============================================================================
-// SERVER STARTUP
+// SERVER STARTUP + IN-PROCESS WORKER
 // ============================================================================
+let worker = null
+
 const server = app.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`)
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`)
+
+  // Start BullMQ worker in the same process (free tier — no separate service)
+  const concurrency = parseInt(process.env.WORKER_CONCURRENCY || '1', 10)
+  worker = createSimulationWorker(concurrency)
+  logger.info({ concurrency }, 'Simulation worker started in-process')
 })
 
 // ============================================================================
-// GRACEFUL SHUTDOWN — L06 Cloud & Compute + L13 Availability
+// GRACEFUL SHUTDOWN
 // ============================================================================
 async function gracefulShutdown(signal) {
   logger.info({ signal }, 'Starting graceful shutdown...')
 
-  // Stop accepting new connections
   server.close(() => {
     logger.info('HTTP server closed')
   })
 
-  // Force exit after timeout to prevent hanging
   const forceExit = setTimeout(() => {
     logger.fatal('Forced exit after shutdown timeout')
     process.exit(1)
   }, 15000)
+
+  try {
+    if (worker) {
+      await worker.close()
+      logger.info('BullMQ worker closed')
+    }
+  } catch (err) {
+    logger.error({ err: err.message }, 'Worker close error')
+  }
 
   try {
     await simulationQueue.close()
@@ -241,7 +247,6 @@ async function gracefulShutdown(signal) {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
 process.on('SIGINT', () => gracefulShutdown('SIGINT'))
 
-// L12: Capture unhandled exceptions at process level
 process.on('uncaughtException', (err) => {
   Sentry.captureException(err)
   logger.fatal({ err: err.message, stack: err.stack }, 'Uncaught exception')

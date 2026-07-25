@@ -23,20 +23,23 @@ import {
 const router = Router()
 
 // ============================================================================
-// AUTH MIDDLEWARE
+// AUTH MIDDLEWARE — supports Clerk session cookies AND Bearer tokens
 // ============================================================================
 
 router.use(async (req, res, next) => {
+  // 1. Try Clerk cookie session first
   const auth = getAuth(req)
   if (auth?.userId) {
     req.userId = auth.userId
     return next()
   }
 
+  // 2. Fallback: manually decode Bearer token (for cross-origin SSE)
   const authHeader = req.headers.authorization
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7)
     try {
+      // Clerk JWT payload: { sub: "user_xxx", ... }
       const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
       if (payload?.sub) {
         req.userId = payload.sub
@@ -90,10 +93,7 @@ function getClientInfo(req) {
 }
 
 // ============================================================================
-// POST /simulations/:designId/run — P5.1 Worker Queue Integration
-// ============================================================================
-// CHANGED: Replaced inline memory-store rate limiter with Redis-backed
-// simulationCreateLimiter (5 req/min per user, shared across all instances).
+// POST /simulations/:designId/run
 // ============================================================================
 
 router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
@@ -116,15 +116,12 @@ router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
       trafficParams = {},
     } = req.body
 
-    // 1. Fetch design
     const design = await getDesign(req, designId)
     if (!design) return res.status(404).json({ error: 'Design not found' })
 
     const user = await getDbUser(req)
     if (!user) return res.status(401).json({ error: 'User not found' })
 
-    // 2. VALIDATE ARCHITECTURE
-    console.log('[SIMULATION] Validating architecture:', design.blocks.length, 'blocks,', design.edges.length, 'edges')
     const validation = validateSimulationInput(
       { trafficPattern, rps, duration, scenario, monteCarloPasses, confidenceLevel, growthScenario, deterministicSeed },
       design.blocks,
@@ -159,7 +156,6 @@ router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
       })
     }
 
-    // 3. PER-DESIGN CONCURRENCY LOCK
     const lockKey = designLockKey(designId)
     const lock = await acquireLock(lockKey, 600)
     if (!lock) {
@@ -169,7 +165,6 @@ router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
       })
     }
 
-    // 4. Create simulation record
     const seed = deterministicSeed || createSimulationSeed(designId, { trafficPattern, rps, duration, scenario })
     const inputSnapshot = {
       id: designId,
@@ -211,7 +206,6 @@ router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
       }
     })
 
-    // 5. ENQUEUE TO WORKER QUEUE
     await enqueueSimulation({
       simId: simulation.id,
       design: {
@@ -252,7 +246,6 @@ router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
 
     await lock.release()
 
-    // 6. Audit log
     await logAuditEvent({
       userId: user.id,
       designId,
@@ -350,9 +343,6 @@ redisSubscriber.on('message', (channel, message) => {
 
 // ============================================================================
 // GET /simulations/:id/stream — SSE with Redis Pub/Sub Bridge
-// ============================================================================
-// CHANGED: Added sseLimiter to prevent connection exhaustion.
-// Each user is limited to 10 new SSE connections per minute across all instances.
 // ============================================================================
 
 router.get('/:id/stream', sseLimiter, async (req, res) => {
@@ -475,10 +465,7 @@ router.post('/:id/stop', async (req, res) => {
 })
 
 // ============================================================================
-// GET /simulations/:id/report — P5.5 Cached Report
-// ============================================================================
-// CHANGED: Added reportLimiter (30 req/min per user) to protect DB from
-// repeated heavy report queries.
+// GET /simulations/:id/report
 // ============================================================================
 
 router.get('/:id/report', reportLimiter, async (req, res) => {
@@ -519,7 +506,7 @@ router.get('/:id/report', reportLimiter, async (req, res) => {
 })
 
 // ============================================================================
-// GET /designs/:designId/simulations — P5.5 Paginated List with Cache
+// GET /designs/:designId/simulations — Paginated List
 // ============================================================================
 
 router.get('/design/:designId/list', async (req, res) => {
@@ -550,7 +537,7 @@ router.get('/design/:designId/list', async (req, res) => {
 })
 
 // ============================================================================
-// GET /simulations/:id/audit — P5.4 Audit Trail
+// GET /simulations/:id/audit
 // ============================================================================
 
 router.get('/:id/audit', async (req, res) => {
@@ -583,7 +570,7 @@ router.get('/:id/audit', async (req, res) => {
 })
 
 // ============================================================================
-// GET /simulations/:id/job-state — P5.1 BullMQ Job State
+// GET /simulations/:id/job-state
 // ============================================================================
 
 router.get('/:id/job-state', async (req, res) => {
