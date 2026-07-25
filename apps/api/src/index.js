@@ -24,7 +24,7 @@ import validationRoutes from './routes/validation.js'
 import statusRoutes from './routes/status.js'
 import githubRoutes from './routes/github.js'
 import teamRoutes from './routes/team.js'
-
+import reverseEngineRoutes from './routes/reverseEngine.js'
 
 // ============================================================================
 // SENTRY — L12: Error Tracking & Performance Monitoring
@@ -145,7 +145,7 @@ app.use('/auth', asyncHandler(tenantContext), authRoutes)
 app.use('/validation', asyncHandler(tenantContext), validationRoutes)
 app.use('/github', asyncHandler(tenantContext), githubRoutes)
 app.use('/team', asyncHandler(tenantContext), teamRoutes)
-
+app.use('/analyze', reverseEngineRoutes)
 
 // ============================================================================
 // ERROR HANDLING — L12: Sentry → alerting → structured logs

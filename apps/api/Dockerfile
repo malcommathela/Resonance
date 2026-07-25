@@ -31,6 +31,8 @@ RUN rm -rf /app/node_modules/@resonance && \
 # Generate Prisma client
 RUN npx prisma generate --schema=apps/api/prisma/schema.prisma
 
+# RUN apt-get update && apt-get install -y openssl curl ca-certificates git && rm -rf /var/lib/apt/lists/*
+
 EXPOSE 3001
 
 # ============================================================================

@@ -149,53 +149,51 @@ export const GitHubImportModal = ({ isOpen, onClose, onImport }) => {
   }
 
   const handleImport = async () => {
-    setImportStatus('cloning')
-    setImportProgress(10)
-    setError(null)
+  setImportStatus('analyzing')
+  setImportProgress(10)
+  setError(null)
 
-    try {
-      await githubService.cloneRepo(selectedRepo.cloneUrl, selectedBranch)
-      setImportProgress(30)
-      setImportStatus('analyzing')
+  try {
+    const [owner, name] = selectedRepo.fullName.split('/')
+    const filesToRead = Array.from(selectedFiles)
+    const fileContents = []
 
-      const clonedFiles = await githubService.getClonedFiles()
-      setImportProgress(50)
-
-      const filesToRead = clonedFiles.files.filter(f => selectedFiles.has(f.path))
-      const fileContents = []
-
-      for (let i = 0; i < filesToRead.length; i++) {
-        const file = filesToRead[i]
-        try {
-          const content = await githubService.getClonedFile(file.path)
-          fileContents.push({ path: file.path, content: content.content })
-        } catch (e) {
-          console.warn(`Failed to read ${file.path}:`, e)
+    for (let i = 0; i < filesToRead.length; i++) {
+      const path = filesToRead[i]
+      try {
+        const data = await githubService.getFileContent(owner, name, path, selectedBranch)
+        // Backend may return decoded text or base64 — handle both
+        let content = data.content
+        if (data.encoding === 'base64' && typeof content === 'string') {
+          content = atob(content.replace(/\n/g, ''))
         }
-        setImportProgress(50 + Math.floor((i / filesToRead.length) * 40))
+        fileContents.push({ path, content })
+      } catch (e) {
+        console.warn(`Failed to fetch ${path}:`, e)
       }
-
-      setImportProgress(90)
-      setImportStatus('generating')
-
-      await onImport({
-        repo: selectedRepo,
-        branch: selectedBranch,
-        files: fileContents,
-      })
-
-      setImportProgress(100)
-      setImportStatus('done')
-
-      setTimeout(() => {
-        githubService.deleteClone().catch(() => {})
-        handleClose()
-      }, 1000)
-    } catch (err) {
-      setError(err.message)
-      setImportStatus('idle')
+      setImportProgress(10 + Math.floor((i / filesToRead.length) * 80))
     }
+
+    setImportProgress(90)
+    setImportStatus('generating')
+
+    await onImport({
+      repo: selectedRepo,
+      branch: selectedBranch,
+      files: fileContents,
+    })
+
+    setImportProgress(100)
+    setImportStatus('done')
+
+    setTimeout(() => {
+      handleClose()
+    }, 1000)
+  } catch (err) {
+    setError(err.message)
+    setImportStatus('idle')
   }
+}
 
   // Public repo URL handler
   const handlePublicRepoImport = async () => {
