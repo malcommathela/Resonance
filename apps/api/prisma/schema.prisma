@@ -4,51 +4,42 @@ generator client {
 
 datasource db {
   directUrl = env("DIRECT_URL")
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
 }
 
 model User {
   id        String   @id @default(cuid())
+  clerkId   String   @unique
   email     String   @unique
   name      String
   avatar    String?
-  githubId  String?  @unique
+  githubId  String?
   tier      String   @default("free")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   designs      Design[]
   simulations  Simulation[]
-  sessions     Session[]
+  reports      SimulationReport[]
   teamMembers  TeamMember[]
+  auditLogs    AuditLog[]
 
   @@map("users")
 }
 
-model Session {
-  id        String   @id @default(cuid())
-  token     String   @unique
-  userId    String
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("sessions")
-}
-
 model Team {
-  id         String @id @default(cuid())
+  id         String   @id @default(cuid())
   name       String
   ownerId    String
-  maxMembers Int    @default(5)
+  maxMembers Int      @default(5)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   members TeamMember[]
   designs Design[]
 
+  @@index([ownerId])
   @@map("teams")
 }
 
@@ -78,15 +69,26 @@ model Design {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  owner       User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  team        Team?         @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  owner       User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  team        Team?        @relation(fields: [teamId], references: [id], onDelete: SetNull)
   blocks      Block[]
   edges       Edge[]
   simulations Simulation[]
+  reports     SimulationReport[]
+  auditLogs   AuditLog[]
 
+  
+  @@index([ownerId])
+  @@index([ownerId, updatedAt])
+  @@index([teamId])
   @@map("designs")
 }
 
+// ============================================================================
+// BLOCK MODEL — P6 Batch 2: Denormalized simulation-relevant fields
+// Source of truth remains config Json. These fields are extracted for
+// queryability, indexing, and fast filtering in list views.
+// ============================================================================
 model Block {
   id        String   @id @default(cuid())
   designId  String
@@ -100,13 +102,29 @@ model Block {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // --- P6 Batch 2: Denormalized simulation fields (extracted from config / behavioralModel) ---
+  // Extracted from behavioralModel.scalingBehavior.minReplicas or config.replicas
+  replicas  Int?
+  // Extracted from config.rateLimit — block-level throttling
+  rateLimit Int?
+  // Extracted from config.timeout — block-level request timeout (ms)
+  timeoutMs Int?
+  // Historical metric snapshots for trend analysis and rollback scenarios
+  metricsHistory Json?
+
   design      Design @relation(fields: [designId], references: [id], onDelete: Cascade)
   sourceEdges Edge[] @relation("SourceBlock")
   targetEdges Edge[] @relation("TargetBlock")
 
+  @@index([designId, type])      // Fast filtering by block type within a design
+  @@index([designId, replicas])  // Scale-out analysis queries
   @@map("blocks")
 }
 
+// ============================================================================
+// EDGE MODEL — P6 Batch 2: Denormalized simulation-relevant fields
+// Source of truth remains config Json. Extracted for queryability.
+// ============================================================================
 model Edge {
   id             String  @id @default(cuid())
   designId       String
@@ -116,28 +134,175 @@ model Edge {
   animated       Boolean @default(true)
   label          String?
 
+  // --- P6 Batch 2: Denormalized simulation fields (extracted from behavioralModel) ---
+  // Extracted from behavioralModel.throughput.maxRps
+  maxRps    Int?
+  // Extracted from behavioralModel.reliability.timeoutMs
+  timeoutMs Int?
+  // Rich edge configuration (behavioralModel, color, icon, description, bandwidth, etc.)
+  config    Json?
+
   design      Design @relation(fields: [designId], references: [id], onDelete: Cascade)
   sourceBlock Block  @relation("SourceBlock", fields: [sourceId], references: [id], onDelete: Cascade)
   targetBlock Block  @relation("TargetBlock", fields: [targetId], references: [id], onDelete: Cascade)
 
+  @@index([designId, connectionType])
   @@map("edges")
 }
 
+// ============================================================================
+// SIMULATION MODEL — P6 Batch 2: Cost tracking columns
+// Top-level cost fields enable SQL sorting/filtering without JSON parsing.
+// ============================================================================
 model Simulation {
   id             String   @id @default(cuid())
   designId       String
   userId         String
+
+  // === EXISTING FIELDS (preserved exactly) ===
   status         String   @default("running")
+  progress       Float    @default(0)
   trafficPattern String   @default("steady")
   rps            Int      @default(100)
   duration       Int      @default(300)
+  scenario       String?
   metrics        Json?
+  globalMetrics  Json?
+  currentRps     Int?
   logs           Json?
   startedAt      DateTime @default(now())
   completedAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  design Design @relation(fields: [designId], references: [id], onDelete: Cascade)
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // === NEW FIELDS (added for production-grade simulation) ===
+  monteCarloPasses  Int      @default(1)
+  confidenceLevel   Float    @default(0.95)
+  growthScenario    String?
+  generateReport    Boolean  @default(true)
+  deterministicSeed Int      @default(0)
+  engineVersion     String   @default("1.0.0")
+  reportVersion     String   @default("1.0.0")
+  inputSnapshot     Json?
+  assumptions       Json?
+  validationResult    Json?
+  reliabilityAnalysis Json?
+  scalabilityAnalysis Json?
+  costAnalysis        Json?
+  securityAnalysis    Json?
+  failureScenarios    Json?
+  metricExplanations  Json?
+  confidenceScore     Float    @default(0)
+  actualDurationMs    Int?
+  errorMessage        String?
+  errorStack          String?
 
+  // --- P6 Batch 2: Top-level cost tracking (queryable without JSON parsing) ---
+  totalSimulatedCost    Float? @default(0)
+  projectedMonthlyCost  Float? @default(0)
+  projectedAnnualCost   Float? @default(0)
+
+  // Relations
+  design   Design             @relation(fields: [designId], references: [id], onDelete: Cascade)
+  user     User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reports  SimulationReport[]
+  auditLogs AuditLog[]
+
+  @@index([designId])
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([designId, status])     // P5.5: common query pattern
+  @@index([designId, createdAt])  // P5.5: list queries
+  @@index([projectedMonthlyCost]) // P6: cost-optimized design queries
   @@map("simulations")
+}
+
+// ============================================================================
+// SIMULATION REPORT (New model — permanent structured reports)
+// ============================================================================
+model SimulationReport {
+  id             String   @id @default(cuid())
+  simulationId   String   @unique
+  designId       String
+  userId         String
+
+  version        String   @default("1.0.0")
+
+  overallScore      Int
+  architectureScore Int?
+  reliabilityScore  Int?
+  performanceScore  Int?
+  costScore         Int?
+  securityScore     Int?
+  scalabilityScore  Int?
+  confidenceScore   Int?
+
+  executiveSummary    Json
+  topologyAnalysis    Json
+  performanceAnalysis Json
+  reliabilityAnalysis Json
+  scalabilityAnalysis Json
+  costAnalysis        Json?
+  securityAnalysis    Json?
+  failureScenarios    Json
+  aiInsights          Json?
+  actionPlan          Json
+
+  metadata        Json
+  generatedAt     DateTime @default(now())
+
+  simulation Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+  design     Design     @relation(fields: [designId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([designId])
+  @@index([userId])
+  @@index([generatedAt])
+  @@index([designId, generatedAt])  // P5.5: list reports by design
+  @@map("simulation_reports")
+}
+
+// ============================================================================
+// AUDIT LOG — P5.4 Tamper-resistant append-only log
+// ============================================================================
+model AuditLog {
+  id            String   @id @default(cuid())
+  userId        String?
+  designId      String?
+  simulationId  String?
+  action        String   // e.g. 'simulation_started', 'simulation_completed', 'simulation_failed'
+  details       Json     // arbitrary JSON event data
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime @default(now())
+
+  user       User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  design     Design?      @relation(fields: [designId], references: [id], onDelete: SetNull)
+  simulation Simulation?  @relation(fields: [simulationId], references: [id], onDelete: SetNull)
+
+  @@index([simulationId])
+  @@index([userId])
+  @@index([designId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([userId, createdAt])       // P5.5: user audit trail queries
+  @@index([simulationId, createdAt]) // P5.5: simulation audit trail queries
+  @@map("audit_logs")
+}
+
+model OptimizationHistory {
+  id           String   @id @default(cuid())
+  designId     String
+  userId       String
+  simulationId String?
+  ruleId       String
+  ruleName     String
+  appliedAt    DateTime @default(now())
+  status       String   @default("applying")
+  changes      Json?
+  error        String?
+  rolledBackAt DateTime?
+
+  @@map("optimization_history")
 }

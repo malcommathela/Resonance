@@ -5,18 +5,23 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
+    "worker": "node src/simulation/worker/worker.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
-    "db:seed": "node prisma/seed.js"
+    "db:seed": "node prisma/seed.js",
+    "build": "prisma generate && prisma migrate deploy"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
+    "@clerk/express": "^1.7.81",
+    "@google/genai": "^2.10.0",
     "@prisma/client": "^5.22.0",
     "@resonance/shared": "1.0.0",
+    "@sentry/node": "^10.67.0",
+    "@sentry/profiling-node": "^10.67.0",
     "@upstash/redis": "^1.38.0",
-    "bcryptjs": "^2.4.3",
-    "cookie-parser": "^1.4.6",
+    "bullmq": "^5.0.0",
+    "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.1",
@@ -24,11 +29,8 @@
     "helmet": "^8.0.0",
     "ioredis": "^5.4.1",
     "js-yaml": "^4.1.1",
-    "jsonwebtoken": "^9.0.2",
-    "passport": "^0.7.0",
-    "passport-github2": "^0.1.12",
-    "passport-jwt": "^4.0.1",
     "prisma": "^5.22.0",
+    "svix": "^1.95.2",
     "zod": "^3.23.8"
   }
 }

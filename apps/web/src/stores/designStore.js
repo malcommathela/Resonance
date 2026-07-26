@@ -1,21 +1,54 @@
 import { create } from 'zustand'
 import { api } from '@/services/api'
+import {
+  fetchDesignReports,
+  fetchSimulationReport,
+  compareReports as compareSimulationReports,
+  cacheReport,
+} from '@/services/simulation'
+
+// Helper to ensure designs always have computed fields
+const enrichDesign = (design) => {
+  if (!design) return null
+  return {
+    ...design,
+    // API now returns real blocks count; keep fallback only for legacy shapes
+    blocks: design.blocks ?? design.nodeCount ?? design.nodes?.length ?? 0,
+    accentColor: design.accentColor || '#6366f1',
+  }
+}
 
 export const useDesignStore = create((set, get) => ({
   designs: [],
   currentDesign: null,
   isLoading: false,
   isSaving: false,
-  saveStatus: 'idle', // 'idle' | 'saving' | 'saved' | 'error'
+  saveStatus: 'idle',
   error: null,
-  lastDeleted: null, // For undo
+  lastDeleted: null,
+
+  // === BATCH 5E: REPORT STATE ===
+  reports: [],
+  reportsLoading: false,
+  reportsError: null,
+  selectedReportId: null,
+  currentReport: null,
+  // === END BATCH 5E ===
+
+  // === OVERVIEW & AUDIT STATE ===
+  overview: null,
+  overviewLoading: false,
+  auditLogs: [],
+  auditLogsLoading: false,
+  // === END OVERVIEW & AUDIT ===
 
   loadDesigns: async () => {
     set({ isLoading: true, error: null })
     try {
       const designs = await api.getDesigns()
-      set({ designs, isLoading: false })
-      return designs
+      const enriched = designs.map(enrichDesign)
+      set({ designs: enriched, isLoading: false })
+      return enriched
     } catch (err) {
       set({ error: err.message, isLoading: false })
       throw err
@@ -26,8 +59,9 @@ export const useDesignStore = create((set, get) => ({
     set({ isLoading: true, error: null })
     try {
       const design = await api.getDesign(id)
-      set({ currentDesign: design, isLoading: false })
-      return design
+      const enriched = enrichDesign(design)
+      set({ currentDesign: enriched, isLoading: false })
+      return enriched
     } catch (err) {
       set({ error: err.message, isLoading: false })
       throw err
@@ -38,36 +72,58 @@ export const useDesignStore = create((set, get) => ({
     set({ isLoading: true, error: null })
     try {
       const newDesign = await api.createDesign(design)
-      set({ 
-        designs: [newDesign, ...get().designs],
-        currentDesign: newDesign,
-        isLoading: false 
+      const enriched = enrichDesign(newDesign)
+      set({
+        designs: [enriched, ...get().designs],
+        currentDesign: enriched,
+        isLoading: false,
       })
-      return newDesign
+      return enriched
     } catch (err) {
       set({ error: err.message, isLoading: false })
       throw err
     }
   },
 
+  // FIXED: Optimistic update that preserves accentColor even if API strips it
   updateDesign: async (id, updates) => {
     try {
+      // Optimistically update local state immediately
+      set((state) => ({
+        designs: state.designs.map((d) => (d.id === id ? { ...d, ...updates } : d)),
+        currentDesign:
+          state.currentDesign?.id === id
+            ? { ...state.currentDesign, ...updates }
+            : state.currentDesign,
+      }))
+
+      // Send to API
       const updated = await api.updateDesign(id, updates)
-      set({
-        designs: get().designs.map(d => d.id === id ? { ...d, ...updated } : d),
-        currentDesign: get().currentDesign?.id === id ? { ...get().currentDesign, ...updated } : get().currentDesign,
-      })
-      return updated
+
+      // Merge API response with our updates (API might strip unknown fields like accentColor)
+      const merged = enrichDesign({ ...updated, ...updates })
+
+      set((state) => ({
+        designs: state.designs.map((d) => (d.id === id ? { ...d, ...merged } : d)),
+        currentDesign:
+          state.currentDesign?.id === id
+            ? { ...state.currentDesign, ...merged }
+            : state.currentDesign,
+      }))
+
+      return merged
     } catch (err) {
+      // Revert on error by reloading
+      await get().loadDesigns()
       set({ error: err.message })
       throw err
     }
   },
 
   deleteDesign: async (id) => {
-    const design = get().designs.find(d => d.id === id)
+    const design = get().designs.find((d) => d.id === id)
     set({
-      designs: get().designs.filter(d => d.id !== id),
+      designs: get().designs.filter((d) => d.id !== id),
       currentDesign: get().currentDesign?.id === id ? null : get().currentDesign,
       lastDeleted: design,
     })
@@ -75,7 +131,6 @@ export const useDesignStore = create((set, get) => ({
       await api.deleteDesign(id)
       return true
     } catch (err) {
-      // Rollback on error
       set({
         designs: [design, ...get().designs],
         lastDeleted: null,
@@ -92,18 +147,20 @@ export const useDesignStore = create((set, get) => ({
   },
 
   duplicateDesign: async (id) => {
-    const original = get().designs.find(d => d.id === id)
+    const original = get().designs.find((d) => d.id === id)
     if (!original) throw new Error('Design not found')
-    
+
     try {
       const duplicate = await api.createDesign({
         name: `${original.name} (Copy)`,
         description: original.description,
         repoUrl: original.repoUrl,
         repoBranch: original.repoBranch,
+        accentColor: original.accentColor,
       })
-      set({ designs: [duplicate, ...get().designs] })
-      return duplicate
+      const enriched = enrichDesign(duplicate)
+      set({ designs: [enriched, ...get().designs] })
+      return enriched
     } catch (err) {
       set({ error: err.message })
       throw err
@@ -114,14 +171,27 @@ export const useDesignStore = create((set, get) => ({
     set({ isSaving: true, saveStatus: 'saving' })
     try {
       await api.saveCanvas(id, { nodes, edges })
-      set({ 
-        isSaving: false, 
+
+      const blockCount = nodes?.length || 0
+
+      set((state) => ({
+        isSaving: false,
         saveStatus: 'saved',
-        currentDesign: get().currentDesign ? {
-          ...get().currentDesign,
-          updatedAt: new Date().toISOString()
-        } : null
-      })
+        designs: state.designs.map((d) =>
+          d.id === id
+            ? { ...d, blocks: blockCount, updatedAt: new Date().toISOString() }
+            : d
+        ),
+        currentDesign:
+          state.currentDesign?.id === id
+            ? {
+                ...state.currentDesign,
+                blocks: blockCount,
+                updatedAt: new Date().toISOString(),
+              }
+            : state.currentDesign,
+      }))
+
       setTimeout(() => set({ saveStatus: 'idle' }), 2000)
     } catch (err) {
       set({ isSaving: false, saveStatus: 'error', error: err.message })
@@ -132,13 +202,26 @@ export const useDesignStore = create((set, get) => ({
   autoSaveCanvas: async (id, { nodes, edges }) => {
     try {
       await api.autoSaveCanvas(id, { nodes, edges })
-      set({ 
+
+      const blockCount = nodes?.length || 0
+
+      set((state) => ({
         saveStatus: 'saved',
-        currentDesign: get().currentDesign ? {
-          ...get().currentDesign,
-          updatedAt: new Date().toISOString()
-        } : null
-      })
+        designs: state.designs.map((d) =>
+          d.id === id
+            ? { ...d, blocks: blockCount, updatedAt: new Date().toISOString() }
+            : d
+        ),
+        currentDesign:
+          state.currentDesign?.id === id
+            ? {
+                ...state.currentDesign,
+                blocks: blockCount,
+                updatedAt: new Date().toISOString(),
+              }
+            : state.currentDesign,
+      }))
+
       setTimeout(() => set({ saveStatus: 'idle' }), 2000)
     } catch (err) {
       set({ saveStatus: 'error' })
@@ -146,7 +229,84 @@ export const useDesignStore = create((set, get) => ({
     }
   },
 
-  setCurrentDesign: (design) => set({ currentDesign: design }),
+  setCurrentDesign: (design) => set({ currentDesign: enrichDesign(design) }),
   clearError: () => set({ error: null }),
   clearLastDeleted: () => set({ lastDeleted: null }),
+
+  // === BATCH 5E: REPORT ACTIONS ===
+  loadReports: async (designId) => {
+    if (!designId) return []
+    set({ reportsLoading: true, reportsError: null })
+    try {
+      const reports = await fetchDesignReports(designId)
+      set({ reports: reports || [], reportsLoading: false })
+      return reports || []
+    } catch (err) {
+      set({ reportsError: err.message, reportsLoading: false })
+      return []
+    }
+  },
+
+  selectReport: (reportId) => set({ selectedReportId: reportId }),
+
+  loadReport: async (simulationId) => {
+    if (!simulationId) return null
+    try {
+      const report = await fetchSimulationReport(simulationId)
+      if (report) {
+        cacheReport(report.id || simulationId, report)
+        set({ currentReport: report })
+      }
+      return report
+    } catch (err) {
+      console.error('Failed to load simulation report:', err)
+      set({ reportsError: err.message })
+      return null
+    }
+  },
+
+  compareReports: (idA, idB) => {
+    const { reports } = get()
+    const reportA = reports.find((r) => r.id === idA || r.simulationId === idA)
+    const reportB = reports.find((r) => r.id === idB || r.simulationId === idB)
+    if (!reportA || !reportB) return null
+    return compareSimulationReports(reportA, reportB)
+  },
+
+  clearReports: () =>
+    set({
+      reports: [],
+      reportsError: null,
+      selectedReportId: null,
+      currentReport: null,
+    }),
+  // === END BATCH 5E ===
+
+  // === OVERVIEW & AUDIT ACTIONS ===
+  loadOverview: async (designId) => {
+    if (!designId) return null
+    set({ overviewLoading: true, error: null })
+    try {
+      const overview = await api.getDesignOverview(designId)
+      set({ overview, overviewLoading: false })
+      return overview
+    } catch (err) {
+      set({ overviewLoading: false, error: err.message })
+      return null
+    }
+  },
+
+  loadAuditLogs: async (designId) => {
+    if (!designId) return []
+    set({ auditLogsLoading: true, error: null })
+    try {
+      const logs = await api.getDesignAuditLogs(designId)
+      set({ auditLogs: logs, auditLogsLoading: false })
+      return logs
+    } catch (err) {
+      set({ auditLogsLoading: false, error: err.message })
+      return []
+    }
+  },
+  // === END OVERVIEW & AUDIT ===
 }))

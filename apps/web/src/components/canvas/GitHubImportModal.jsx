@@ -15,8 +15,12 @@ import {
   ArrowRight,
   ArrowLeft,
   Layers,
+  Globe,
+  Link,
+  Github,
 } from 'lucide-react'
 import { githubService } from '@/services/github'
+import { api } from '@/services/api'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 
@@ -28,6 +32,10 @@ const STEPS = [
 ]
 
 export const GitHubImportModal = ({ isOpen, onClose, onImport }) => {
+  // Tab state: 'my-repos' | 'public-url'
+  const [activeTab, setActiveTab] = useState('my-repos')
+
+  // My repos flow
   const [step, setStep] = useState(0)
   const [repos, setRepos] = useState([])
   const [selectedRepo, setSelectedRepo] = useState(null)
@@ -42,14 +50,57 @@ export const GitHubImportModal = ({ isOpen, onClose, onImport }) => {
   const [importProgress, setImportProgress] = useState(0)
   const [importStatus, setImportStatus] = useState('idle') // idle | cloning | analyzing | generating | done
 
-  // Load repos on open
+  // FIX: null = checking, true = connected, false = not connected
+  const [githubConnected, setGithubConnected] = useState(null)
+
+  // Public URL flow
+  const [repoUrl, setRepoUrl] = useState('')
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [publicRepoError, setPublicRepoError] = useState(null)
+
+  // FIX: Check GitHub connection on open, don't assume it's connected
   useEffect(() => {
-    if (isOpen && step === 0) {
-      loadRepos()
+    if (isOpen) {
+      checkGithubConnection()
     }
-  }, [isOpen, step])
+  }, [isOpen])
+
+  async function checkGithubConnection() {
+    setGithubConnected(null) // loading state
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      // Try to fetch repos — if 401, user isn't connected
+      const data = await githubService.getRepos(1)
+      setRepos(data)
+      setGithubConnected(true)
+      setActiveTab('my-repos')
+    } catch (err) {
+      // FIX: Check status code from the error object (after api.js fix)
+      const isAuthError = err.status === 401 || 
+                         err.status === 403 || 
+                         err.message?.toLowerCase().includes('unauthorized') ||
+                         err.message?.toLowerCase().includes('token') ||
+                         err.message?.toLowerCase().includes('github token not found')
+
+      if (isAuthError) {
+        setGithubConnected(false)
+        setRepos([])
+        setActiveTab('public-url') // Default to public URL when not connected
+      } else {
+        // Real error (network, server down, etc.) — show it
+        setError(err.message || 'Failed to load repositories')
+        setGithubConnected(false)
+        setActiveTab('public-url')
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   const loadRepos = async (page = 1) => {
+    if (!githubConnected) return
     setIsLoading(true)
     setError(null)
     try {
@@ -57,7 +108,7 @@ export const GitHubImportModal = ({ isOpen, onClose, onImport }) => {
       setRepos(page === 1 ? data : [...repos, ...data])
       setRepoPage(page)
     } catch (err) {
-      setError(err.message)
+      setError(err.message || 'Failed to load repositories')
     } finally {
       setIsLoading(false)
     }
@@ -87,7 +138,6 @@ export const GitHubImportModal = ({ isOpen, onClose, onImport }) => {
       const [owner, name] = selectedRepo.fullName.split('/')
       const data = await githubService.getTree(owner, name, selectedBranch)
       setFileTree(data)
-      // Auto-select all relevant files
       const autoSelected = new Set(data.files.map(f => f.path))
       setSelectedFiles(autoSelected)
       setStep(2)
@@ -99,56 +149,79 @@ export const GitHubImportModal = ({ isOpen, onClose, onImport }) => {
   }
 
   const handleImport = async () => {
-    setImportStatus('cloning')
-    setImportProgress(10)
-    setError(null)
+  setImportStatus('analyzing')
+  setImportProgress(10)
+  setError(null)
 
-    try {
-      // Step 1: Clone repo
-      await githubService.cloneRepo(selectedRepo.cloneUrl, selectedBranch)
-      setImportProgress(30)
-      setImportStatus('analyzing')
+  try {
+    const [owner, name] = selectedRepo.fullName.split('/')
+    const filesToRead = Array.from(selectedFiles)
+    const fileContents = []
 
-      // Step 2: Get cloned files
-      const clonedFiles = await githubService.getClonedFiles()
-      setImportProgress(50)
-
-      // Step 3: Read selected files
-      const filesToRead = clonedFiles.files.filter(f => selectedFiles.has(f.path))
-      const fileContents = []
-
-      for (let i = 0; i < filesToRead.length; i++) {
-        const file = filesToRead[i]
-        try {
-          const content = await githubService.getClonedFile(file.path)
-          fileContents.push({ path: file.path, content: content.content })
-        } catch (e) {
-          console.warn(`Failed to read ${file.path}:`, e)
+    for (let i = 0; i < filesToRead.length; i++) {
+      const path = filesToRead[i]
+      try {
+        const data = await githubService.getFileContent(owner, name, path, selectedBranch)
+        // Backend may return decoded text or base64 — handle both
+        let content = data.content
+        if (data.encoding === 'base64' && typeof content === 'string') {
+          content = atob(content.replace(/\n/g, ''))
         }
-        setImportProgress(50 + Math.floor((i / filesToRead.length) * 40))
+        fileContents.push({ path, content })
+      } catch (e) {
+        console.warn(`Failed to fetch ${path}:`, e)
       }
+      setImportProgress(10 + Math.floor((i / filesToRead.length) * 80))
+    }
 
-      setImportProgress(90)
-      setImportStatus('generating')
+    setImportProgress(90)
+    setImportStatus('generating')
 
-      // Step 4: Call onImport with file contents
-      await onImport({
-        repo: selectedRepo,
-        branch: selectedBranch,
-        files: fileContents,
+    await onImport({
+      repo: selectedRepo,
+      branch: selectedBranch,
+      files: fileContents,
+    })
+
+    setImportProgress(100)
+    setImportStatus('done')
+
+    setTimeout(() => {
+      handleClose()
+    }, 1000)
+  } catch (err) {
+    setError(err.message)
+    setImportStatus('idle')
+  }
+}
+
+  // Public repo URL handler
+  const handlePublicRepoImport = async () => {
+    if (!repoUrl.trim()) return
+    setIsAnalyzing(true)
+    setPublicRepoError(null)
+    try {
+      const response = await api.request('/analyze/public-repo', {
+        method: 'POST',
+        body: JSON.stringify({ repoUrl: repoUrl.trim() })
       })
 
-      setImportProgress(100)
-      setImportStatus('done')
+      await onImport({
+        repo: { 
+          name: response.repo || 'public-repo', 
+          fullName: response.repo || repoUrl.trim(), 
+          url: repoUrl.trim() 
+        },
+        branch: 'main',
+        files: [],
+        preGenerated: response
+      })
 
-      // Clean up
-      setTimeout(() => {
-        githubService.deleteClone().catch(() => {})
-        handleClose()
-      }, 1000)
+      handleClose()
     } catch (err) {
-      setError(err.message)
-      setImportStatus('idle')
+      setPublicRepoError(err.message || 'Failed to analyze repository')
+    } finally {
+      setIsAnalyzing(false)
     }
   }
 
@@ -173,12 +246,167 @@ export const GitHubImportModal = ({ isOpen, onClose, onImport }) => {
     setSearchQuery('')
     setImportProgress(0)
     setImportStatus('idle')
+    setGithubConnected(null)
+    setActiveTab('my-repos')
+    setRepoUrl('')
+    setPublicRepoError(null)
     onClose()
   }
 
   const filteredRepos = repos.filter(r =>
     r.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     r.fullName.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  // FIX: Render tabs conditionally based on connection status
+  const renderTabs = () => {
+    // While checking, show nothing or a loading indicator
+    if (githubConnected === null) {
+      return (
+        <div className="flex gap-2 mb-4 border-b border-resonance-border pb-4">
+          <div className="px-4 py-2 rounded-lg text-sm font-medium bg-resonance-bg-elevated text-resonance-text-muted animate-pulse">
+            Checking GitHub connection...
+          </div>
+        </div>
+      )
+    }
+
+    // Not connected — show Public Repo URL as the only tab, with connect hint
+    if (githubConnected === false) {
+      return (
+        <div className="flex gap-2 mb-4 border-b border-resonance-border pb-4">
+          <button
+            onClick={() => setActiveTab('public-url')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              activeTab === 'public-url' 
+                ? 'bg-resonance-accent text-white' 
+                : 'bg-resonance-bg-elevated text-resonance-text-muted hover:text-resonance-text-primary'
+            }`}
+          >
+            <Globe size={14} className="inline mr-2" />
+            Public Repo URL
+          </button>
+        </div>
+      )
+    }
+
+    // Connected — show both tabs
+    return (
+      <div className="flex gap-2 mb-4 border-b border-resonance-border pb-4">
+        <button
+          onClick={() => setActiveTab('my-repos')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            activeTab === 'my-repos' 
+              ? 'bg-resonance-accent text-white' 
+              : 'bg-resonance-bg-elevated text-resonance-text-muted hover:text-resonance-text-primary'
+          }`}
+        >
+          <GitBranch size={14} className="inline mr-2" />
+          My Repositories
+        </button>
+        <button
+          onClick={() => setActiveTab('public-url')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            activeTab === 'public-url' 
+              ? 'bg-resonance-accent text-white' 
+              : 'bg-resonance-bg-elevated text-resonance-text-muted hover:text-resonance-text-primary'
+          }`}
+        >
+          <Globe size={14} className="inline mr-2" />
+          Public Repo URL
+        </button>
+      </div>
+    )
+  }
+
+  // FIX: Show connect GitHub prompt when not connected
+  const renderConnectGitHubPrompt = () => (
+    <div className="space-y-6 py-4">
+      <div className="text-center space-y-3">
+        <div className="w-16 h-16 rounded-2xl bg-resonance-bg-elevated mx-auto flex items-center justify-center">
+          <Github size={32} className="text-resonance-text-muted" />
+        </div>
+        <div>
+          <h3 className="text-lg font-semibold text-resonance-text-primary">GitHub Not Connected</h3>
+          <p className="text-sm text-resonance-text-secondary mt-1 max-w-sm mx-auto">
+            Connect your GitHub account to import from your private and public repositories.
+          </p>
+        </div>
+      </div>
+
+      <div className="bg-resonance-bg-elevated rounded-xl p-4 space-y-3 max-w-sm mx-auto">
+        <div className="flex items-start gap-3">
+          <GitBranch size={16} className="text-resonance-accent mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-resonance-text-primary">Access Your Repositories</p>
+            <p className="text-xs text-resonance-text-secondary">Import from your public and private repos</p>
+          </div>
+        </div>
+        <div className="flex items-start gap-3">
+          <CheckCircle2 size={16} className="text-resonance-accent mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-resonance-text-primary">Auto-detect Architecture</p>
+            <p className="text-xs text-resonance-text-secondary">We analyze your codebase structure automatically</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 max-w-sm mx-auto">
+        <p className="text-xs text-resonance-text-muted text-center">
+          Sign out and sign back in with GitHub to connect your repositories.
+        </p>
+        <button
+          onClick={() => setActiveTab('public-url')}
+          className="w-full px-6 py-3 bg-resonance-bg-elevated text-resonance-text-primary rounded-xl font-medium hover:bg-resonance-bg-hover transition-all text-sm"
+        >
+          Continue with Public Repo URL Instead
+        </button>
+      </div>
+    </div>
+  )
+
+  const renderPublicUrlTab = () => (
+    <div className="space-y-6">
+      <div className="text-center space-y-2">
+        <Globe size={32} className="mx-auto text-resonance-accent" />
+        <h3 className="text-lg font-semibold text-resonance-text-primary">Import from Public Repository</h3>
+        <p className="text-sm text-resonance-text-secondary">
+          Paste any public GitHub repository URL. No GitHub account connection required.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        <div className="relative">
+          <Link size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-resonance-text-muted" />
+          <input
+            type="text"
+            placeholder="https://github.com/vercel/next.js"
+            value={repoUrl}
+            onChange={(e) => setRepoUrl(e.target.value)}
+            className="w-full pl-10 pr-4 py-3 bg-resonance-bg-elevated border border-resonance-border rounded-xl text-resonance-text-primary placeholder:text-resonance-text-muted focus:outline-none focus:border-resonance-accent/50 focus:ring-1 focus:ring-resonance-accent/20"
+          />
+        </div>
+        <p className="text-xs text-resonance-text-muted">
+          Supports any public GitHub repo. Example: https://github.com/facebook/react
+        </p>
+      </div>
+
+      {publicRepoError && (
+        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2 text-red-400">
+          <AlertCircle size={16} />
+          <span className="text-sm">{publicRepoError}</span>
+        </div>
+      )}
+
+      <button
+        onClick={handlePublicRepoImport}
+        disabled={!repoUrl.trim() || isAnalyzing}
+        className="w-full px-6 py-3 bg-resonance-accent text-white rounded-xl font-medium hover:bg-resonance-accent/90 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+      >
+        {isAnalyzing ? <Loader2 size={16} className="animate-spin" /> : <Globe size={16} />}
+        {isAnalyzing ? 'Analyzing Repository...' : 'Analyze Repository'}
+      </button>
+    </div>
   )
 
   const renderStepIndicator = () => (
@@ -375,7 +603,6 @@ export const GitHubImportModal = ({ isOpen, onClose, onImport }) => {
 
           <div className="flex justify-end gap-3">
             <Button variant="ghost" onClick={() => setStep(2)}>Back</Button>
-            {/* FIX: icon={RefreshCw} instead of icon={<RefreshCw size={14} />} */}
             <Button onClick={handleImport} icon={RefreshCw}>
               Generate Architecture
             </Button>
@@ -418,20 +645,36 @@ export const GitHubImportModal = ({ isOpen, onClose, onImport }) => {
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title="Import from GitHub" size="lg">
       <div className="space-y-4">
-        {renderStepIndicator()}
+        {renderTabs()}
 
-        {error && (
-          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2 text-red-400">
-            <AlertCircle size={16} />
-            <span className="text-sm">{error}</span>
-            <button onClick={() => setError(null)} className="ml-auto text-xs hover:text-red-300">Dismiss</button>
-          </div>
+        {/* FIX: Show connect prompt when not connected and on my-repos tab */}
+        {activeTab === 'public-url' && renderPublicUrlTab()}
+
+        {activeTab === 'my-repos' && githubConnected === false && renderConnectGitHubPrompt()}
+
+        {activeTab === 'my-repos' && githubConnected === true && (
+          <>
+            {error && (
+              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2 text-red-400">
+                <AlertCircle size={16} />
+                <span className="text-sm">{error}</span>
+                <button onClick={() => setError(null)} className="ml-auto text-xs hover:text-red-300">Dismiss</button>
+              </div>
+            )}
+
+            {step === 0 && renderReposStep()}
+            {step === 1 && renderBranchStep()}
+            {step === 2 && renderFilesStep()}
+            {step === 3 && renderImportStep()}
+          </>
         )}
 
-        {step === 0 && renderReposStep()}
-        {step === 1 && renderBranchStep()}
-        {step === 2 && renderFilesStep()}
-        {step === 3 && renderImportStep()}
+        {activeTab === 'my-repos' && githubConnected === null && (
+          <div className="py-12 text-center">
+            <Loader2 size={32} className="mx-auto animate-spin text-resonance-accent mb-4" />
+            <p className="text-sm text-resonance-text-secondary">Checking GitHub connection...</p>
+          </div>
+        )}
       </div>
     </Modal>
   )

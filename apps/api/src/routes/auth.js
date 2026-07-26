@@ -1,181 +1,321 @@
 import { Router } from 'express'
+import { requireAuth, getAuth, clerkClient } from '@clerk/express'
 import { prisma } from '../lib/db.js'
-import { cache } from '../lib/redis.js'
-import { 
-  generateAccessToken, 
-  generateRefreshToken, 
-  setAuthCookies,
-  clearAuthCookies,
-  authMiddleware 
-} from '../middleware/auth.js'
 
 const router = Router()
 
-const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID
-const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET
-const GITHUB_CALLBACK_URL = process.env.GITHUB_CALLBACK_URL
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173'
-
-// Step 1: Redirect user to GitHub for authorization
-router.get('/github', (req, res) => {
-  if (!GITHUB_CLIENT_ID) {
-    return res.status(500).json({ error: 'GitHub OAuth not configured' })
-  }
-
-  const state = Buffer.from(Math.random().toString()).toString('base64')
-
-  // Store state in Redis for 10 minutes
-  cache.set(`github:state:${state}`, { createdAt: Date.now() }, 600)
-
-  const params = new URLSearchParams({
-    client_id: GITHUB_CLIENT_ID,
-    redirect_uri: GITHUB_CALLBACK_URL,
-    scope: 'user:email read:user repo',
-    state,
+async function getDbUser(req) {
+  const auth = getAuth(req)
+  if (!auth?.userId) return null
+  let user = await prisma.user.findUnique({
+    where: { clerkId: auth.userId },
+    select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
   })
-
-  res.redirect(`https://github.com/login/oauth/authorize?${params}`)
-})
-
-// Step 2: GitHub redirects back with code
-router.get('/github/callback', async (req, res) => {
-  const { code, state, error } = req.query
-
-  if (error) {
-    return res.redirect(`${FRONTEND_URL}/login?error=${error}`)
-  }
-
-  if (!code || !state) {
-    return res.redirect(`${FRONTEND_URL}/login?error=missing_params`)
-  }
-
-  // Verify state to prevent CSRF
-  const savedState = await cache.get(`github:state:${state}`)
-  if (!savedState) {
-    return res.redirect(`${FRONTEND_URL}/login?error=invalid_state`)
-  }
-  await cache.del(`github:state:${state}`)
-
-  try {
-    // Exchange code for access token
-    const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        client_id: GITHUB_CLIENT_ID,
-        client_secret: GITHUB_CLIENT_SECRET,
-        code,
-        redirect_uri: GITHUB_CALLBACK_URL,
-      }),
-    })
-
-    const tokenData = await tokenRes.json()
-
-    if (tokenData.error) {
-      throw new Error(tokenData.error_description || tokenData.error)
-    }
-
-    // Fetch user data from GitHub
-    const userRes = await fetch('https://api.github.com/user', {
-      headers: {
-        'Authorization': `Bearer ${tokenData.access_token}`,
-        'Accept': 'application/vnd.github.v3+json',
-        'User-Agent': 'Resonance-App',
-      },
-    })
-
-    const githubUser = await userRes.json()
-
-    // Fetch emails
-    const emailsRes = await fetch('https://api.github.com/user/emails', {
-      headers: {
-        'Authorization': `Bearer ${tokenData.access_token}`,
-        'Accept': 'application/vnd.github.v3+json',
-        'User-Agent': 'Resonance-App',
-      },
-    })
-
-    const emails = await emailsRes.json()
-    const primaryEmail = emails.find(e => e.primary)?.email || githubUser.email || `${githubUser.login}@github.com`
-
-    // Find or create user
-    let user = await prisma.user.findUnique({
-      where: { githubId: githubUser.id.toString() }
-    })
-
-    if (!user) {
+  if (!user) {
+    try {
+      const clerkUser = await clerkClient.users.getUser(auth.userId)
+      const primaryEmail = clerkUser.emailAddresses?.[0]?.emailAddress
       user = await prisma.user.create({
         data: {
-          email: primaryEmail,
-          name: githubUser.name || githubUser.login,
-          avatar: githubUser.avatar_url,
-          githubId: githubUser.id.toString(),
+          clerkId: auth.userId,
+          email: primaryEmail || `user-${auth.userId}@clerk.dev`,
+          name: `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || clerkUser.username || 'User',
+          avatar: clerkUser.imageUrl,
           tier: 'free',
-        }
+        },
+        select: { id: true, email: true, name: true, avatar: true, tier: true, githubId: true, clerkId: true }
       })
-    } else {
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          name: githubUser.name || githubUser.login,
-          avatar: githubUser.avatar_url,
-        }
-      })
+    } catch (err) {
+      console.error('[AUTO-CREATE] Failed:', err.message)
+      return null
     }
+  }
+  return user
+}
 
-    // Generate tokens
-    const accessToken = generateAccessToken(user.id)
-    const refreshToken = await generateRefreshToken(user.id)
+async function requireApiAuth(req, res, next) {
+  const auth = getAuth(req)
+  if (!auth?.userId) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  next()
+}
+router.use(requireApiAuth)
 
-    // Store GitHub token by userId (survives JWT refreshes!)
-    await cache.set(`github-token:${user.id}`, tokenData.access_token, 604800) // 7 days
+// GET /designs — list user's designs
+router.get('/', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
 
-    // Set HTTP-only cookies
-    setAuthCookies(res, accessToken, refreshToken)
-
-    // Redirect to frontend with success flag (no token in URL!)
-    res.redirect(`${FRONTEND_URL}/auth/callback?success=true`)
-
+  try {
+    const designs = await prisma.design.findMany({
+      where: { ownerId: user.id },
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        status: true,
+        thumbnail: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: { select: { blocks: true, edges: true, simulations: true } }
+      }
+    })
+    res.json(designs)
   } catch (err) {
-    console.error('GitHub OAuth error:', err)
-    res.redirect(`${FRONTEND_URL}/login?error=auth_failed`)
+    res.status(500).json({ error: err.message })
   }
 })
 
-// Refresh endpoint
-router.post('/refresh', async (req, res) => {
-  const { refreshTokens } = await import('../middleware/auth.js')
-  await refreshTokens(req, res)
-})
+// GET /designs/:id — get single design with blocks and edges
+router.get('/:id', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
 
-// Get current user
-router.get('/me', authMiddleware, async (req, res) => {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
-      select: { id: true, email: true, name: true, avatar: true, tier: true, createdAt: true }
+    const design = await prisma.design.findFirst({
+      where: { id: req.params.id, ownerId: user.id },
+      include: {
+        blocks: true,
+        edges: true,
+        simulations: { orderBy: { createdAt: 'desc' }, take: 5 }
+      }
     })
 
-    if (!user) return res.status(401).json({ error: 'User not found' })
-    res.json(user)
-  } catch {
-    res.status(401).json({ error: 'Invalid token' })
+    if (!design) return res.status(404).json({ error: 'Design not found' })
+
+    // Convert to React Flow format
+    const nodes = design.blocks.map(b => ({
+      id: b.id,
+      type: 'customBlock',
+      position: { x: b.x, y: b.y },
+      data: {
+        label: b.label,
+        type: b.type,
+        color: b.color,
+        config: typeof b.config === 'string' ? JSON.parse(b.config) : b.config,
+        metrics: b.metrics ? (typeof b.metrics === 'string' ? JSON.parse(b.metrics) : b.metrics) : null,
+      }
+    }))
+
+    const edges = design.edges.map(e => ({
+      id: e.id,
+      source: e.sourceId,
+      target: e.targetId,
+      type: 'customEdge',
+      animated: e.animated,
+      data: {
+        connectionType: e.connectionType,
+        label: e.label,
+      }
+    }))
+
+    res.json({
+      ...design,
+      nodes,
+      edges,
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
   }
 })
 
-// Logout - clear cookies and revoke refresh token
-router.post('/logout', authMiddleware, async (req, res) => {
+// POST /designs — create new design
+router.post('/', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
   try {
-    // Revoke refresh token from Redis
-    const refreshToken = req.cookies?.refreshToken
-    if (refreshToken && req.user?.id) {
-      await cache.del(`refresh:${req.user.id}:${refreshToken}`)
+    const { name, description, repoUrl, repoBranch } = req.body
+
+    const design = await prisma.design.create({
+      data: {
+        name: name || 'Untitled Design',
+        description,
+        repoUrl,
+        repoBranch: repoBranch || 'main',
+        ownerId: user.id,
+      }
+    })
+
+    res.status(201).json(design)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PATCH /designs/:id — update design metadata
+router.patch('/:id', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
+  try {
+    const { name, description, status, repoUrl, repoBranch } = req.body
+
+    const design = await prisma.design.updateMany({
+      where: { id: req.params.id, ownerId: user.id },
+      data: { name, description, status, repoUrl, repoBranch, updatedAt: new Date() }
+    })
+
+    if (design.count === 0) return res.status(404).json({ error: 'Design not found' })
+
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /designs/:id/canvas — save canvas (nodes + edges)
+router.post('/:id/canvas', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
+  try {
+    const { nodes, edges } = req.body
+    const designId = req.params.id
+
+    // Verify ownership
+    const design = await prisma.design.findFirst({
+      where: { id: designId, ownerId: user.id }
+    })
+    if (!design) return res.status(404).json({ error: 'Design not found' })
+
+    // Upsert blocks
+    for (const node of nodes || []) {
+      await prisma.block.upsert({
+        where: { id: node.id },
+        update: {
+          label: node.data?.label,
+          type: node.data?.type,
+          x: node.position?.x || 0,
+          y: node.position?.y || 0,
+          color: node.data?.color,
+          config: node.data?.config || {},
+          metrics: node.data?.metrics || null,
+        },
+        create: {
+          id: node.id,
+          designId,
+          label: node.data?.label || 'Block',
+          type: node.data?.type || 'service',
+          x: node.position?.x || 0,
+          y: node.position?.y || 0,
+          color: node.data?.color || '#3b82f6',
+          config: node.data?.config || {},
+        }
+      })
     }
 
-    clearAuthCookies(res)
+    // Upsert edges
+    for (const edge of edges || []) {
+      await prisma.edge.upsert({
+        where: { id: edge.id },
+        update: {
+          sourceId: edge.source,
+          targetId: edge.target,
+          connectionType: edge.data?.connectionType || 'http',
+          animated: edge.animated ?? true,
+          label: edge.data?.label,
+        },
+        create: {
+          id: edge.id,
+          designId,
+          sourceId: edge.source,
+          targetId: edge.target,
+          connectionType: edge.data?.connectionType || 'http',
+          animated: edge.animated ?? true,
+          label: edge.data?.label,
+        }
+      })
+    }
+
+    // Update design timestamp
+    await prisma.design.update({
+      where: { id: designId },
+      data: { updatedAt: new Date() }
+    })
+
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /designs/:id/autosave — lightweight auto-save
+router.post('/:id/autosave', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
+  try {
+    const { nodes, edges } = req.body
+    const designId = req.params.id
+
+    const design = await prisma.design.findFirst({
+      where: { id: designId, ownerId: user.id }
+    })
+    if (!design) return res.status(404).json({ error: 'Design not found' })
+
+    // Same as canvas save but don't block response
+    for (const node of nodes || []) {
+      await prisma.block.upsert({
+        where: { id: node.id },
+        update: {
+          label: node.data?.label,
+          type: node.data?.type,
+          x: node.position?.x || 0,
+          y: node.position?.y || 0,
+          color: node.data?.color,
+          config: node.data?.config || {},
+        },
+        create: {
+          id: node.id,
+          designId,
+          label: node.data?.label || 'Block',
+          type: node.data?.type || 'service',
+          x: node.position?.x || 0,
+          y: node.position?.y || 0,
+          color: node.data?.color || '#3b82f6',
+          config: node.data?.config || {},
+        }
+      })
+    }
+
+    for (const edge of edges || []) {
+      await prisma.edge.upsert({
+        where: { id: edge.id },
+        update: {
+          sourceId: edge.source,
+          targetId: edge.target,
+          connectionType: edge.data?.connectionType || 'http',
+        },
+        create: {
+          id: edge.id,
+          designId,
+          sourceId: edge.source,
+          targetId: edge.target,
+          connectionType: edge.data?.connectionType || 'http',
+        }
+      })
+    }
+
+    await prisma.design.update({ where: { id: designId }, data: { updatedAt: new Date() } })
+
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// DELETE /designs/:id
+router.delete('/:id', async (req, res) => {
+  const user = await getDbUser(req)
+  if (!user) return res.status(401).json({ error: 'User not found' })
+
+  try {
+    await prisma.design.deleteMany({
+      where: { id: req.params.id, ownerId: user.id }
+    })
     res.json({ success: true })
   } catch (err) {
     res.status(500).json({ error: err.message })

@@ -34,3 +34,9 @@ coverage/
 # Cache
 .cache/
 *.tsbuildinfo
+
+# Backup files — never commit database dumps
+backups/
+*.sql
+*.sql.gz
+Resonance start.txt

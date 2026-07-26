@@ -1,14 +1,10 @@
 import React from 'react'
 import {
-  Play,
-  Pause,
   Save,
   Download,
   Share2,
   Undo2,
   Redo2,
-  Trash2,
-  Settings,
   ChevronLeft,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -21,9 +17,8 @@ export const TopToolbar = ({
   onSave,
   onExport,
   onShare,
-  simulationRunning,
-  onRunSimulation,
   extraActions,
+  centerContent,
 }) => {
   const navigate = useNavigate()
   const { undo, redo, history, historyIndex } = useCanvasStore()
@@ -33,7 +28,7 @@ export const TopToolbar = ({
 
   return (
     <div className="h-14 bg-resonance-bg-elevated border-b border-resonance-border flex items-center px-4 gap-4 shrink-0">
-      {/* Left: Navigation + Title */}
+      {/* LEFT: Navigation + Title + Extra Actions */}
       <div className="flex items-center gap-3 flex-1 min-w-0">
         <button
           onClick={() => navigate('/dashboard')}
@@ -53,25 +48,28 @@ export const TopToolbar = ({
         </div>
       </div>
 
-      {/* Center: Tabs */}
-      <div className="flex items-center bg-resonance-bg-secondary rounded-lg p-1">
-        {['editor', 'simulation', 'metrics'].map(tab => (
-          <button
-            key={tab}
-            onClick={() => onTabChange(tab)}
-            className={`px-3 py-1 rounded-md text-xs font-medium capitalize transition-all ${
-              activeTab === tab
-                ? 'bg-resonance-accent text-white'
-                : 'text-resonance-text-secondary hover:text-resonance-text-primary'
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
+      {/* CENTER: Tabs + Center Content (SimulationControls) */}
+      <div className="flex items-center justify-center gap-4">
+        <div className="flex items-center bg-resonance-bg-secondary rounded-lg p-1">
+          {['editor', 'simulation', 'metrics'].map(tab => (
+            <button
+              key={tab}
+              onClick={() => onTabChange(tab)}
+              className={`px-3 py-1 rounded-md text-xs font-medium capitalize transition-all ${
+                activeTab === tab
+                  ? 'bg-resonance-accent text-white'
+                  : 'text-resonance-text-secondary hover:text-resonance-text-primary'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+        {centerContent}
       </div>
 
-      {/* Right: Actions */}
-      <div className="flex items-center gap-1">
+      {/* RIGHT: Actions */}
+      <div className="flex items-center gap-1 flex-1 justify-end">
         {/* History */}
         <button
           onClick={undo}
@@ -112,20 +110,6 @@ export const TopToolbar = ({
           title="Share"
         >
           <Share2 size={16} />
-        </button>
-
-        <div className="h-6 w-px bg-resonance-border mx-1" />
-
-        <button
-          onClick={onRunSimulation}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-            simulationRunning
-              ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20'
-              : 'bg-resonance-accent/10 text-resonance-accent hover:bg-resonance-accent/20'
-          }`}
-        >
-          {simulationRunning ? <Pause size={14} /> : <Play size={14} />}
-          {simulationRunning ? 'Stop' : 'Run'}
         </button>
       </div>
     </div>
