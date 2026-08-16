@@ -142,6 +142,16 @@ app.use('/github', asyncHandler(tenantContext), githubRoutes)
 app.use('/team', asyncHandler(tenantContext), teamRoutes)
 app.use('/analyze', reverseEngineRoutes)
 
+// RFC flat routes: /teams (list) and /team (create) need to reach the same router
+app.get('/teams', asyncHandler(tenantContext), (req, res, next) => {
+  req.url = '/teams'   // rewrite so team.js router.get('/teams') catches it
+  teamRoutes(req, res, next)
+})
+app.post('/team', asyncHandler(tenantContext), (req, res, next) => {
+  req.url = '/'        // rewrite so team.js router.post('/') catches it
+  teamRoutes(req, res, next)
+})
+
 // ============================================================================
 // ERROR HANDLING
 // ============================================================================

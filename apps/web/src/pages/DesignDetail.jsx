@@ -4,7 +4,7 @@ import {
   ArrowLeft, Pencil, Play, FileText, Settings, GitBranch,
   Clock, Blocks, Activity, ExternalLink, Calendar, Trash2,
   Loader2, Shield, BarChart3, Zap, DollarSign,
-  ChevronRight, LayoutGrid, GitGraph, ScrollText, Save,
+  ChevronRight, LayoutGrid, GitGraph, ScrollText, Save, Plus,
 } from 'lucide-react'
 import { useDesignStore } from '@/stores/designStore'
 import { useToast } from '@/components/ui/Toast'
@@ -191,6 +191,13 @@ export const DesignDetail = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [isSavingSettings, setIsSavingSettings] = useState(false)
 
+  // Team context state
+  const [showAddToTeamModal, setShowAddToTeamModal] = useState(false)
+  const [teams, setTeams] = useState([])
+  const [selectedTeamId, setSelectedTeamId] = useState(null)
+  const [isImportingToTeam, setIsImportingToTeam] = useState(false)
+  const [teamsLoading, setTeamsLoading] = useState(false)
+
   // Settings form state
   const [editName, setEditName] = useState('')
   const [editDescription, setEditDescription] = useState('')
@@ -286,6 +293,44 @@ export const DesignDetail = () => {
     }
   }
 
+  const loadTeams = async () => {
+    setTeamsLoading(true)
+    try {
+      const { api } = await import('@/services/api')
+      const data = await api.getTeams()
+      setTeams(data || [])
+    } catch (err) {
+      addToast('Failed to load teams', 'error')
+    } finally {
+      setTeamsLoading(false)
+    }
+  }
+
+  const handleAddToTeam = async () => {
+    if (!design || !selectedTeamId) return
+    setIsImportingToTeam(true)
+    try {
+      const { api } = await import('@/services/api')
+      await api.importDesignToTeam(selectedTeamId, design.id)
+      addToast(`Design added to team!`, 'success')
+      setShowAddToTeamModal(false)
+      setSelectedTeamId(null)
+      // Reload design to get updated teamId
+      await loadDesign(design.id)
+    } catch (err) {
+      addToast(err.message || 'Failed to add design to team', 'error')
+    } finally {
+      setIsImportingToTeam(false)
+    }
+  }
+
+  // Load teams when modal opens
+  useEffect(() => {
+    if (showAddToTeamModal) {
+      loadTeams()
+    }
+  }, [showAddToTeamModal])
+
   const scores = useMemo(() => {
     const r = overview?.latestReport
     if (!r) return {
@@ -353,7 +398,19 @@ export const DesignDetail = () => {
                 <GitBranch size={14} />
                 {latestReport?.version || '—'}
               </span>
-              <span>Team: {overview?.design?.teamName || 'Personal'}</span>
+              <span className="flex items-center gap-1.5">
+                Team:{' '}
+                {design.teamId ? (
+                  <button
+                    onClick={() => navigate(`/teams/${design.teamId}`)}
+                    className="text-resonance-accent hover:underline transition-colors"
+                  >
+                    {overview?.design?.teamName || 'Team'}
+                  </button>
+                ) : (
+                  <span>Personal</span>
+                )}
+              </span>
             </div>
           </div>
 
@@ -374,6 +431,16 @@ export const DesignDetail = () => {
               {isSimulating ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
               Run Simulation
             </Button>
+            {!design.teamId && (
+              <Button
+                variant="secondary"
+                onClick={() => setShowAddToTeamModal(true)}
+                className="gap-2"
+              >
+                <Plus size={16} />
+                Add to Team
+              </Button>
+            )}
           </div>
         </header>
 
@@ -918,6 +985,66 @@ export const DesignDetail = () => {
             <div className="flex justify-end gap-3">
               <Button variant="ghost" onClick={() => setShowDeleteModal(false)}>Cancel</Button>
               <Button variant="danger" onClick={handleDelete}>Delete</Button>
+            </div>
+          </div>
+        </Modal>
+
+        {/* ---------- Add to Team Modal ---------- */}
+        <Modal isOpen={showAddToTeamModal} onClose={() => setShowAddToTeamModal(false)} title="Add to Team" size="sm">
+          <div className="space-y-4">
+            {teamsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 size={20} className="animate-spin text-resonance-accent" />
+              </div>
+            ) : teams.length === 0 ? (
+              <p className="text-resonance-text-secondary">
+                You don't have any teams yet.{' '}
+                <button
+                  onClick={() => {
+                    setShowAddToTeamModal(false)
+                    navigate('/team')
+                  }}
+                  className="text-resonance-accent hover:underline transition-colors"
+                >
+                  Create one first
+                </button>
+              </p>
+            ) : (
+              <>
+                <p className="text-resonance-text-secondary">
+                  Select a team to add this design to:
+                </p>
+                <div className="space-y-2">
+                  {teams.map((team) => (
+                    <label key={team.id} className="flex items-center gap-3 p-3 rounded-lg border border-resonance-border hover:bg-resonance-bg-tertiary cursor-pointer transition-colors">
+                      <input
+                        type="radio"
+                        name="team"
+                        value={team.id}
+                        checked={selectedTeamId === team.id}
+                        onChange={(e) => setSelectedTeamId(e.target.value)}
+                        className="w-4 h-4 text-resonance-accent bg-resonance-bg-tertiary border-resonance-border focus:ring-resonance-accent"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-resonance-text-primary">{team.name}</p>
+                        {team.description && (
+                          <p className="text-xs text-resonance-text-muted truncate">{team.description}</p>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+            <div className="flex justify-end gap-3">
+              <Button variant="ghost" onClick={() => setShowAddToTeamModal(false)}>Cancel</Button>
+              <Button
+                onClick={handleAddToTeam}
+                disabled={!selectedTeamId || isImportingToTeam}
+              >
+                {isImportingToTeam ? <Loader2 size={16} className="animate-spin mr-2" /> : null}
+                Add to Team
+              </Button>
             </div>
           </div>
         </Modal>

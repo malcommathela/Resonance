@@ -31,6 +31,7 @@ model User {
 model Team {
   id         String   @id @default(cuid())
   name       String
+  description String?
   ownerId    String
   maxMembers Int      @default(5)
   createdAt  DateTime @default(now())
@@ -38,22 +39,42 @@ model Team {
 
   members TeamMember[]
   designs Design[]
+  invites TeamInvite[]
 
   @@index([ownerId])
   @@map("teams")
 }
 
 model TeamMember {
-  id     String @id @default(cuid())
-  teamId String
-  userId String
-  role   String @default("member")
+  id        String   @id @default(cuid())
+  teamId    String
+  userId    String
+  role      String   @default("member")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, userId])
   @@map("team_members")
+}
+
+model TeamInvite {
+  id        String   @id @default(cuid())
+  teamId    String   @map("team_id")
+  email     String
+  role      String   @default("member")
+  token     String   @unique
+  invitedBy String   @map("invited_by")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([teamId])
+  @@unique([teamId, email])
+  @@map("team_invites")
 }
 
 model Design {

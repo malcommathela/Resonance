@@ -807,7 +807,7 @@ export async function runSimulationPass(blocks, edges, arrivalEvents, scenario, 
     // ------------------------------------------------------------------------
     const now = Date.now()
     const shouldStreamBySimTime = state.time - lastSnapshotTime >= ENGINE_CONFIG.SIM_TIME_PER_SNAPSHOT
-    const shouldStreamByWallTime = now - lastStreamWallTime >= 1000
+    const shouldStreamByWallTime = now - lastStreamWallTime >= 250
 
     if (onTick && (shouldStreamBySimTime || shouldStreamByWallTime)) {
       const progress = Math.min((state.time / duration) * 100, 100)

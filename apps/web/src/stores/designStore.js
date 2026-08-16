@@ -309,4 +309,76 @@ export const useDesignStore = create((set, get) => ({
     }
   },
   // === END OVERVIEW & AUDIT ===
+
+  // === TEAM DESIGN ACTIONS ===
+  loadTeamDesigns: async (teamId) => {
+    if (!teamId) return []
+    set({ isLoading: true, error: null })
+    try {
+      const designs = await api.getTeamDesigns(teamId)
+      const enriched = designs.map(enrichDesign)
+      return enriched
+    } catch (err) {
+      set({ error: err.message, isLoading: false })
+      throw err
+    }
+  },
+
+  createTeamDesign: async (teamId, design) => {
+    set({ isLoading: true, error: null })
+    try {
+      const newDesign = await api.createTeamDesign(teamId, design)
+      const enriched = enrichDesign(newDesign)
+      set({
+        designs: [enriched, ...get().designs],
+        currentDesign: enriched,
+        isLoading: false,
+      })
+      return enriched
+    } catch (err) {
+      set({ error: err.message, isLoading: false })
+      throw err
+    }
+  },
+
+  importDesignToTeam: async (teamId, designId) => {
+    set({ isLoading: true, error: null })
+    try {
+      const updated = await api.importDesignToTeam(teamId, designId)
+      const enriched = enrichDesign(updated)
+      set({
+        designs: get().designs.map((d) => (d.id === designId ? enriched : d)),
+        currentDesign:
+          get().currentDesign?.id === designId
+            ? enriched
+            : get().currentDesign,
+        isLoading: false,
+      })
+      return enriched
+    } catch (err) {
+      set({ error: err.message, isLoading: false })
+      throw err
+    }
+  },
+
+  removeDesignFromTeam: async (teamId, designId) => {
+    set({ isLoading: true, error: null })
+    try {
+      const updated = await api.removeDesignFromTeam(teamId, designId)
+      const enriched = enrichDesign(updated)
+      set({
+        designs: get().designs.map((d) => (d.id === designId ? enriched : d)),
+        currentDesign:
+          get().currentDesign?.id === designId
+            ? enriched
+            : get().currentDesign,
+        isLoading: false,
+      })
+      return enriched
+    } catch (err) {
+      set({ error: err.message, isLoading: false })
+      throw err
+    }
+  },
+  // === END TEAM DESIGN ACTIONS ===
 }))

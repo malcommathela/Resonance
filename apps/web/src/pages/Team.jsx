@@ -1,31 +1,21 @@
 import React, { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Users,
   Mail,
   Plus,
-  MoreVertical,
+  ChevronRight,
+  Crown,
   Shield,
   User,
-  Crown,
+  Layers,
   X,
-  Settings,
-  Layers
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
-import { Modal } from '@/components/ui/Modal'
-import { Input } from '@/components/ui/Input'
-import { Dropdown } from '@/components/ui/Dropdown'
-import { api } from '@/services/api'
-import { useAuthStore } from '@/stores/authStore'
 import { useToast } from '@/components/ui/Toast'
-
-// --------------------------------------------------
-// NovaFlow Elevation — gradient border shell
-// Spec: linear-gradient(#DCFC5C 0%, #0062D6 55%, #000000 90%)
-// --------------------------------------------------
-const GRADIENT_SHELL =
-  'p-[1px] rounded-xl bg-gradient-to-b from-[#DCFC5C] via-[#0062D6] to-[#000000]'
+import { TeamManagementSkeleton } from '@/components/ui/skeletons'
+import { api } from '@/services/api'
 
 const ROLES = {
   owner: { label: 'Owner', icon: Crown, badge: 'warning' },
@@ -34,408 +24,318 @@ const ROLES = {
 }
 
 export const Team = () => {
-  const { user } = useAuthStore()
+  const navigate = useNavigate()
   const { showToast } = useToast()
-
-  const [members, setMembers] = useState([])
-  const [team, setTeam] = useState(null)
   const [loading, setLoading] = useState(true)
-
-  const [inviteOpen, setInviteOpen] = useState(false)
-  const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRole, setInviteRole] = useState('member')
-  const [inviteLoading, setInviteLoading] = useState(false)
+  const [teams, setTeams] = useState([])
+  const [invites, setInvites] = useState([])
+  const [myInvites, setMyInvites] = useState([])
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [teamName, setTeamName] = useState('')
+  const [teamDescription, setTeamDescription] = useState('')
+  const [creating, setCreating] = useState(false)
 
   useEffect(() => {
-    loadTeam()
+    loadTeams()
+    loadMyInvites()
   }, [])
 
-  const loadTeam = async () => {
+  const loadTeams = async () => {
+    setLoading(true)
     try {
-      setLoading(true)
-
-      // Fallback mock data — remove when backend endpoints are live
-      const teamData = (await api.getTeam?.()) || {
-        id: 'team-1',
-        name: 'Engineering',
-        maxMembers: 5,
-        createdAt: new Date().toISOString(),
-      }
-
-      const membersData = (await api.getTeamMembers?.()) || [
-        {
-          id: '1',
-          name: user?.name || 'You',
-          email: user?.email || 'you@resonance.dev',
-          role: 'owner',
-          status: 'active',
-          avatar: user?.avatar,
-        },
-        {
-          id: '2',
-          name: 'Alex Rivera',
-          email: 'alex@resonance.dev',
-          role: 'admin',
-          status: 'active',
-          avatar: null,
-        },
-        {
-          id: '3',
-          name: 'Blair Kim',
-          email: 'blair@resonance.dev',
-          role: 'member',
-          status: 'active',
-          avatar: null,
-        },
-        {
-          id: '4',
-          name: 'Casey Lin',
-          email: 'casey@resonance.dev',
-          role: 'member',
-          status: 'pending',
-          avatar: null,
-        },
-      ]
-
-      setTeam(teamData)
-      setMembers(membersData)
+      const data = await api.getTeams()
+      setTeams(data || [])
     } catch (err) {
-      console.error('Failed to load team:', err)
-      showToast?.({ message: 'Failed to load team data', type: 'error' })
+      console.error('Failed to load teams:', err)
+      showToast({ message: 'Failed to load teams', type: 'error' })
     } finally {
       setLoading(false)
     }
   }
 
-  const handleInvite = async (e) => {
-    e.preventDefault()
-    if (!inviteEmail.trim()) return
-
-    setInviteLoading(true)
+  const loadMyInvites = async () => {
     try {
-      await api.inviteMember?.({ email: inviteEmail, role: inviteRole })
-      showToast?.({ message: `Invitation sent to ${inviteEmail}`, type: 'success' })
-      setInviteEmail('')
-      setInviteRole('member')
-      setInviteOpen(false)
-      loadTeam()
+      const data = await api.getMyInvites()
+      setMyInvites(data || [])
     } catch (err) {
-      console.error('Invite failed:', err)
-      showToast?.({ message: 'Failed to send invitation', type: 'error' })
+      console.error('Failed to load invites:', err)
+    }
+  }
+
+  const handleCreateTeam = async () => {
+    if (!teamName.trim()) {
+      showToast({ message: 'Team name is required', type: 'error' })
+      return
+    }
+
+    setCreating(true)
+    try {
+      const newTeam = await api.createTeam({
+        name: teamName.trim(),
+        description: teamDescription.trim(),
+      })
+      setTeams([newTeam, ...teams])
+      setShowCreateModal(false)
+      setTeamName('')
+      setTeamDescription('')
+      showToast({ message: 'Team created successfully', type: 'success' })
+      navigate(`/teams/${newTeam.id}`)
+    } catch (err) {
+      console.error('Failed to create team:', err)
+      showToast({ message: err.message || 'Failed to create team', type: 'error' })
     } finally {
-      setInviteLoading(false)
+      setCreating(false)
     }
   }
 
-  const handleRemove = async (memberId) => {
-    if (!confirm('Remove this member from the team?')) return
+  const handleAcceptInvite = async (inviteToken) => {
     try {
-      await api.removeMember?.(memberId)
-      setMembers((prev) => prev.filter((m) => m.id !== memberId))
-      showToast?.({ message: 'Member removed', type: 'success' })
+      const { teamId } = await api.acceptTeamInvite(inviteToken)
+      setMyInvites((prev) => prev.filter((i) => i.token !== inviteToken))
+      showToast({ message: 'Invite accepted! Redirecting...', type: 'success' })
+      setTimeout(() => navigate(`/teams/${teamId}`), 1000)
     } catch (err) {
-      showToast?.({ message: 'Failed to remove member', type: 'error' })
+      console.error('Failed to accept invite:', err)
+      showToast({ message: err.message || 'Failed to accept invite', type: 'error' })
     }
   }
 
-  const handleRoleChange = async (memberId, newRole) => {
+    const handleDeclineInvite = async (inviteToken) => {
     try {
-      await api.updateMemberRole?.(memberId, newRole)
-      setMembers((prev) =>
-        prev.map((m) => (m.id === memberId ? { ...m, role: newRole } : m))
-      )
-      showToast?.({ message: 'Role updated', type: 'success' })
+      await api.declineTeamInvite(inviteToken)
+      setMyInvites((prev) => prev.filter((i) => i.token !== inviteToken))
+      showToast({ message: 'Invite declined', type: 'info' })
     } catch (err) {
-      showToast?.({ message: 'Failed to update role', type: 'error' })
+      console.error('Failed to decline invite:', err)
+      showToast({ message: err.message || 'Failed to decline invite', type: 'error' })
     }
   }
-
-  const activeCount = members.filter((m) => m.status === 'active').length
-  const pendingCount = members.filter((m) => m.status === 'pending').length
-  const isOwner = members.find((m) => m.id === user?.id)?.role === 'owner'
 
   if (loading) {
-    return (
-      <div className="max-w-[1200px] mx-auto px-6 lg:px-12 py-8 space-y-8">
-        <div className="h-8 w-48 bg-resonance-bg-tertiary rounded-xl animate-pulse" />
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {[1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className="h-32 bg-resonance-bg-secondary border border-resonance-border rounded-xl animate-pulse"
-            />
-          ))}
-        </div>
-        <div className="h-96 bg-resonance-bg-secondary border border-resonance-border rounded-xl animate-pulse" />
-      </div>
-    )
+    return <TeamManagementSkeleton />
   }
 
   return (
-    <div className="max-w-[1200px] mx-auto px-6 lg:px-12 py-8 space-y-8">
+    <div className="max-w-[1200px] mx-auto px-6 lg:px-12 py-8 space-y-10">
       {/* Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="space-y-1">
-          <h1 className="text-3xl font-semibold leading-9 tracking-tight text-resonance-text-primary flex items-center gap-3">
-            Team
-            <Badge variant="beta" className="text-[11px] px-2 py-0.5">Beta</Badge>
+          <div className="flex items-center gap-2 text-resonance-accent text-[11px] font-bold uppercase tracking-widest">
+            <span className="w-1.5 h-1.5 rounded-full bg-resonance-accent" />
+            Your Teams
+          </div>
+          <h1 className="text-3xl font-semibold leading-9 tracking-tight text-resonance-text-primary">
+            Team Management
           </h1>
           <p className="text-sm text-resonance-text-secondary leading-[22.75px]">
-            Manage your team members and their access to designs and simulations.
+            Create teams, invite members, and manage access to designs and simulations.
           </p>
         </div>
-
-        {/* Avatar stack + CTA */}
-        <div className="flex items-center gap-4">
-          <div className="flex items-center">
-            {members.slice(0, 5).map((m, i) => (
-              <div
-                key={m.id}
-                className="w-10 h-10 rounded-full border-2 border-resonance-bg-primary overflow-hidden bg-resonance-accent flex items-center justify-center text-xs font-bold text-resonance-neutral shrink-0"
-                style={{ marginLeft: i > 0 ? -12 : 0, zIndex: members.length - i }}
-                title={m.name}
-              >
-                {m.avatar ? (
-                  <img
-                    src={m.avatar}
-                    alt={m.name}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  m.name?.[0]?.toUpperCase() || '?'
-                )}
-              </div>
-            ))}
-            {members.length > 5 && (
-              <div
-                className="w-10 h-10 rounded-full border-2 border-resonance-bg-primary bg-resonance-bg-tertiary flex items-center justify-center text-xs font-medium text-resonance-text-secondary shrink-0"
-                style={{ marginLeft: -12 }}
-              >
-                +{members.length - 5}
-              </div>
-            )}
-          </div>
-          <Button onClick={() => setInviteOpen(true)} icon={Plus}>
-            Invite Member
-          </Button>
-        </div>
+        <Button onClick={() => setShowCreateModal(true)} icon={Plus}>
+          Create Team
+        </Button>
       </div>
 
-      {/* Stats — gradient shell per NovaFlow elevation spec */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className={GRADIENT_SHELL}>
-          <div className="bg-resonance-bg-secondary rounded-[11px] p-5 flex items-center gap-4">
-            <div className="w-11 h-11 rounded-xl bg-resonance-accent/10 flex items-center justify-center">
-              <Users size={20} className="text-resonance-accent" />
-            </div>
-            <div>
-              <div className="text-2xl font-semibold text-resonance-text-primary">
-                {members.length}
-              </div>
-              <div className="text-sm text-resonance-text-secondary">Total members</div>
-            </div>
-          </div>
+      {/* Teams You Belong To */}
+      <section className="space-y-4">
+        <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-resonance-text-muted">
+          <Users size={14} />
+          Teams You Belong To
         </div>
-
-        <div className={GRADIENT_SHELL}>
-          <div className="bg-resonance-bg-secondary rounded-[11px] p-5 flex items-center gap-4">
-            <div className="w-11 h-11 rounded-xl bg-resonance-accent/10 flex items-center justify-center">
-              <Shield size={20} className="text-resonance-accent" />
-            </div>
-            <div>
-              <div className="text-2xl font-semibold text-resonance-text-primary">
-                {activeCount}
-              </div>
-              <div className="text-sm text-resonance-text-secondary">Active</div>
-            </div>
-          </div>
-        </div>
-
-        <div className={GRADIENT_SHELL}>
-          <div className="bg-resonance-bg-secondary rounded-[11px] p-5 flex items-center gap-4">
-            <div className="w-11 h-11 rounded-xl bg-resonance-accent/10 flex items-center justify-center">
-              <Mail size={20} className="text-resonance-accent" />
-            </div>
-            <div>
-              <div className="text-2xl font-semibold text-resonance-text-primary">
-                {pendingCount}
-              </div>
-              <div className="text-sm text-resonance-text-secondary">Pending invites</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Team Info */}
-      <div className="bg-resonance-bg-secondary border border-resonance-border rounded-xl p-6 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-resonance-accent flex items-center justify-center text-resonance-neutral">
-            <Layers size={24} />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-resonance-text-primary">
-              {team?.name || 'Team'}
-            </h2>
+        {teams.length === 0 ? (
+          <div className="bg-resonance-bg-secondary border border-resonance-border rounded-xl p-8 text-center">
             <p className="text-sm text-resonance-text-secondary">
-              {members.length} of {team?.maxMembers || 5} members • Created{' '}
-              {team?.createdAt ? new Date(team.createdAt).toLocaleDateString() : '—'}
+              No teams yet. Create one to get started!
             </p>
           </div>
-        </div>
-        {isOwner && (
-          <Button variant="secondary" icon={Settings} className="hidden sm:flex">
-            Team Settings
-          </Button>
-        )}
-      </div>
-
-      {/* Members List */}
-      <div className="bg-resonance-bg-secondary border border-resonance-border rounded-xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-resonance-border flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-resonance-text-primary">Members</h2>
-          <span className="text-sm text-resonance-text-muted">{members.length} total</span>
-        </div>
-
-        <div className="divide-y divide-resonance-border">
-          {members.map((member) => {
-            const RoleIcon = ROLES[member.role]?.icon || User
-            const roleConfig = ROLES[member.role] || ROLES.member
-
-            return (
-              <div
-                key={member.id}
-                className="flex items-center gap-4 px-6 py-4 hover:bg-resonance-bg-hover transition-colors duration-150"
-              >
-                {/* Avatar */}
-                <div className="w-10 h-10 rounded-full bg-resonance-accent flex items-center justify-center text-sm font-semibold text-resonance-neutral shrink-0 overflow-hidden">
-                  {member.avatar ? (
-                    <img
-                      src={member.avatar}
-                      alt={member.name}
-                      className="w-full h-full object-cover"
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {teams.map((team) => {
+              const RoleIcon = ROLES[team.myRole]?.icon || User
+              return (
+                <div
+                  key={team.id}
+                  onClick={() => navigate(`/teams/${team.id}`)}
+                  className="group bg-resonance-bg-secondary border border-resonance-border rounded-xl p-6 cursor-pointer hover:border-resonance-accent/30 transition-all duration-200"
+                >
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="space-y-1">
+                      <h3 className="text-lg font-semibold text-resonance-text-primary group-hover:text-resonance-accent transition-colors">
+                        {team.name}
+                      </h3>
+                      <p className="text-sm text-resonance-text-secondary line-clamp-1">
+                        {team.description || 'No description'}
+                      </p>
+                    </div>
+                    <ChevronRight
+                      size={18}
+                      className="text-resonance-text-muted group-hover:text-resonance-accent transition-colors shrink-0 mt-1"
                     />
-                  ) : (
-                    member.name?.[0]?.toUpperCase() || '?'
-                  )}
-                </div>
+                  </div>
 
-                {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-resonance-text-primary truncate">
-                      {member.name}
+                  <div className="flex items-center gap-4 text-sm text-resonance-text-secondary mb-4">
+                    <span className="flex items-center gap-1.5">
+                      <Users size={14} />
+                      {team.memberCount || 0} members
                     </span>
-                    {member.status === 'pending' && (
-                      <Badge variant="warning">Pending</Badge>
-                    )}
+                    <span className="flex items-center gap-1.5">
+                      <Layers size={14} />
+                      {team.designCount || 0} designs
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      {/* Placeholder avatars */}
+                      {[...Array(Math.min(4, team.memberCount || 0))].map((_, i) => (
+                        <div
+                          key={i}
+                          className="w-8 h-8 rounded-full border-2 border-resonance-bg-secondary bg-resonance-bg-tertiary flex items-center justify-center text-[10px] font-bold text-resonance-text-secondary shrink-0"
+                          style={{
+                            marginLeft: i > 0 ? -10 : 0,
+                            zIndex: 4 - i,
+                          }}
+                        >
+                          M
+                        </div>
+                      ))}
+                      {(team.memberCount || 0) > 4 && (
+                        <div
+                          className="w-8 h-8 rounded-full border-2 border-resonance-bg-secondary bg-resonance-bg-tertiary flex items-center justify-center text-[10px] font-medium text-resonance-text-secondary shrink-0"
+                          style={{ marginLeft: -10 }}
+                        >
+                          +{(team.memberCount || 0) - 4}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={ROLES[team.myRole]?.badge || 'default'}>
+                        <span className="flex items-center gap-1">
+                          <RoleIcon size={10} />
+                          {ROLES[team.myRole]?.label}
+                        </span>
+                      </Badge>
+                      <span className="text-xs text-resonance-text-muted">
+                        {new Date(team.createdAt).toLocaleDateString('en-US', {
+                          month: 'short',
+                          year: 'numeric',
+                        })}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Pending Invites */}
+      {myInvites.length > 0 && (
+        <section className="space-y-4">
+          <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-resonance-text-muted">
+            <Mail size={14} />
+            Pending Invites
+          </div>
+          <div className="space-y-2">
+            {myInvites.map((invite) => (
+              <div
+                key={invite.id}
+                className="flex items-center gap-4 bg-resonance-bg-secondary border border-resonance-border rounded-xl px-5 py-4"
+              >
+                <div className="w-10 h-10 rounded-full bg-resonance-bg-tertiary flex items-center justify-center shrink-0">
+                  <Mail size={16} className="text-resonance-text-muted" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-resonance-text-primary truncate">
+                    {invite.email}
                   </div>
                   <div className="text-sm text-resonance-text-secondary truncate">
-                    {member.email}
+                    Invited to {invite.teamName} · {invite.role}
                   </div>
                 </div>
-
-                {/* Role + Actions */}
-                <div className="flex items-center gap-3 shrink-0">
-                  <Badge variant={roleConfig.badge}>
-                    <span className="flex items-center gap-1">
-                      <RoleIcon size={12} />
-                      {roleConfig.label}
-                    </span>
-                  </Badge>
-
-                  {isOwner && member.role !== 'owner' && (
-                    <div onClick={(e) => e.stopPropagation()}>
-                      <Dropdown
-                        align="right"
-                        items={[
-                          ...Object.entries(ROLES)
-                            .filter(([key]) => key !== member.role && key !== 'owner')
-                            .map(([key, config]) => ({
-                              icon: config.icon,
-                              label: `Change to ${config.label}`,
-                              onClick: () => handleRoleChange(member.id, key),
-                            })),
-                          {
-                            icon: X,
-                            label: 'Remove from team',
-                            danger: true,
-                            onClick: () => handleRemove(member.id),
-                          },
-                        ]}
-                        trigger={
-                          <button className="p-1.5 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted transition-colors duration-150">
-                            <MoreVertical size={16} />
-                          </button>
-                        }
-                      />
-                    </div>
-                  )}
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    size="sm"
+                    variant="accent"
+                    onClick={() => handleAcceptInvite(invite.token)}
+                  >
+                    Accept
+                  </Button>
+                  <button
+                    onClick={() => handleDeclineInvite(invite.token)}
+                    className="p-2 text-resonance-text-muted hover:text-resonance-text-primary transition-colors"
+                  >
+                    <X size={16} />
+                  </button>
                 </div>
               </div>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Invite Modal */}
-      <Modal
-        isOpen={inviteOpen}
-        onClose={() => setInviteOpen(false)}
-        title="Invite team member"
-        size="md"
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setInviteOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleInvite}
-              loading={inviteLoading}
-              icon={Mail}
-              disabled={!inviteEmail.trim()}
-            >
-              Send Invite
-            </Button>
+            ))}
           </div>
-        }
-      >
-        <form onSubmit={handleInvite} className="space-y-5">
-          <Input
-            label="Email address"
-            type="email"
-            placeholder="colleague@company.com"
-            value={inviteEmail}
-            onChange={(e) => setInviteEmail(e.target.value)}
-            icon={Mail}
-            required
-          />
+        </section>
+      )}
 
-          <div>
-            <label className="block text-sm font-medium text-resonance-text-secondary mb-1.5">
-              Role
-            </label>
-            <div className="flex gap-2">
-              {Object.entries(ROLES)
-                .filter(([key]) => key !== 'owner')
-                .map(([key, config]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setInviteRole(key)}
-                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium transition-all duration-150 ${
-                      inviteRole === key
-                        ? 'border-resonance-accent bg-resonance-accent/10 text-resonance-text-primary'
-                        : 'border-resonance-border text-resonance-text-secondary hover:bg-resonance-bg-hover'
-                    }`}
-                  >
-                    <config.icon size={16} />
-                    {config.label}
-                  </button>
-                ))}
+      {/* Create Team Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-resonance-bg-primary border border-resonance-border rounded-xl p-6 max-w-md w-full mx-4 shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-resonance-text-primary">Create Team</h2>
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="text-resonance-text-muted hover:text-resonance-text-primary"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-resonance-text-primary mb-2">
+                  Team Name *
+                </label>
+                <input
+                  type="text"
+                  value={teamName}
+                  onChange={(e) => setTeamName(e.target.value)}
+                  placeholder="e.g., Engineering Team"
+                  className="w-full px-3 py-2 bg-resonance-bg-secondary border border-resonance-border rounded-lg text-resonance-text-primary placeholder-resonance-text-muted focus:outline-none focus:border-resonance-accent"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-resonance-text-primary mb-2">
+                  Description
+                </label>
+                <textarea
+                  value={teamDescription}
+                  onChange={(e) => setTeamDescription(e.target.value)}
+                  placeholder="What does this team work on?"
+                  rows={3}
+                  className="w-full px-3 py-2 bg-resonance-bg-secondary border border-resonance-border rounded-lg text-resonance-text-primary placeholder-resonance-text-muted focus:outline-none focus:border-resonance-accent resize-none"
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <Button
+                  variant="secondary"
+                  onClick={() => setShowCreateModal(false)}
+                  className="flex-1"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleCreateTeam}
+                  loading={creating}
+                  className="flex-1"
+                >
+                  Create
+                </Button>
+              </div>
             </div>
           </div>
-        </form>
-      </Modal>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import { Router } from 'express'
-import { getAuth } from '@clerk/express'
 import { prisma } from '../lib/db.js'
+import { assertDesignAccess } from '../middleware/tenantContext.js'
 import { validateArchitecture, validateSimulationInput } from '../simulation/validation.js'
 import { DeterministicRNG, createSimulationSeed } from '@resonance/shared/deterministic'
 import { enqueueSimulation, getJobState } from '../simulation/worker/queue.js'
@@ -23,66 +23,34 @@ import {
 const router = Router()
 
 // ============================================================================
-// AUTH MIDDLEWARE — supports Clerk session cookies AND Bearer tokens
-// ============================================================================
-
-router.use(async (req, res, next) => {
-  // 1. Try Clerk cookie session first
-  const auth = getAuth(req)
-  if (auth?.userId) {
-    req.userId = auth.userId
-    return next()
-  }
-
-  // 2. Fallback: manually decode Bearer token (for cross-origin SSE)
-  const authHeader = req.headers.authorization
-  if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.slice(7)
-    try {
-      // Clerk JWT payload: { sub: "user_xxx", ... }
-      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
-      if (payload?.sub) {
-        req.userId = payload.sub
-        return next()
-      }
-    } catch (err) {
-      console.error('[AUTH] Bearer token decode failed:', err.message)
-    }
-  }
-
-  return res.status(401).json({ error: 'Unauthorized' })
-})
-
-// ============================================================================
 // HELPERS
 // ============================================================================
 
 async function getDesign(req, designId) {
-  const user = await prisma.user.findUnique({
-    where: { clerkId: req.userId },
-    select: { id: true }
-  })
-  if (!user) return null
-
   const design = await prisma.design.findFirst({
-    where: { id: designId, ownerId: user.id },
-    include: { blocks: true, edges: true }
+    where: {
+      id: designId,
+      OR: [
+        { ownerId: req.dbUser.id },
+        { team: { members: { some: { userId: req.dbUser.id } } } },
+      ],
+    },
+    include: { blocks: true, edges: true },
   })
 
   if (design) {
     console.log('[SIMULATION] Loaded design:', design.id)
-    console.log('[SIMULATION] Blocks:', design.blocks.map(b => ({ id: b.id, type: b.type, label: b.label })))
-    console.log('[SIMULATION] Edges:', design.edges.map(e => ({ id: e.id, source: e.sourceId, target: e.targetId, type: e.connectionType })))
+    console.log(
+      '[SIMULATION] Blocks:',
+      design.blocks.map((b) => ({ id: b.id, type: b.type, label: b.label }))
+    )
+    console.log(
+      '[SIMULATION] Edges:',
+      design.edges.map((e) => ({ id: e.id, source: e.sourceId, target: e.targetId, type: e.connectionType }))
+    )
   }
 
   return design
-}
-
-async function getDbUser(req) {
-  return prisma.user.findUnique({
-    where: { clerkId: req.userId },
-    select: { id: true }
-  })
 }
 
 function getClientInfo(req) {
@@ -119,8 +87,7 @@ router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
     const design = await getDesign(req, designId)
     if (!design) return res.status(404).json({ error: 'Design not found' })
 
-    const user = await getDbUser(req)
-    if (!user) return res.status(401).json({ error: 'User not found' })
+    const userId = req.dbUser.id
 
     const validation = validateSimulationInput(
       { trafficPattern, rps, duration, scenario, monteCarloPasses, confidenceLevel, growthScenario, deterministicSeed },
@@ -136,7 +103,7 @@ router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
 
     if (!validation.canSimulate) {
       await logAuditEvent({
-        userId: user.id,
+        userId,
         designId,
         simulationId: null,
         action: 'simulation_rejected',
@@ -178,7 +145,7 @@ router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
     const simulation = await prisma.simulation.create({
       data: {
         designId,
-        userId: user.id,
+        userId,
         status: 'pending',
         progress: 0,
         trafficPattern,
@@ -240,14 +207,14 @@ router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
           resourceModel: 'CPU + memory + thread pool + connection pool contention',
         },
       },
-      userId: user.id,
+      userId,
       clientInfo: getClientInfo(req),
     })
 
     await lock.release()
 
     await logAuditEvent({
-      userId: user.id,
+      userId,
       designId,
       simulationId: simulation.id,
       action: 'simulation_enqueued',
@@ -288,13 +255,11 @@ router.get('/:id/status', async (req, res) => {
 
     const simulation = await prisma.simulation.findUnique({
       where: { id },
-      include: { design: { select: { owner: { select: { clerkId: true } } } } }
+      select: { designId: true },
     })
 
     if (!simulation) return res.status(404).json({ error: 'Not found' })
-    if (simulation.design.owner.clerkId !== req.userId) {
-      return res.status(403).json({ error: 'Forbidden' })
-    }
+    await assertDesignAccess(req, simulation.designId)
 
     const cached = await getCachedSimulationStatus(id, prisma)
 
@@ -351,13 +316,11 @@ router.get('/:id/stream', sseLimiter, async (req, res) => {
 
     const simulation = await prisma.simulation.findUnique({
       where: { id },
-      include: { design: { select: { owner: { select: { clerkId: true } } } } }
+      select: { designId: true },
     })
 
     if (!simulation) return res.status(404).json({ error: 'Not found' })
-    if (simulation.design.owner.clerkId !== req.userId) {
-      return res.status(403).json({ error: 'Forbidden' })
-    }
+    await assertDesignAccess(req, simulation.designId)
 
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
@@ -430,13 +393,11 @@ router.post('/:id/stop', async (req, res) => {
     const { id } = req.params
     const simulation = await prisma.simulation.findUnique({
       where: { id },
-      include: { design: { select: { owner: { select: { clerkId: true } } } } }
+      select: { designId: true },
     })
 
     if (!simulation) return res.status(404).json({ error: 'Not found' })
-    if (simulation.design.owner.clerkId !== req.userId) {
-      return res.status(403).json({ error: 'Forbidden' })
-    }
+    await assertDesignAccess(req, simulation.designId)
 
     const { removeJob } = await import('../simulation/worker/queue.js')
     await removeJob(`sim-${id}`).catch(() => {})
@@ -448,9 +409,8 @@ router.post('/:id/stop', async (req, res) => {
 
     await invalidateSimulationStatus(id)
 
-    const user = await getDbUser(req)
     await logAuditEvent({
-      userId: user?.id,
+      userId: req.dbUser.id,
       designId: simulation.designId,
       simulationId: id,
       action: 'simulation_stopped',
@@ -474,15 +434,11 @@ router.get('/:id/report', reportLimiter, async (req, res) => {
 
     const simulation = await prisma.simulation.findUnique({
       where: { id },
-      include: {
-        design: { select: { owner: { select: { clerkId: true } } } },
-      }
+      select: { designId: true },
     })
 
     if (!simulation) return res.status(404).json({ error: 'Not found' })
-    if (simulation.design.owner.clerkId !== req.userId) {
-      return res.status(403).json({ error: 'Forbidden' })
-    }
+    await assertDesignAccess(req, simulation.designId)
 
     const cached = await getCachedReport(id, prisma)
     if (cached) {
@@ -517,13 +473,11 @@ router.get('/design/:designId/list', async (req, res) => {
 
     const design = await prisma.design.findUnique({
       where: { id: designId },
-      include: { owner: { select: { clerkId: true } } }
+      select: { id: true },
     })
 
     if (!design) return res.status(404).json({ error: 'Design not found' })
-    if (design.owner.clerkId !== req.userId) {
-      return res.status(403).json({ error: 'Forbidden' })
-    }
+    await assertDesignAccess(req, designId)
 
     const list = await getCachedSimulationList(designId, { limit, offset }, prisma)
 
@@ -546,13 +500,11 @@ router.get('/:id/audit', async (req, res) => {
 
     const simulation = await prisma.simulation.findUnique({
       where: { id },
-      include: { design: { select: { owner: { select: { clerkId: true } } } } }
+      select: { designId: true },
     })
 
     if (!simulation) return res.status(404).json({ error: 'Not found' })
-    if (simulation.design.owner.clerkId !== req.userId) {
-      return res.status(403).json({ error: 'Forbidden' })
-    }
+    await assertDesignAccess(req, simulation.designId)
 
     const auditTrail = await prisma.auditLog.findMany({
       where: { simulationId: id },
@@ -579,13 +531,11 @@ router.get('/:id/job-state', async (req, res) => {
 
     const simulation = await prisma.simulation.findUnique({
       where: { id },
-      include: { design: { select: { owner: { select: { clerkId: true } } } } }
+      select: { id: true, status: true, designId: true },
     })
 
     if (!simulation) return res.status(404).json({ error: 'Not found' })
-    if (simulation.design.owner.clerkId !== req.userId) {
-      return res.status(403).json({ error: 'Forbidden' })
-    }
+    await assertDesignAccess(req, simulation.designId)
 
     const jobState = await getJobState(`sim-${id}`)
 

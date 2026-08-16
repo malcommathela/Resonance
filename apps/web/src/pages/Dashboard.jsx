@@ -546,8 +546,15 @@ export const Dashboard = () => {
                 <div className="p-5">
                   <div className="flex items-start justify-between gap-3 mb-3">
                     <div className="min-w-0 flex-1">
-                      <StatusBadge status={design.status} />
-                      <h3 className="text-base font-semibold mt-2 mb-1 truncate text-resonance-text-primary">
+                      <div className="flex items-center gap-2 mb-2">
+                        <StatusBadge status={design.status} />
+                        {design.teamId && (
+                          <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-resonance-accent/10 text-resonance-accent">
+                            Team
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="text-base font-semibold mb-1 truncate text-resonance-text-primary">
                         {design.name}
                       </h3>
                       <p className="text-[13px] text-resonance-text-secondary line-clamp-2">

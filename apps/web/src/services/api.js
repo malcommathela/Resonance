@@ -111,9 +111,33 @@ class ApiService {
     return this.request(`/simulations/${simulationId}/report`)
   }
 
-  // Team
-  async getTeam() { return this.request('/team') }
-  async getTeamMembers() { return this.request('/team/members') }
+  // Team — CRUD
+  async createTeam(data) { return this.request('/team', { method: 'POST', body: JSON.stringify(data) }) }
+  async getTeams() { return this.request('/teams') }
+  async getTeam(id) { return this.request(`/team/${id}`) }
+  async updateTeam(id, data) { return this.request(`/team/${id}`, { method: 'PATCH', body: JSON.stringify(data) }) }
+  async deleteTeam(id) { return this.request(`/team/${id}`, { method: 'DELETE' }) }
+
+  // Team — Members
+  async getTeamMembers(id) { return this.request(`/team/${id}/members`) }
+  async removeTeamMember(teamId, userId) { return this.request(`/team/${teamId}/members/${userId}`, { method: 'DELETE' }) }
+  async updateTeamMemberRole(teamId, userId, role) { return this.request(`/team/${teamId}/members/${userId}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }) }
+
+  // Team — Invites
+  async inviteTeamMember(teamId, data) { return this.request(`/team/${teamId}/invite`, { method: 'POST', body: JSON.stringify(data) }) }
+  async getTeamInvites(teamId) { return this.request(`/team/${teamId}/invites`) }
+  async revokeTeamInvite(teamId, inviteId) { return this.request(`/team/${teamId}/invites/${inviteId}`, { method: 'DELETE' }) }
+  async acceptTeamInvite(token) { return this.request('/team/invite/accept', { method: 'POST', body: JSON.stringify({ token }) }) }
+  async declineTeamInvite(token) { return this.request('/team/invite/decline', { method: 'POST', body: JSON.stringify({ token }) }) }
+  async getMyInvites() { return this.request('/team/invites/me') }
+
+  // Team — Designs
+  async getTeamDesigns(teamId) { return this.request(`/team/${teamId}/designs`) }
+  async createTeamDesign(teamId, data) { return this.request(`/team/${teamId}/designs`, { method: 'POST', body: JSON.stringify(data) }) }
+  async importDesignToTeam(teamId, designId) { return this.request(`/team/${teamId}/designs/import`, { method: 'POST', body: JSON.stringify({ designId }) }) }
+  async removeDesignFromTeam(teamId, designId) { return this.request(`/team/${teamId}/designs/${designId}`, { method: 'DELETE' }) }
+
+  // Legacy — kept for backward compatibility
   async inviteMember(data) { return this.request('/team/invite', { method: 'POST', body: JSON.stringify(data) }) }
   async removeMember(id) { return this.request(`/team/members/${id}`, { method: 'DELETE' }) }
   async updateMemberRole(id, role) { return this.request(`/team/members/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }) }
