@@ -116,30 +116,107 @@ export async function assertDesignOwnership(req, designId) {
   return design
 }
 
+export async function assertDesignAccess(req, designId) {
+  const design = await prisma.design.findUnique({
+    where: { id: designId },
+    include: {
+      team: {
+        select: {
+          members: {
+            where: { userId: req.dbUser.id },
+            select: { role: true },
+          },
+        },
+      },
+    },
+  })
+
+  if (!design) {
+    const err = new Error('Design not found')
+    err.status = 404
+    throw err
+  }
+
+  if (design.ownerId === req.dbUser.id) return design
+  if (design.teamId && design.team?.members?.length > 0) return design
+
+  const err = new Error('Access denied')
+  err.status = 403
+  throw err
+}
+
+export async function assertDesignWriteAccess(req, designId) {
+  const design = await prisma.design.findUnique({
+    where: { id: designId },
+    include: {
+      team: {
+        select: {
+          members: {
+            where: { userId: req.dbUser.id },
+            select: { role: true },
+          },
+        },
+      },
+    },
+  })
+
+  if (!design) {
+    const err = new Error('Design not found')
+    err.status = 404
+    throw err
+  }
+
+  if (design.ownerId === req.dbUser.id) return design
+  if (
+    design.teamId &&
+    design.team?.members?.length > 0 &&
+    ['owner', 'admin'].includes(design.team.members[0].role)
+  ) {
+    return design
+  }
+
+  const err = new Error('Access denied')
+  err.status = 403
+  throw err
+}
+
+export async function requireTeamRole(req, teamId, allowedRoles) {
+  const membership = await prisma.teamMember.findUnique({
+    where: { teamId_userId: { teamId, userId: req.dbUser.id } },
+    select: { role: true },
+  })
+
+  if (!membership || !allowedRoles.includes(membership.role)) {
+    const err = new Error('Access denied')
+    err.status = 403
+    throw err
+  }
+
+  return membership
+}
+
 export async function assertSimulationOwnership(req, simulationId) {
   const simulation = await prisma.simulation.findUnique({
     where: { id: simulationId },
-    include: { design: { select: { ownerId: true } } },
+    select: { designId: true },
   })
-  if (!simulation || simulation.design.ownerId !== req.dbUser.id) {
-    const exists = !!simulation
-    const err = new Error(exists ? 'Access denied' : 'Simulation not found')
-    err.status = exists ? 403 : 404
+  if (!simulation) {
+    const err = new Error('Simulation not found')
+    err.status = 404
     throw err
   }
-  return simulation
+  return assertDesignAccess(req, simulation.designId)
 }
 
 export async function assertReportOwnership(req, reportId) {
   const report = await prisma.simulationReport.findUnique({
     where: { id: reportId },
-    include: { design: { select: { ownerId: true } } },
+    select: { designId: true },
   })
-  if (!report || report.design.ownerId !== req.dbUser.id) {
-    const exists = !!report
-    const err = new Error(exists ? 'Access denied' : 'Report not found')
-    err.status = exists ? 403 : 404
+  if (!report) {
+    const err = new Error('Report not found')
+    err.status = 404
     throw err
   }
-  return report
+  return assertDesignAccess(req, report.designId)
 }

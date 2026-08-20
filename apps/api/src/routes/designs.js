@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../lib/db.js'
-import { assertDesignOwnership } from '../middleware/tenantContext.js'
+import { assertDesignAccess, assertDesignWriteAccess, requireTeamRole } from '../middleware/tenantContext.js'
 import { logAuditEvent } from '../simulation/utils/audit.js'
 import { logger } from '../lib/logger.js'
 import { cache } from '../lib/redis.js'
@@ -20,8 +20,8 @@ function getClientInfo(req) {
 
 async function invalidateDesignCache(ownerId, designId) {
   await cache.del(`designs:list:${ownerId}`)
-  await cache.del(`design:${designId}`)
-  await cache.del(`design:overview:${designId}`)
+  await cache.invalidatePattern(`design:${designId}:*`)
+  await cache.invalidatePattern(`design:overview:${designId}:*`)
 }
 
 // ============================================================================
@@ -33,9 +33,14 @@ router.get('/', async (req, res) => {
     let cached = await cache.get(cacheKey)
     if (cached) return res.json(cached)
 
-    // 1. Lightweight design list (uses designs_owner_updated_idx)
+    // 1. Lightweight design list (personal + team designs)
     const designs = await prisma.design.findMany({
-      where: { ownerId: req.dbUser.id },
+      where: {
+        OR: [
+          { ownerId: req.dbUser.id },
+          { team: { members: { some: { userId: req.dbUser.id } } } },
+        ],
+      },
       orderBy: { updatedAt: 'desc' },
       take: 50,
       select: {
@@ -127,6 +132,7 @@ router.get('/', async (req, res) => {
         simulations: d._count.simulations,
         latestSimulation: simMap.get(d.id) || null,
         latestReport: reportMap.get(d.id) || null,
+        teamId: d.teamId,
         team:
           team?.members?.map((m) => ({
             name: m.user.name,
@@ -154,12 +160,13 @@ router.get('/', async (req, res) => {
 // ============================================================================
 router.get('/:id', async (req, res) => {
   try {
-    const cacheKey = `design:${req.params.id}`
+    const cacheKey = `design:${req.params.id}:${req.dbUser.id}`
     let design = await cache.get(cacheKey)
 
     if (!design) {
-      design = await prisma.design.findFirst({
-        where: { id: req.params.id, ownerId: req.dbUser.id },
+      design = await assertDesignAccess(req, req.params.id)
+      design = await prisma.design.findUnique({
+        where: { id: req.params.id },
         include: {
           blocks: true,
           edges: true,
@@ -211,16 +218,21 @@ router.get('/:id', async (req, res) => {
 // ============================================================================
 router.post('/', async (req, res) => {
   try {
-    const { name, description, repoUrl, repoBranch } = req.body
-    const design = await prisma.design.create({
-      data: {
-        name: name || 'Untitled Design',
-        description,
-        repoUrl,
-        repoBranch: repoBranch || 'main',
-        ownerId: req.dbUser.id,
-      },
-    })
+    const { name, description, repoUrl, repoBranch, teamId } = req.body
+    const data = {
+      name: name || 'Untitled Design',
+      description,
+      repoUrl,
+      repoBranch: repoBranch || 'main',
+      ownerId: req.dbUser.id,
+    }
+
+    if (teamId) {
+      await requireTeamRole(req, teamId, ['owner', 'admin'])
+      data.teamId = teamId
+    }
+
+    const design = await prisma.design.create({ data })
     await invalidateDesignCache(req.dbUser.id, design.id)
     await logAuditEvent({
       userId: req.dbUser.id,
@@ -242,12 +254,12 @@ router.post('/', async (req, res) => {
 router.patch('/:id', async (req, res) => {
   try {
     const { name, description, status, repoUrl, repoBranch } = req.body
-    await assertDesignOwnership(req, req.params.id)
-    const design = await prisma.design.updateMany({
-      where: { id: req.params.id, ownerId: req.dbUser.id },
+    await assertDesignWriteAccess(req, req.params.id)
+    const design = await prisma.design.update({
+      where: { id: req.params.id },
       data: { name, description, status, repoUrl, repoBranch, updatedAt: new Date() },
     })
-    if (design.count === 0) return res.status(404).json({ error: 'Design not found' })
+    if (!design) return res.status(404).json({ error: 'Design not found' })
     await invalidateDesignCache(req.dbUser.id, req.params.id)
     await logAuditEvent({
       userId: req.dbUser.id,
@@ -267,9 +279,9 @@ router.patch('/:id', async (req, res) => {
 // ============================================================================
 // BATCHED CANVAS SYNC — replaces N+1 sequential upserts
 // ============================================================================
-async function syncCanvasData(designId, userId, nodes, edges) {
-  const design = await prisma.design.findFirst({
-    where: { id: designId, ownerId: userId },
+async function syncCanvasData(designId, nodes, edges) {
+  const design = await prisma.design.findUnique({
+    where: { id: designId },
   })
   if (!design) {
     const err = new Error('Design not found')
@@ -356,7 +368,8 @@ async function syncCanvasData(designId, userId, nodes, edges) {
 router.post('/:id/canvas', async (req, res) => {
   try {
     const { nodes, edges } = req.body
-    await syncCanvasData(req.params.id, req.dbUser.id, nodes, edges)
+    await assertDesignWriteAccess(req, req.params.id)
+    await syncCanvasData(req.params.id, nodes, edges)
     await invalidateDesignCache(req.dbUser.id, req.params.id)
     await logAuditEvent({
       userId: req.dbUser.id,
@@ -376,7 +389,8 @@ router.post('/:id/canvas', async (req, res) => {
 router.post('/:id/autosave', async (req, res) => {
   try {
     const { nodes, edges } = req.body
-    await syncCanvasData(req.params.id, req.dbUser.id, nodes, edges)
+    await assertDesignWriteAccess(req, req.params.id)
+    await syncCanvasData(req.params.id, nodes, edges)
     await invalidateDesignCache(req.dbUser.id, req.params.id)
     res.json({ success: true })
   } catch (err) {
@@ -391,8 +405,8 @@ router.post('/:id/autosave', async (req, res) => {
 // ============================================================================
 router.delete('/:id', async (req, res) => {
   try {
-    await assertDesignOwnership(req, req.params.id)
-    await prisma.design.deleteMany({ where: { id: req.params.id, ownerId: req.dbUser.id } })
+    await assertDesignWriteAccess(req, req.params.id)
+    await prisma.design.delete({ where: { id: req.params.id } })
     await invalidateDesignCache(req.dbUser.id, req.params.id)
     await logAuditEvent({
       userId: req.dbUser.id,
@@ -414,12 +428,13 @@ router.delete('/:id', async (req, res) => {
 // ============================================================================
 router.get('/:id/overview', async (req, res) => {
   try {
-    const cacheKey = `design:overview:${req.params.id}`
+    const cacheKey = `design:overview:${req.params.id}:${req.dbUser.id}`
     let cached = await cache.get(cacheKey)
     if (cached) return res.json(cached)
 
-    const design = await prisma.design.findFirst({
-      where: { id: req.params.id, ownerId: req.dbUser.id },
+    await assertDesignAccess(req, req.params.id)
+    const design = await prisma.design.findUnique({
+      where: { id: req.params.id },
       include: {
         blocks: { select: { id: true, label: true, type: true, x: true, y: true, color: true } },
         edges: { select: { id: true, sourceId: true, targetId: true, connectionType: true } },
@@ -530,8 +545,9 @@ router.get('/:id/overview', async (req, res) => {
 // ============================================================================
 router.get('/:id/reports', async (req, res) => {
   try {
-    const design = await prisma.design.findFirst({
-      where: { id: req.params.id, ownerId: req.dbUser.id },
+    await assertDesignAccess(req, req.params.id)
+    const design = await prisma.design.findUnique({
+      where: { id: req.params.id },
       select: { id: true, name: true },
     })
     if (!design) return res.status(404).json({ error: 'Design not found' })
@@ -586,7 +602,7 @@ router.get('/:id/reports', async (req, res) => {
 // ============================================================================
 router.get('/:id/audit-logs', async (req, res) => {
   try {
-    await assertDesignOwnership(req, req.params.id)
+    await assertDesignWriteAccess(req, req.params.id)
     const logs = await prisma.auditLog.findMany({
       where: { designId: req.params.id },
       orderBy: { createdAt: 'desc' },
@@ -632,9 +648,11 @@ router.get('/reports/by-simulation/:simId', async (req, res) => {
         },
       },
     })
-    if (!report || report.design.ownerId !== req.dbUser.id) {
+    if (!report) {
       return res.status(404).json({ error: 'Report not found' })
     }
+
+    await assertDesignAccess(req, report.designId)
     res.json({
       ...report,
       designName: report.design?.name,

@@ -14,6 +14,8 @@ import { NotFound } from '@/pages/NotFound'
 import { LoadingPage } from '@/components/ui/LoadingSpinner'
 import { ReportPage } from '@/pages/ReportPage'
 import { Team } from '@/pages/Team'
+import { TeamOverview } from '@/pages/TeamOverview'
+import { InviteAcceptPage } from '@/pages/InviteAcceptPage'
 import { Templates } from '@/pages/Templates'
 import ErrorBoundary from '@/components/ErrorBoundary'
 
@@ -35,6 +37,7 @@ export default function App() {
     <ToastProvider>
       <ErrorBoundary>
         <Routes>
+          <Route path="team/invite" element={<InviteAcceptPage />} />
           <Route
             path="/login"
             element={isSignedIn ? <Navigate to="/dashboard" replace /> : <Login />}
@@ -54,6 +57,7 @@ export default function App() {
             <Route path="settings" element={<Settings />} />
             <Route path="reports" element={<ReportPage />} />
             <Route path="team" element={<Team />} />
+            <Route path="teams/:id" element={<TeamOverview />} />
             <Route path="templates" element={<Templates />} />
           </Route>
 
