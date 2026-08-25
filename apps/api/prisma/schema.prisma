@@ -180,7 +180,6 @@ model Simulation {
   designId       String
   userId         String
 
-  // === EXISTING FIELDS (preserved exactly) ===
   status         String   @default("running")
   progress       Float    @default(0)
   trafficPattern String   @default("steady")
@@ -196,7 +195,6 @@ model Simulation {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  // === NEW FIELDS (added for production-grade simulation) ===
   monteCarloPasses  Int      @default(1)
   confidenceLevel   Float    @default(0.95)
   growthScenario    String?
@@ -206,24 +204,25 @@ model Simulation {
   reportVersion     String   @default("1.0.0")
   inputSnapshot     Json?
   assumptions       Json?
-  validationResult    Json?
-  reliabilityAnalysis Json?
-  scalabilityAnalysis Json?
-  costAnalysis        Json?
-  securityAnalysis    Json?
-  failureScenarios    Json?
-  metricExplanations  Json?
-  confidenceScore     Float    @default(0)
-  actualDurationMs    Int?
-  errorMessage        String?
-  errorStack          String?
+  validationResult  Json?
+  confidenceScore   Float    @default(0)
+  actualDurationMs  Int?
+  errorMessage      String?
+  errorStack        String?
 
-  // --- P6 Batch 2: Top-level cost tracking (queryable without JSON parsing) ---
+  // --- REMOVED (now live only on SimulationReport) ---
+  // reliabilityAnalysis Json?
+  // scalabilityAnalysis Json?
+  // costAnalysis        Json?
+  // securityAnalysis    Json?
+  // failureScenarios    Json?
+  // metricExplanations  Json?
+
+  // --- P6 Batch 2: Top-level cost scalars for SQL filtering ---
   totalSimulatedCost    Float? @default(0)
   projectedMonthlyCost  Float? @default(0)
   projectedAnnualCost   Float? @default(0)
 
-  // Relations
   design   Design             @relation(fields: [designId], references: [id], onDelete: Cascade)
   user     User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   reports  SimulationReport[]
@@ -233,9 +232,9 @@ model Simulation {
   @@index([userId])
   @@index([status])
   @@index([createdAt])
-  @@index([designId, status])     // P5.5: common query pattern
-  @@index([designId, createdAt])  // P5.5: list queries
-  @@index([projectedMonthlyCost]) // P6: cost-optimized design queries
+  @@index([designId, status])
+  @@index([designId, createdAt])
+  @@index([projectedMonthlyCost])
   @@map("simulations")
 }
 

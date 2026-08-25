@@ -96,8 +96,15 @@ app.get('/health', asyncHandler(async (req, res) => {
     worker: 'unknown',
   }
 
+  // DB check with 5s timeout — prevents Prisma pool exhaustion from killing the container
   try {
-    await prisma.$queryRaw`SELECT 1`
+    const dbCheck = Promise.race([
+      prisma.$queryRaw`SELECT 1`,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('DB check timeout')), 5000)
+      ),
+    ])
+    await dbCheck
     health.database = 'ok'
   } catch (err) {
     health.database = 'error'
@@ -144,11 +151,11 @@ app.use('/analyze', reverseEngineRoutes)
 
 // RFC flat routes: /teams (list) and /team (create) need to reach the same router
 app.get('/teams', asyncHandler(tenantContext), (req, res, next) => {
-  req.url = '/teams'   // rewrite so team.js router.get('/teams') catches it
+  req.url = '/teams'
   teamRoutes(req, res, next)
 })
 app.post('/team', asyncHandler(tenantContext), (req, res, next) => {
-  req.url = '/'        // rewrite so team.js router.post('/') catches it
+  req.url = '/'
   teamRoutes(req, res, next)
 })
 

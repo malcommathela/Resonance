@@ -121,7 +121,6 @@ export const Sidebar = () => {
       <div className="border-t border-resonance-border p-3">
         <ProfileDropdown
           user={user}
-          plan="Pro Plan"
           onSignOut={logout}
         />
       </div>

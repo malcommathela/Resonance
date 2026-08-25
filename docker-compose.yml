@@ -1,26 +1,12 @@
 # ============================================================================
-# Resonance Platform — L06 Cloud & Compute + L08 Security
-# ============================================================================
-# USAGE:
-#   docker compose up -d api worker redis
-#
-# SECURITY NOTES:
-#   • Never commit credentials in this file. Use .env or Docker secrets.
-#   • Redis port is NOT exposed to host in production.
-#   • Supabase connection string goes in apps/api/.env (DATABASE_URL).
+# Resonance Platform — Local Docker (No Gateway)
 # ============================================================================
 
 services:
-  # ---------------------------------------------------------------------------
-  # REDIS — Queue + Pub/Sub + Rate Limiting
-  # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
     container_name: resonance-redis
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
-    # L08: Do NOT expose ports in production. Uncomment for local dev only.
-    # ports:
-    #   - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -29,18 +15,9 @@ services:
       timeout: 3s
       retries: 5
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-        reservations:
-          memory: 64M
     networks:
       - resonance
 
-  # ---------------------------------------------------------------------------
-  # API SERVER — L06: HTTP request handler
-  # ---------------------------------------------------------------------------
   api:
     build:
       context: .
@@ -61,24 +38,15 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 256M
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
       interval: 30s
-      timeout: 5s
-      start_period: 15s
-      retries: 3
+      timeout: 10s
+      start_period: 120s
+      retries: 5
     networks:
       - resonance
 
-  # ---------------------------------------------------------------------------
-  # SIMULATION WORKER — L06: Background job processor
-  # ---------------------------------------------------------------------------
   worker:
     build:
       context: .
@@ -101,12 +69,6 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: ${WORKER_MEMORY_LIMIT:-2G}
-        reservations:
-          memory: 512M
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3002/health"]
       interval: 10s
@@ -115,16 +77,10 @@ services:
     networks:
       - resonance
 
-# ============================================================================
-# VOLUMES
-# ============================================================================
 volumes:
   redis_data:
     driver: local
 
-# ============================================================================
-# NETWORKS — L08: Isolated bridge network
-# ============================================================================
 networks:
   resonance:
     driver: bridge

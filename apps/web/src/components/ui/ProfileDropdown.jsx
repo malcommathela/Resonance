@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Link } from 'react-router-dom'
-import { CreditCard, FileText, LogOut, Settings, User, Users } from 'lucide-react'
+import { FileText, LogOut, Settings, User, Users } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,20 +13,18 @@ import { cn } from '@/lib/utils'
 const fallbackAvatar = (seed = 'resonance-user') =>
   `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed)}`
 
-export function ProfileDropdown({ user, plan = 'Pro Plan', onSignOut, className }) {
+export function ProfileDropdown({ user, onSignOut, className }) {
   const [isOpen, setIsOpen] = React.useState(false)
 
   const profile = {
     name: user?.name || user?.firstName || 'User',
     email: user?.email || '',
     avatar: user?.avatar || fallbackAvatar(user?.email || user?.name || 'resonance-user'),
-    plan: user?.plan || plan,
   }
 
   const menuItems = [
     { label: 'Profile', href: '/settings', icon: <User className="h-4 w-4" /> },
     { label: 'Team', href: '/team', icon: <Users className="h-4 w-4" /> },
-    { label: 'Subscription', value: profile.plan, href: '/settings', icon: <CreditCard className="h-4 w-4" /> },
     { label: 'Settings', href: '/settings', icon: <Settings className="h-4 w-4" /> },
     { label: 'Terms & Policies', href: '#', icon: <FileText className="h-4 w-4" />, external: true },
   ]
@@ -57,7 +55,7 @@ export function ProfileDropdown({ user, plan = 'Pro Plan', onSignOut, className 
                   {profile.name}
                 </div>
                 <div className="truncate text-xs leading-tight tracking-tight text-resonance-text-muted">
-                  {profile.email || profile.plan}
+                  {profile.email}
                 </div>
               </div>
             </button>
@@ -121,13 +119,6 @@ export function ProfileDropdown({ user, plan = 'Pro Plan', onSignOut, className 
                         <span className="whitespace-nowrap text-sm font-medium leading-tight tracking-tight text-resonance-text-primary">
                           {item.label}
                         </span>
-                      </div>
-                      <div className="ml-auto shrink-0">
-                        {item.value && (
-                          <span className="rounded-md border border-resonance-accent/20 bg-resonance-accent/15 px-2 py-1 text-xs font-medium tracking-tight text-resonance-text-primary">
-                            {item.value}
-                          </span>
-                        )}
                       </div>
                     </Link>
                   )}

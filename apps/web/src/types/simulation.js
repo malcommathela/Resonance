@@ -366,10 +366,6 @@
  * @property {Array<SimulationEvent>} [events] — Key events (sampled for large sims)
  * @property {Array<SimulatedRequest>} [sampledRequests] — Sample of requests for analysis
  * @property {ValidationResult} validationResult — Pre-simulation validation
- * @property {ReliabilityAnalysis} reliabilityAnalysis
- * @property {ScalabilityAnalysis} scalabilityAnalysis
- * @property {CostAnalysis} [costAnalysis]
- * @property {SecurityAnalysis} [securityAnalysis]
  * @property {number} confidenceScore — 0.0-1.0 trust in results
  * @property {Object} assumptions — Assumptions used
  * @property {string} engineVersion
@@ -377,11 +373,9 @@
  * @property {Date} startedAt
  * @property {Date} [completedAt]
  * @property {string} [errorMessage] — If status is 'failed'
- */
-
-/**
- * @typedef {Object} PerBlockMetrics
- * @property {Object<string, BlockMetrics>} blocks — Map of blockId -> metrics
+ *
+ * NOTE: Derived analyses (reliability, scalability, cost, security) are
+ * available on SimulationReport, not on SimulationResult.
  */
 
 /**

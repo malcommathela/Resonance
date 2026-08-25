@@ -367,21 +367,30 @@ router.post('/:id/invite', async (req, res) => {
     const team = await prisma.team.findUnique({ where: { id: teamId } })
     if (!team) return res.status(404).json({ error: 'Team not found' })
 
-    try {
-      await sendTeamInvite({
-        to: email,
-        teamName: team.name,
-        inviterName: req.dbUser.name || req.dbUser.email,
-        acceptUrl: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/team/invite?token=${token}`,
-      })
-    } catch (err) {
-      logger.error({ err: err.message, teamId, email }, 'Failed to send team invite email')
-      await prisma.teamInvite.delete({ where: { id: invite.id } }).catch(() => {})
-      return res.status(500).json({ error: 'Failed to send invitation email' })
-    }
+    // ── Fire-and-forget email: respond immediately, send in background ──
+    const acceptUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/team/invite?token=${token}`
+
+    sendTeamInvite({
+      to: email,
+      teamName: team.name,
+      inviterName: req.dbUser.name || req.dbUser.email,
+      acceptUrl,
+    }).catch((err) => {
+      // Background failure: log it, but do NOT delete the invite or fail the request.
+      // The invite still exists in the DB; admin can resend from the UI if needed.
+      logger.error(
+        { err: err?.message || err, teamId, email, inviteId: invite.id },
+        'Team invite email failed (background)'
+      )
+    })
 
     cache.del(`team:${teamId}:invites`).catch(() => {})
-    res.status(201).json({ success: true, inviteId: invite.id })
+
+    res.status(201).json({
+      success: true,
+      inviteId: invite.id,
+      emailSent: true, // Optimistic: we trust SMTP will work; user doesn't wait
+    })
   } catch (err) {
     const status = err.status || 500
     logger.error({ err: err.message, teamId: req.params.id, userId: req.dbUser.id }, 'Failed to invite team member')
@@ -427,7 +436,7 @@ router.post('/invite/accept', async (req, res) => {
     })
     if (existingMembership) {
       await prisma.teamInvite.delete({ where: { id: invite.id } }).catch(() => {})
-      return res.status(409).json({ error: 'User is already a team member' })
+      return res.status(409).json({ error: 'User is already a team member', teamId: invite.teamId })
     }
 
     await prisma.teamMember.create({
