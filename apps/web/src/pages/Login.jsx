@@ -1,17 +1,21 @@
 import React, { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { SignIn, SignUp, useAuth } from '@clerk/clerk-react'
 import { Zap } from 'lucide-react'
 
 export const Login = ({ mode = 'signIn' }) => {
   const navigate = useNavigate()
   const { isSignedIn } = useAuth()
+  const [searchParams] = useSearchParams()
+
+  // Read where the user originally wanted to go
+  const redirectUrl = searchParams.get('redirect') || '/dashboard'
 
   useEffect(() => {
     if (isSignedIn) {
-      navigate('/dashboard', { replace: true })
+      navigate(redirectUrl, { replace: true })
     }
-  }, [isSignedIn, navigate])
+  }, [isSignedIn, navigate, redirectUrl])
 
   if (isSignedIn) return null
 
@@ -72,7 +76,7 @@ export const Login = ({ mode = 'signIn' }) => {
           <div className="mt-8 fade-in-up stagger-2">
             <AuthComponent
               routing="hash"
-              redirectUrl="/dashboard"
+              redirectUrl={redirectUrl}
               appearance={clerkAppearance}
             />
           </div>

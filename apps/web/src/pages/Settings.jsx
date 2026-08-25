@@ -35,16 +35,11 @@ const tabs = [
   { id: 'integrations', label: 'Integrations', icon: Plug },
 ]
 
-const accentColors = [
-  '#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444',
-  '#ec4899', '#06b6d4', '#84cc16', '#6366f1', '#14b8a6',
-]
-
 export const Settings = () => {
   const [activeTab, setActiveTab] = useState('profile')
   const [isLoading, setIsLoading] = useState(true)
   const { user, logout, updateUser } = useAuthStore()
-  const { theme, setTheme, accentColor, setAccentColor, animationsEnabled, setAnimationsEnabled } = useThemeStore()
+  const { theme, setTheme, animationsEnabled, setAnimationsEnabled } = useThemeStore()
   const contentRef = useRef(null)
 
   useEffect(() => {
@@ -59,7 +54,7 @@ export const Settings = () => {
   const renderContent = () => {
     switch (activeTab) {
       case 'profile': return <ProfileSettings user={user} updateUser={updateUser} />
-      case 'appearance': return <AppearanceSettings theme={theme} setTheme={setTheme} accentColor={accentColor} setAccentColor={setAccentColor} animationsEnabled={animationsEnabled} setAnimationsEnabled={setAnimationsEnabled} />
+      case 'appearance': return <AppearanceSettings theme={theme} setTheme={setTheme} animationsEnabled={animationsEnabled} setAnimationsEnabled={setAnimationsEnabled} />
       case 'notifications': return <NotificationSettings />
       case 'security': return <SecuritySettings />
       case 'integrations': return <IntegrationSettings />
@@ -140,7 +135,7 @@ const ProfileSettings = ({ user, updateUser }) => {
   )
 }
 
-const AppearanceSettings = ({ theme, setTheme, accentColor, setAccentColor, animationsEnabled, setAnimationsEnabled }) => (
+const AppearanceSettings = ({ theme, setTheme, animationsEnabled, setAnimationsEnabled }) => (
   <div className="space-y-6">
     <div><h2 className="text-lg font-semibold text-resonance-text-primary mb-1">Appearance</h2><p className="text-sm text-resonance-text-secondary">Customize how Resonance looks and feels</p></div>
     <Card className="p-6">
@@ -156,23 +151,6 @@ const AppearanceSettings = ({ theme, setTheme, accentColor, setAccentColor, anim
             </button>
           )
         })}
-      </div>
-    </Card>
-    <Card className="p-6">
-      <h3 className="text-sm font-semibold text-resonance-text-primary mb-4">Accent Color</h3>
-      <div className="flex flex-wrap gap-3">
-        {accentColors.map(color => (
-          <button key={color} onClick={() => setAccentColor(color)} className={`w-10 h-10 rounded-full transition-all ${accentColor === color ? 'ring-2 ring-offset-2 ring-offset-resonance-bg-elevated ring-resonance-text-primary scale-110' : 'hover:scale-110'}`} style={{ backgroundColor: color }}>
-            {accentColor === color && <Check size={16} className="text-white mx-auto" />}
-          </button>
-        ))}
-      </div>
-      <div className="mt-4 flex items-center gap-3">
-        <span className="text-sm text-resonance-text-secondary">Custom Color</span>
-        <div className="flex items-center gap-2">
-          <input type="color" value={accentColor} onChange={(e) => setAccentColor(e.target.value)} className="w-8 h-8 rounded-lg border border-resonance-border cursor-pointer" />
-          <input type="text" value={accentColor} onChange={(e) => setAccentColor(e.target.value)} className="w-24 px-2 py-1 bg-resonance-bg-tertiary border border-resonance-border rounded-lg text-xs font-mono text-resonance-text-primary" />
-        </div>
       </div>
     </Card>
     <Card className="p-6">
