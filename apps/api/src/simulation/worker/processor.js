@@ -563,6 +563,7 @@ export async function runSimulationProcessor(job) {
     })
 
     // Update simulation record with P3 + P6 results
+        // Update simulation record with raw P2/P6 results only
     await prisma.simulation.update({
       where: { id: simId },
       data: {
@@ -572,16 +573,18 @@ export async function runSimulationProcessor(job) {
         globalMetrics: aggregated.globalMetrics,
         currentRps: aggregated.avgRps,
         actualDurationMs,
-        reliabilityAnalysis: p3Results.reliabilityAnalysis,
-        scalabilityAnalysis: p3Results.scalabilityAnalysis,
-        costAnalysis: p3Results.costAnalysis,
-        securityAnalysis: p3Results.securityAnalysis,
         confidenceScore: p3Results.confidenceScore,
-        metricExplanations: p3Results.explainability,
-        // P6: persist cost fields to DB
+        // P6: persist cost scalars to DB for list-view filtering
         totalSimulatedCost: aggregated.globalMetrics?.totalSimulatedCost || 0,
         projectedMonthlyCost: aggregated.globalMetrics?.projectedMonthlyCost || 0,
         projectedAnnualCost: aggregated.globalMetrics?.projectedAnnualCost || 0,
+        // REMOVED — these now live exclusively on SimulationReport
+        // reliabilityAnalysis: p3Results.reliabilityAnalysis,
+        // scalabilityAnalysis: p3Results.scalabilityAnalysis,
+        // costAnalysis: p3Results.costAnalysis,
+        // securityAnalysis: p3Results.securityAnalysis,
+        // metricExplanations: p3Results.explainability,
+        // failureScenarios is also removed from Simulation
       }
     })
 

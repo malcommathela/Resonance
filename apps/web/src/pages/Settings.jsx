@@ -4,7 +4,6 @@ import {
   Palette,
   Bell,
   Shield,
-  CreditCard,
   Plug,
   ChevronRight,
   Camera,
@@ -17,7 +16,6 @@ import {
   Github,
   AlertCircle,
   Loader2,
-  ExternalLink,
 } from 'lucide-react'
 import { useAuth } from '@clerk/clerk-react'
 import { useAuthStore } from '@/stores/authStore'
@@ -34,7 +32,6 @@ const tabs = [
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'security', label: 'Security', icon: Shield },
-  { id: 'billing', label: 'Billing', icon: CreditCard },
   { id: 'integrations', label: 'Integrations', icon: Plug },
 ]
 
@@ -50,7 +47,6 @@ export const Settings = () => {
   const { theme, setTheme, accentColor, setAccentColor, animationsEnabled, setAnimationsEnabled } = useThemeStore()
   const contentRef = useRef(null)
 
-  // Simulate initial load for skeleton demo
   useEffect(() => {
     const timer = setTimeout(() => setIsLoading(false), 300)
     return () => clearTimeout(timer)
@@ -66,7 +62,6 @@ export const Settings = () => {
       case 'appearance': return <AppearanceSettings theme={theme} setTheme={setTheme} accentColor={accentColor} setAccentColor={setAccentColor} animationsEnabled={animationsEnabled} setAnimationsEnabled={setAnimationsEnabled} />
       case 'notifications': return <NotificationSettings />
       case 'security': return <SecuritySettings />
-      case 'billing': return <BillingSettings user={user} />
       case 'integrations': return <IntegrationSettings />
       default: return null
     }
@@ -110,9 +105,6 @@ export const Settings = () => {
     </div>
   )
 }
-
-// --- Profile, Appearance, Notifications, Security, Billing sections unchanged ---
-// (Keeping them minimal for brevity, they work the same as before)
 
 const ProfileSettings = ({ user, updateUser }) => {
   const [name, setName] = useState(user?.name || '')
@@ -238,41 +230,9 @@ const SecuritySettings = () => (
   </div>
 )
 
-const BillingSettings = ({ user }) => {
-  const tiers = [
-    { id: 'free', name: 'Free', price: '$0', features: ['3 designs', '3 simulations/day', '1 team member'], current: user?.tier === 'free' },
-    { id: 'engineer', name: 'Engineer', price: '$29/mo', features: ['Unlimited designs', 'Unlimited simulations', '5 team members', 'AI suggestions'], current: user?.tier === 'engineer' },
-    { id: 'team', name: 'Team', price: '$79/mo', features: ['Everything in Engineer', '20 team members', 'GitHub sync', 'Priority support'], current: user?.tier === 'team' },
-  ]
-  return (
-    <div className="space-y-6">
-      <div><h2 className="text-lg font-semibold text-resonance-text-primary mb-1">Billing</h2><p className="text-sm text-resonance-text-secondary">Manage your subscription and billing</p></div>
-      <div className="grid grid-cols-3 gap-4">
-        {tiers.map(tier => (
-          <Card key={tier.id} className={`p-5 relative ${tier.current ? 'ring-2 ring-resonance-accent' : ''}`}>
-            {tier.current && <div className="absolute -top-2 left-4 px-2 py-0.5 bg-resonance-accent text-white text-xs font-medium rounded-full">Current</div>}
-            <h3 className="text-lg font-bold text-resonance-text-primary">{tier.name}</h3>
-            <p className="text-2xl font-bold text-resonance-accent mt-1">{tier.price}</p>
-            <ul className="mt-4 space-y-2">
-              {tier.features.map((feature, i) => (
-                <li key={i} className="flex items-center gap-2 text-sm text-resonance-text-secondary"><Check size={14} className="text-green-500 shrink-0" />{feature}</li>
-              ))}
-            </ul>
-            {!tier.current && <Button className="w-full mt-4" size="sm" variant="secondary">Upgrade</Button>}
-          </Card>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// ============================================================
-// INTEGRATION SETTINGS — SIMPLIFIED (GitHub OAuth only)
-// ============================================================
-
 const IntegrationSettings = () => {
   const { user: clerkUser } = useAuth()
-  const [githubConnected, setGithubConnected] = useState(null) // null = loading
+  const [githubConnected, setGithubConnected] = useState(null)
 
   useEffect(() => {
     checkGitHubStatus()
@@ -287,7 +247,6 @@ const IntegrationSettings = () => {
     }
   }
 
-  // Check if user has GitHub as a connected account in Clerk
   const hasGitHubAccount = clerkUser?.externalAccounts?.some(
     acc => acc.provider === 'github' || acc.provider === 'oauth_github'
   )
@@ -303,7 +262,6 @@ const IntegrationSettings = () => {
         <p className="text-sm text-resonance-text-secondary">Connect Resonance with your favorite tools</p>
       </div>
 
-      {/* GitHub Integration Card */}
       <Card className="p-6">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
@@ -380,7 +338,6 @@ const IntegrationSettings = () => {
         )}
       </Card>
 
-      {/* Slack placeholder */}
       <Card className="p-4 flex items-center justify-between opacity-60">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-resonance-bg-tertiary flex items-center justify-center text-sm font-bold text-resonance-text-primary">SL</div>
@@ -389,7 +346,6 @@ const IntegrationSettings = () => {
         <Button variant="secondary" size="sm" disabled>Coming Soon</Button>
       </Card>
 
-      {/* Notion placeholder */}
       <Card className="p-4 flex items-center justify-between opacity-60">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-resonance-bg-tertiary flex items-center justify-center text-sm font-bold text-resonance-text-primary">NO</div>
