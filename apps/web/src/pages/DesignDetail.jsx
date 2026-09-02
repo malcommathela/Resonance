@@ -4,9 +4,10 @@ import {
   ArrowLeft, Pencil, Play, FileText, Settings, GitBranch,
   Clock, Blocks, Activity, ExternalLink, Calendar, Trash2,
   Loader2, Shield, BarChart3, Zap, DollarSign,
-  ChevronRight, LayoutGrid, GitGraph, ScrollText, Save, Plus,
+  ChevronRight, LayoutGrid, GitGraph, ScrollText, Save, Plus, MessageCircle,
 } from 'lucide-react'
 import { useDesignStore } from '@/stores/designStore'
+import { useChatStore } from '@/stores/chatStore'
 import { useToast } from '@/components/ui/Toast'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
@@ -185,6 +186,7 @@ export const DesignDetail = () => {
   const loadOverview = useDesignStore(state => state.loadOverview)
   const loadReports = useDesignStore(state => state.loadReports)
   const loadAuditLogs = useDesignStore(state => state.loadAuditLogs)
+  const startDesignChat = useChatStore(state => state.startDesignChat)
 
   const [activeTab, setActiveTab] = useState('overview')
   const [isSimulating, setIsSimulating] = useState(false)
@@ -415,6 +417,21 @@ export const DesignDetail = () => {
           </div>
 
           <div className="flex items-center gap-2.5 flex-shrink-0">
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                try {
+                  await startDesignChat(design)
+                  navigate('/')
+                } catch (err) {
+                  addToast(err?.message || 'Could not start chat', 'error')
+                }
+              }}
+              className="gap-2"
+            >
+              <MessageCircle size={16} />
+              Chat about this Design
+            </Button>
             <Button
               variant="secondary"
               onClick={() => navigate(`/design/${design.id}`)}

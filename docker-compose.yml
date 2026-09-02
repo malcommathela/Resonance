@@ -9,6 +9,8 @@ services:
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
+    ports:
+      - "6379:6379" # host-run dev API (REDIS_HOST=localhost) shares this cache/queue
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@clerk/clerk-react'
 import { useDesignStore } from '@/stores/designStore'
-import { useThemeStore } from '@/stores/themeStore'
+import { useChatStore } from '@/stores/chatStore'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
@@ -11,10 +11,12 @@ import { GitHubImportModal } from '@/components/canvas/GitHubImportModal'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { DashboardSkeleton } from '@/components/ui/skeletons'
 import {
-  Loader2, Plus, Search, Github, Sun, Moon, Bell, Trash2, X, Layers,
-  FolderOpen, Activity, Zap, DollarSign, Pencil, Copy, Clock, GitBranch
+  Loader2, Plus, Search, Github, Trash2, X, Layers,
+  FolderOpen, Activity, Zap, DollarSign, Pencil, Copy, Clock, GitBranch, MessageCircle,
+  Sun, Moon, Bell
 } from 'lucide-react'
 import { api } from '@/services/api'
+import { useThemeStore } from '@/stores/themeStore'
 
 /* ------------------------------------------------------------------ */
 // Helpers
@@ -81,7 +83,6 @@ const StatusBadge = ({ status }) => {
 export const Dashboard = () => {
   const navigate = useNavigate()
   const { isSignedIn, isLoaded: authLoaded } = useAuth()
-  const { theme, toggleTheme } = useThemeStore()
 
   const designs = useDesignStore(state => state.designs)
   const isLoading = useDesignStore(state => state.isLoading)
@@ -89,6 +90,9 @@ export const Dashboard = () => {
   const createDesign = useDesignStore(state => state.createDesign)
   const deleteDesign = useDesignStore(state => state.deleteDesign)
   const updateDesign = useDesignStore(state => state.updateDesign)
+  const startDesignChat = useChatStore(state => state.startDesignChat)
+  const theme = useThemeStore(state => state.theme)
+  const toggleTheme = useThemeStore(state => state.toggleTheme)
 
   const [showNewModal, setShowNewModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
@@ -307,6 +311,15 @@ export const Dashboard = () => {
     }
   }
 
+  const handleChatAboutDesign = async (design) => {
+    try {
+      await startDesignChat(design)
+      navigate('/')
+    } catch (err) {
+      addToast(err?.message || 'Could not start chat', 'error')
+    }
+  }
+
   const handleDeleteDesign = async (id) => {
     try {
       await deleteDesign(id)
@@ -429,9 +442,7 @@ export const Dashboard = () => {
             >
               <Bell size={18} />
               <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 border-2 border-resonance-bg-primary" />
-            </button>
-
-            <Button onClick={() => setShowImportModal(true)} variant="secondary" className="gap-2">
+            </button>            <Button onClick={() => setShowImportModal(true)} variant="secondary" className="gap-2">
               <Github size={16} />
               Import from GitHub
             </Button>
@@ -613,6 +624,13 @@ export const Dashboard = () => {
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-resonance-text-secondary">Updated {design.lastSim}</span>
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleChatAboutDesign(design) }}
+                          title="Chat about this design"
+                          className="p-1.5 rounded-md text-resonance-text-secondary hover:text-resonance-accent hover:bg-resonance-accent/10 transition-all"
+                        >
+                          <MessageCircle size={14} />
+                        </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); handleEditDesign(design) }}
                           className="p-1.5 rounded-md text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"

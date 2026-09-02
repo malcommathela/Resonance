@@ -22,9 +22,22 @@ router.get('/live', (req, res) => {
 })
 
 // ============================================================================
-// L13: READINESS — Traffic should not route here until all deps are healthy
-// Returns 200 when DB, Redis, and Queue are reachable. 503 otherwise.
+// L13: READINESS — Traffic should not route here until critical deps healthy
+// Database is critical (503 when down). Redis/queue unavailability only
+// degrades the app (caches and locks fail open, Chat spec §7/§47/§116), so
+// they report 'degraded' without failing readiness. All checks are hard-
+// bounded: ioredis and BullMQ offline-queue commands while disconnected, so
+// unguarded calls hang forever during a Redis outage.
 // ============================================================================
+const DEP_TIMEOUT_MS = 2000
+
+function withDeadline(promise, fallback) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(fallback), DEP_TIMEOUT_MS)),
+  ])
+}
+
 router.get('/ready', asyncHandler(async (req, res) => {
   const checks = {
     database: 'unknown',
@@ -32,38 +45,32 @@ router.get('/ready', asyncHandler(async (req, res) => {
     queue: 'unknown',
   }
 
-  // Database
-  try {
-    await prisma.$queryRaw`SELECT 1`
-    checks.database = 'ok'
-  } catch (err) {
-    checks.database = 'error'
-    logger.error({ err: err.message, requestId: req.requestId }, 'Readiness: DB failed')
-  }
+  // Database — critical
+  checks.database = await withDeadline(
+    prisma.$queryRaw`SELECT 1`.then(() => 'ok').catch(() => 'error'),
+    'error'
+  )
 
-  // Redis
-  try {
-    const redisHealth = await checkRedisHealth()
-    checks.redis = redisHealth.ioredis
-  } catch (err) {
-    checks.redis = 'error'
-    logger.error({ err: err.message, requestId: req.requestId }, 'Readiness: Redis failed')
-  }
+  // Redis — degradation-tolerant
+  checks.redis = await withDeadline(
+    checkRedisHealth().then((h) => (h.ioredis === 'ok' ? 'ok' : 'degraded')).catch(() => 'degraded'),
+    'degraded'
+  )
 
-  // BullMQ Queue (verifies Redis + BullMQ layer)
-  try {
-    await simulationQueue.getJobCounts()
-    checks.queue = 'ok'
-  } catch (err) {
-    checks.queue = 'error'
-    logger.error({ err: err.message, requestId: req.requestId }, 'Readiness: Queue failed')
-  }
+  // BullMQ Queue — degradation-tolerant
+  checks.queue = await withDeadline(
+    simulationQueue.getJobCounts().then(() => 'ok').catch(() => 'degraded'),
+    'degraded'
+  )
 
-  const allOk = Object.values(checks).every(v => v === 'ok')
-  const statusCode = allOk ? 200 : 503
+  const dbOk = checks.database === 'ok'
+  const statusCode = dbOk ? 200 : 503
+  const status = dbOk
+    ? (Object.values(checks).every((v) => v === 'ok') ? 'ready' : 'degraded')
+    : 'not_ready'
 
   res.status(statusCode).json({
-    status: allOk ? 'ready' : 'not_ready',
+    status,
     checks,
     timestamp: new Date().toISOString(),
   })
