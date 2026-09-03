@@ -1,9 +1,10 @@
 # Resonance — System Design Simulator
 
-A visual system design simulator that connects to GitHub repositories, reverse-engineers architecture, and runs real-time Monte Carlo simulations with AI-powered analysis and optimization suggestions.
+A visual system design simulator that connects to GitHub repositories, reverse-engineers architecture, and runs real-time Monte Carlo simulations with AI-powered analysis and optimization suggestions — now with a built-in AI chat for designing, analyzing, and iterating on architectures conversationally.
 
 ## Features
 
+* **AI Chat** — Embedded conversational assistant on the Home route for general architecture Q&A, design-aware analysis, and conversational design generation
 * **Visual Canvas Editor** — Drag-and-drop node-based system design with React Flow
 * **Architecture Blocks** — API Gateway, Service, Database, Cache, Message Queue, Load Balancer, CDN, Client, External API, Storage, and more
 * **GitHub Integration** — OAuth sign-in, repository import, and architecture reverse-engineering
@@ -15,6 +16,37 @@ A visual system design simulator that connects to GitHub repositories, reverse-e
 * **Audit Logging** — Append-only audit logs for security, compliance, and debugging
 * **Dark/Light/System Themes** — Fully customizable appearance and accent colors
 * **Settings** — Profile, appearance, notifications, security, billing, and integrations
+
+## AI Chat
+
+Resonance includes an embedded AI chat that lives on the Home route (`/`). The landing hero transitions seamlessly into an active conversation workspace — no page navigation required.
+
+### Chat Capabilities
+
+* **General Architecture Q&A** — Ask questions like "What is a circuit breaker?" or "Kafka vs RabbitMQ?" and get concise, technical answers
+* **Design-Aware Chat** — Chat about an existing design and get answers that reference specific components, connections, and simulation metrics (e.g., "Why is my scalability score only 60?")
+* **Conversational Design Generation** — Describe a system (e.g., "Build me a real-time notification system") and the AI generates a design that appears as an interactive card in the chat thread
+* **Quick Actions** — One-click analysis chips when a design is linked: Find Bottlenecks, Suggest Improvements, Check Risks, Estimate Cost
+* **Persistent Conversations** — Multiple searchable, resumable chat sessions listed in the sidebar, grouped by date
+* **Design Modification** — Request changes to a linked design (e.g., "Add Redis cache") and apply suggestions directly
+
+### How It Works
+
+1. Visit `/` and type a question or system description into the hero composer
+2. The workspace transitions to active mode — your prompt becomes the first message
+3. The AI streams its response token-by-token over SSE
+4. Generated designs appear as cards with component counts, estimated cost, and actions:
+    * **Open in Canvas Editor** — navigates to the Canvas Editor (explicit, user-initiated only)
+    * **Run Simulation** — triggers a simulation and streams results back into the chat
+    * **Discard** — removes the card from the thread
+5. To chat about an existing design, use **"Chat about this design"** from a design card or the design detail page — the session is linked to the design so every response is grounded in its components, connections, and latest simulation report
+
+### Chat Architecture
+
+* **Single-route experience** — Landing and active modes both live on `/`; transitions are client-side state changes via Zustand
+* **SSE streaming** — `chunk`, `generation`, `done`, `error`, and `heartbeat` events with idempotency-key support
+* **Design context injection** — Sessions linked to a design include components, connections, latest simulation, and optimization history in every prompt
+* **Performance** — Singleton Gemini client, Redis-cached design context (5 min) and responses (24 hr), distributed locks to prevent duplicate AI calls, and optimistic UI
 
 ## Tech Stack
 
@@ -294,37 +326,45 @@ Team functionality includes:
 
 ## API
 
-The backend exposes REST APIs for authentication, designs, simulations, teams, and integrations.
+The backend exposes REST APIs for authentication, designs, simulations, chat, teams, and integrations.
 
-| Endpoint                      | Description                            |
-| ----------------------------- | -------------------------------------- |
-| `POST /auth/webhook`          | Synchronize Clerk users                |
-| `GET /designs`                | List designs                           |
-| `POST /designs`               | Create a design                        |
-| `GET /designs/:id`            | Get a design                           |
-| `PUT /designs/:id`            | Update a design                        |
-| `DELETE /designs/:id`         | Delete a design                        |
-| `POST /simulations`           | Queue a simulation                     |
-| `GET /simulations/:id/stream` | Stream simulation progress through SSE |
-| `GET /team`                   | Get team information                   |
-| `POST /team`                  | Create a team                          |
-| `POST /team/:id/invite`       | Send a team invitation                 |
-| `POST /team/invite/accept`    | Accept a team invitation               |
-| `GET /github/status`          | Get GitHub connection status           |
-| `GET /github/repos`           | List GitHub repositories               |
+| Endpoint                           | Description                                          |
+| ---------------------------------- | ---------------------------------------------------- |
+| `POST /auth/webhook`               | Synchronize Clerk users                              |
+| `GET /designs`                     | List designs                                         |
+| `POST /designs`                    | Create a design                                      |
+| `GET /designs/:id`                 | Get a design                                         |
+| `PUT /designs/:id`                 | Update a design                                      |
+| `DELETE /designs/:id`              | Delete a design                                      |
+| `POST /simulations`                | Queue a simulation                                   |
+| `GET /simulations/:id/stream`      | Stream simulation progress through SSE               |
+| `POST /api/chat/sessions`          | Create a chat session (optionally linked to a design)|
+| `GET /api/chat/sessions`           | List chat sessions                                   |
+| `GET /api/chat/sessions/:id`       | Get a chat session with its messages                 |
+| `DELETE /api/chat/sessions/:id`    | Delete a chat session and its messages               |
+| `POST /api/chat/sessions/:id/messages` | Send a message and stream the AI response (SSE)  |
+| `POST /api/chat/generate-design`   | Generate a design from a prompt                      |
+| `GET /team`                        | Get team information                                 |
+| `POST /team`                       | Create a team                                        |
+| `POST /team/:id/invite`            | Send a team invitation                               |
+| `POST /team/invite/accept`         | Accept a team invitation                             |
+| `GET /github/status`               | Get GitHub connection status                         |
+| `GET /github/repos`                | List GitHub repositories                             |
 
 ## Application Pages
 
-| Page          | Route                    | Description                                 |
-| ------------- | ------------------------ | ------------------------------------------- |
-| Login         | `/login`                 | Clerk authentication                        |
-| Dashboard     | `/dashboard`             | Designs, statistics, and project management |
-| Canvas Editor | `/design/:id`            | Visual architecture editor and simulation   |
-| Team          | `/team`                  | Team and member management                  |
-| Invite Accept | `/team/invite?token=...` | Accept team invitations                     |
-| Settings      | `/settings`              | Account and application settings            |
-| Reports       | `/reports`               | Simulation report history                   |
-| Templates     | `/templates`             | Pre-built architecture templates            |
+| Page           | Route                    | Description                                     |
+| -------------- | ------------------------ | ----------------------------------------------- |
+| Home           | `/`                      | Landing hero, AI chat workspace, recent designs |
+| Login          | `/login`                 | Clerk authentication                            |
+| Dashboard      | `/dashboard`             | Designs, statistics, and project management     |
+| Canvas Editor  | `/design/:id`            | Visual architecture editor and simulation       |
+| Design Detail  | `/designs/:id`           | Read-only design view with "Chat about this"    |
+| Team           | `/team`                  | Team and member management                      |
+| Invite Accept  | `/team/invite?token=...` | Accept team invitations                         |
+| Settings       | `/settings`              | Account and application settings                |
+| Reports        | `/reports`               | Simulation report history                       |
+| Templates      | `/templates`             | Pre-built architecture templates                |
 
 ## Canvas Editor
 
@@ -342,6 +382,8 @@ Users can:
 * Inspect simulation results
 * Generate optimization recommendations
 * Export architecture configurations
+
+Designs generated through AI chat open in the Canvas Editor when you click **"Open in Canvas Editor"** from a generation card. The Canvas Editor is a focused workspace and does not include the chat sidebar — resume your conversation anytime from the Home page sidebar.
 
 ## Architecture Blocks
 
@@ -401,22 +443,13 @@ npm run build
 
 For production deployments, ensure that all required environment variables, database migrations, Redis connectivity, authentication configuration, SMTP credentials, and AI API credentials are configured.
 
-## Development Roadmap
-
-| Phase                             | Timeline     | Features                                                                                |
-| --------------------------------- | ------------ | --------------------------------------------------------------------------------------- |
-| **Phase 1 — MVP**                 | Months 1–3   | Visual canvas, architecture blocks, basic simulation, GitHub integration, Docker export |
-| **Phase 2 — Advanced Simulation** | Months 4–6   | Full simulation engine, chaos testing, AI optimization, Kubernetes/Terraform export     |
-| **Phase 3 — Collaboration**       | Months 7–9   | Real-time collaboration, CRDT, GitHub synchronization, architecture drift detection     |
-| **Phase 4 — Ecosystem**           | Months 10–12 | Custom blocks, plugin system, marketplace, on-premise deployment                        |
-
 ## Vision
 
 Resonance aims to make system design **visual, measurable, and interactive**.
 
 Instead of designing an architecture and relying only on intuition, engineers can model a system, simulate realistic workloads and failures, analyze the results, and iterate on the architecture before deploying it.
 
-> **Design it. Simulate it. Understand it. Optimize it.**
+> **Prompt it. Design it. Simulate it. Understand it. Optimize it.**
 
 ## License
 
