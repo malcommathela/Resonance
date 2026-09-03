@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { ChevronDown } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { FileText, LogOut, Settings, User, Users } from 'lucide-react'
 import {
@@ -13,7 +14,7 @@ import { cn } from '@/lib/utils'
 const fallbackAvatar = (seed = 'resonance-user') =>
   `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed)}`
 
-export function ProfileDropdown({ user, onSignOut, className }) {
+export function ProfileDropdown({ user, onSignOut, className, compact = false }) {
   const [isOpen, setIsOpen] = React.useState(false)
 
   const profile = {
@@ -34,12 +35,12 @@ export function ProfileDropdown({ user, onSignOut, className }) {
       <DropdownMenu onOpenChange={setIsOpen}>
         <div className="group relative w-full">
           <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="flex w-full items-center gap-3 rounded-2xl border border-resonance-border bg-resonance-bg-secondary p-3 text-left transition-all duration-200 hover:bg-resonance-bg-hover hover:shadow-sm focus:outline-none"
-            >
-              <div className="relative shrink-0">
-                <div className="h-10 w-10 rounded-full bg-resonance-accent p-0.5">
+            {compact ? (
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-xl border border-resonance-border bg-resonance-bg-secondary px-1.5 py-1.5 text-left transition-all duration-200 hover:bg-resonance-bg-hover focus:outline-none"
+              >
+                <div className="h-7 w-7 shrink-0 rounded-full bg-resonance-accent p-0.5">
                   <div className="h-full w-full overflow-hidden rounded-full bg-resonance-bg-secondary">
                     <img
                       alt={profile.name}
@@ -48,49 +49,77 @@ export function ProfileDropdown({ user, onSignOut, className }) {
                     />
                   </div>
                 </div>
-              </div>
-
-              <div className="min-w-0 flex-1 text-left">
-                <div className="truncate text-sm font-medium leading-tight tracking-tight text-resonance-text-primary">
+                <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-tight tracking-tight text-resonance-text-primary">
                   {profile.name}
+                </span>
+                <ChevronDown
+                  className={cn(
+                    'h-3.5 w-3.5 shrink-0 text-resonance-text-muted transition-transform duration-200',
+                    isOpen && 'rotate-180'
+                  )}
+                />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="flex w-full items-center gap-3 rounded-2xl border border-resonance-border bg-resonance-bg-secondary p-3 text-left transition-all duration-200 hover:bg-resonance-bg-hover hover:shadow-sm focus:outline-none"
+              >
+                <div className="relative shrink-0">
+                  <div className="h-10 w-10 rounded-full bg-resonance-accent p-0.5">
+                    <div className="h-full w-full overflow-hidden rounded-full bg-resonance-bg-secondary">
+                      <img
+                        alt={profile.name}
+                        className="h-full w-full rounded-full object-cover"
+                        src={profile.avatar}
+                      />
+                    </div>
+                  </div>
                 </div>
-                <div className="truncate text-xs leading-tight tracking-tight text-resonance-text-muted">
-                  {profile.email}
+
+                <div className="min-w-0 flex-1 text-left">
+                  <div className="truncate text-sm font-medium leading-tight tracking-tight text-resonance-text-primary">
+                    {profile.name}
+                  </div>
+                  <div className="truncate text-xs leading-tight tracking-tight text-resonance-text-muted">
+                    {profile.email}
+                  </div>
                 </div>
-              </div>
-            </button>
+              </button>
+            )}
           </DropdownMenuTrigger>
 
-          <div
-            className={cn(
-              'absolute top-1/2 -right-2 -translate-y-1/2 transition-all duration-200',
-              isOpen ? 'opacity-100' : 'opacity-60 group-hover:opacity-100'
-            )}
-          >
-            <svg
-              aria-hidden="true"
+          {!compact && (
+            <div
               className={cn(
-                'transition-all duration-200',
-                isOpen ? 'scale-110 text-resonance-text-primary' : 'text-resonance-text-muted group-hover:text-resonance-text-secondary'
+                'absolute top-1/2 -right-2 -translate-y-1/2 transition-all duration-200',
+                isOpen ? 'opacity-100' : 'opacity-60 group-hover:opacity-100'
               )}
-              fill="none"
-              height="24"
-              viewBox="0 0 12 24"
-              width="12"
             >
-              <path
-                d="M2 4C6 8 6 16 2 20"
+              <svg
+                aria-hidden="true"
+                className={cn(
+                  'transition-all duration-200',
+                  isOpen ? 'scale-110 text-resonance-text-primary' : 'text-resonance-text-muted group-hover:text-resonance-text-secondary'
+                )}
                 fill="none"
-                stroke="currentColor"
-                strokeLinecap="round"
-                strokeWidth="1.5"
-              />
-            </svg>
-          </div>
+                height="24"
+                viewBox="0 0 12 24"
+                width="12"
+              >
+                <path
+                  d="M2 4C6 8 6 16 2 20"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeLinecap="round"
+                  strokeWidth="1.5"
+                />
+              </svg>
+            </div>
+          )}
 
           <DropdownMenuContent
             align="end"
-            side="top"
+            side={compact ? 'bottom' : 'top'}
             sideOffset={8}
             className="w-64 origin-bottom-right rounded-2xl border border-resonance-border bg-resonance-bg-elevated/95 p-2 shadow-xl backdrop-blur-sm"
           >

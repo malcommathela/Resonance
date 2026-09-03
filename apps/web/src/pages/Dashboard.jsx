@@ -2,17 +2,17 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@clerk/clerk-react'
 import { useDesignStore } from '@/stores/designStore'
-import { useThemeStore } from '@/stores/themeStore'
+import { useChatStore } from '@/stores/chatStore'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
-import { getRandomAccent } from '@/components/ui/DesignCard'
+import { DesignCard, getRandomAccent } from '@/components/ui/DesignCard'
 import { GitHubImportModal } from '@/components/canvas/GitHubImportModal'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { DashboardSkeleton } from '@/components/ui/skeletons'
 import {
-  Loader2, Plus, Search, Github, Sun, Moon, Bell, Trash2, X, Layers,
-  FolderOpen, Activity, Zap, DollarSign, Pencil, Copy, Clock, GitBranch
+  Loader2, Plus, Search, Github, Trash2, X, Layers,
+  FolderOpen, Activity, Zap, DollarSign, Clock, GitBranch
 } from 'lucide-react'
 import { api } from '@/services/api'
 
@@ -30,50 +30,6 @@ const formatRelativeTime = (date) => {
   return `${Math.floor(diff / 604800)}w ago`
 }
 
-const MiniRing = ({ value }) => {
-  const circumference = 2 * Math.PI * 18
-  const offset = circumference - (value / 100) * circumference
-  return (
-    <div className="relative w-11 h-11 flex-shrink-0">
-      <svg width="44" height="44" viewBox="0 0 44 44" className="transform -rotate-90">
-        <circle cx="22" cy="22" r="18" fill="none" stroke="currentColor" strokeWidth="4" className="text-resonance-border" />
-        <circle
-          cx="22" cy="22" r="18" fill="none"
-          stroke="url(#ringGrad)" strokeWidth="4"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          strokeLinecap="round"
-        />
-        <defs>
-          <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#DCFC5C" />
-            <stop offset="100%" stopColor="#0062D6" />
-          </linearGradient>
-        </defs>
-      </svg>
-      <span className="absolute inset-0 flex items-center justify-center text-[11px] font-bold tabular-nums text-resonance-text-primary">
-        {value}
-      </span>
-    </div>
-  )
-}
-
-const StatusBadge = ({ status }) => {
-  const config = {
-    draft:     { bg: 'bg-resonance-bg-tertiary', text: 'text-resonance-text-muted', dot: 'bg-resonance-text-muted', label: 'Draft' },
-    review:    { bg: 'bg-amber-500/10', text: 'text-amber-700 dark:text-amber-400', dot: 'bg-amber-500', label: 'In Review' },
-    production:{ bg: 'bg-emerald-500/10', text: 'text-emerald-700 dark:text-emerald-400', dot: 'bg-emerald-500', label: 'Production' },
-    archived:  { bg: 'bg-resonance-bg-tertiary', text: 'text-resonance-text-muted', dot: 'bg-resonance-text-muted', label: 'Archived' },
-  }
-  const c = config[status] || config.draft
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-xs font-medium ${c.bg} ${c.text}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
-      {c.label}
-    </span>
-  )
-}
-
 /* ------------------------------------------------------------------ */
 // Dashboard
 /* ------------------------------------------------------------------ */
@@ -81,7 +37,6 @@ const StatusBadge = ({ status }) => {
 export const Dashboard = () => {
   const navigate = useNavigate()
   const { isSignedIn, isLoaded: authLoaded } = useAuth()
-  const { theme, toggleTheme } = useThemeStore()
 
   const designs = useDesignStore(state => state.designs)
   const isLoading = useDesignStore(state => state.isLoading)
@@ -89,6 +44,7 @@ export const Dashboard = () => {
   const createDesign = useDesignStore(state => state.createDesign)
   const deleteDesign = useDesignStore(state => state.deleteDesign)
   const updateDesign = useDesignStore(state => state.updateDesign)
+  const startDesignChat = useChatStore(state => state.startDesignChat)
 
   const [showNewModal, setShowNewModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
@@ -139,7 +95,7 @@ export const Dashboard = () => {
 
       const lastSim = d.latestSimulation?.createdAt
         ? formatRelativeTime(new Date(d.latestSimulation.createdAt))
-        : formatRelativeTime(new Date(d.updatedAt))
+        : null
 
       return {
         ...d,
@@ -148,6 +104,7 @@ export const Dashboard = () => {
         projectedCost,
         edges: d.edges || 0,
         lastSim,
+        updatedAtLabel: formatRelativeTime(new Date(d.updatedAt)),
         team: d.team || [],
         scenario: d.latestSimulation?.scenario || 'No simulations',
       }
@@ -307,6 +264,15 @@ export const Dashboard = () => {
     }
   }
 
+  const handleChatAboutDesign = async (design) => {
+    try {
+      await startDesignChat(design)
+      navigate('/')
+    } catch (err) {
+      addToast(err?.message || 'Could not start chat', 'error')
+    }
+  }
+
   const handleDeleteDesign = async (id) => {
     try {
       await deleteDesign(id)
@@ -396,7 +362,7 @@ export const Dashboard = () => {
         <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between mb-8 gap-4 animate-[fadeIn_400ms_ease-out_forwards]">
           <div>
             <h1 className="text-[30px] font-semibold leading-9 tracking-tight text-resonance-text-primary">
-              Dashboard
+              Designs
             </h1>
             <p className="text-sm text-resonance-text-secondary mt-1">
               Manage your architecture designs and simulations
@@ -404,33 +370,6 @@ export const Dashboard = () => {
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap">
-            <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-resonance-text-muted" />
-              <input
-                type="text"
-                placeholder="Search designs..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 pr-4 py-2.5 w-64 bg-resonance-bg-secondary border border-resonance-border rounded-xl text-sm text-resonance-text-primary placeholder:text-resonance-text-muted outline-none focus:border-resonance-text-primary transition-colors"
-              />
-            </div>
-
-            <button
-              onClick={toggleTheme}
-              className="p-2 rounded-xl text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
-              title="Toggle theme"
-            >
-              {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-
-            <button
-              className="relative p-2 rounded-xl text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
-              title="Notifications"
-            >
-              <Bell size={18} />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 border-2 border-resonance-bg-primary" />
-            </button>
-
             <Button onClick={() => setShowImportModal(true)} variant="secondary" className="gap-2">
               <Github size={16} />
               Import from GitHub
@@ -484,7 +423,17 @@ export const Dashboard = () => {
             ))}
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-resonance-text-muted" />
+              <input
+                type="text"
+                placeholder="Search designs..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 pr-4 py-1.5 w-56 bg-resonance-bg-secondary border border-resonance-border rounded-lg text-xs text-resonance-text-primary placeholder:text-resonance-text-muted outline-none focus:border-resonance-text-primary transition-colors"
+              />
+            </div>
             <button className="inline-flex items-center gap-2 px-3 py-1.5 bg-resonance-bg-secondary border border-resonance-border rounded-lg text-xs font-medium text-resonance-text-primary hover:bg-resonance-bg-hover transition-all">
               <Clock size={14} /> Sort
             </button>
@@ -535,107 +484,14 @@ export const Dashboard = () => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 animate-[fadeIn_400ms_ease-out_150ms_forwards] opacity-0">
             {filteredDesigns.map((design) => (
-              <div
+              <DesignCard
                 key={design.id}
-                onClick={() => navigate(`/designs/${design.id}`)}
-                className="group bg-resonance-bg-secondary border border-resonance-border rounded-xl overflow-hidden cursor-pointer hover:border-resonance-text-secondary hover:-translate-y-1 hover:shadow-[0_8px_24px_rgba(0,0,0,0.06)] transition-all duration-150 relative"
-              >
-                {/* Gradient shell top border */}
-                <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-[#DCFC5C] via-[#0062D6] to-[#000000] opacity-0 group-hover:opacity-100 transition-opacity duration-150" />
-
-                <div className="p-5">
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <StatusBadge status={design.status} />
-                        {design.teamId && (
-                          <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-resonance-accent/10 text-resonance-accent">
-                            Team
-                          </span>
-                        )}
-                      </div>
-                      <h3 className="text-base font-semibold mb-1 truncate text-resonance-text-primary">
-                        {design.name}
-                      </h3>
-                      <p className="text-[13px] text-resonance-text-secondary line-clamp-2">
-                        {design.description || 'No description'}
-                      </p>
-                    </div>
-                    <MiniRing value={design.score} />
-                  </div>
-
-                  {/* Metrics */}
-                  <div className="grid grid-cols-2 gap-3 mb-4">
-                    <div className="bg-resonance-bg-tertiary rounded-lg p-3">
-                      <div className="text-[11px] uppercase tracking-wider text-resonance-text-secondary mb-1">Last Sim</div>
-                      <div className="text-lg font-bold tabular-nums text-resonance-text-primary">{design.lastSim}</div>
-                      <div className="text-xs text-resonance-text-secondary mt-0.5">{design.scenario}</div>
-                    </div>
-                    <div className="bg-resonance-bg-tertiary rounded-lg p-3">
-                      <div className="text-[11px] uppercase tracking-wider text-resonance-text-secondary mb-1">Projected Cost</div>
-                      <div className="text-lg font-bold tabular-nums text-resonance-text-primary">{design.projectedCost}</div>
-                      <div className="text-xs text-resonance-text-secondary mt-0.5">/month</div>
-                    </div>
-                    <div className="bg-resonance-bg-tertiary rounded-lg p-3">
-                      <div className="text-[11px] uppercase tracking-wider text-resonance-text-secondary mb-1">Blocks</div>
-                      <div className="text-lg font-bold tabular-nums text-resonance-text-primary">{design.blocks || 0}</div>
-                      <div className="text-xs text-resonance-text-secondary mt-0.5">nodes</div>
-                    </div>
-                    <div className="bg-resonance-bg-tertiary rounded-lg p-3">
-                      <div className="text-[11px] uppercase tracking-wider text-resonance-text-secondary mb-1">Edges</div>
-                      <div className="text-lg font-bold tabular-nums text-resonance-text-primary">{design.edges}</div>
-                      <div className="text-xs text-resonance-text-secondary mt-0.5">connections</div>
-                    </div>
-                  </div>
-
-                  {/* Footer */}
-                  <div className="flex items-center justify-between pt-3 border-t border-resonance-border">
-                    <div className="flex items-center">
-                      {design.team.map((member, i) => (
-                        <div
-                          key={i}
-                          className="w-6 h-6 rounded-full border-2 border-resonance-bg-secondary flex items-center justify-center text-[9px] font-bold -ml-2 first:ml-0"
-                          style={{
-                            backgroundColor: i === 0 ? '#DCFC5C' : i === 1 ? '#6B7280' : '#9CA3AF',
-                            color: i === 0 ? '#000000' : '#ffffff'
-                          }}
-                        >
-                          {member.initials}
-                        </div>
-                      ))}
-                      {design.team.length > 3 && (
-                        <span className="ml-1 text-[9px] font-medium text-resonance-text-secondary">
-                          +{design.team.length - 3}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-resonance-text-secondary">Updated {design.lastSim}</span>
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleEditDesign(design) }}
-                          className="p-1.5 rounded-md text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleDuplicateDesign(design) }}
-                          className="p-1.5 rounded-md text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
-                        >
-                          <Copy size={14} />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleDeleteDesign(design.id) }}
-                          className="p-1.5 rounded-md text-resonance-text-secondary hover:text-red-500 hover:bg-red-500/10 transition-all"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+                design={design}
+                onChat={handleChatAboutDesign}
+                onEdit={handleEditDesign}
+                onDuplicate={handleDuplicateDesign}
+                onDelete={handleDeleteDesign}
+              />
             ))}
           </div>
         )}

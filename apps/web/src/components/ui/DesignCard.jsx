@@ -1,9 +1,14 @@
 import React from 'react'
-import { 
-  GitBranch, Calendar, Layers, MoreVertical, Pencil, Copy, Trash2,
-  FolderGit, FileCode, Zap
-} from 'lucide-react'
-import { Dropdown } from './Dropdown'
+import { useNavigate } from 'react-router-dom'
+import { ArrowUpRight, MessageCircle, Pencil, Copy, Trash2 } from 'lucide-react'
+import { Badge } from '@/components/ui/Badge'
+
+/*
+  Shared design card, used on the home landing ("Recent Designs") and the
+  Designs dashboard. Compact card: status badge + score ring, name/description,
+  Last Sim / Cost / Blocks / Edges metrics, team avatars, hover actions.
+  Action buttons render only when the corresponding handler is passed.
+*/
 
 const ACCENT_COLORS = [
   '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316',
@@ -12,162 +17,156 @@ const ACCENT_COLORS = [
 
 export const getRandomAccent = () => ACCENT_COLORS[Math.floor(Math.random() * ACCENT_COLORS.length)]
 
-export const DesignCard = ({ design, viewMode, selected, onSelect, onClick, onEdit, onDelete, onDuplicate }) => {
-  const accent = design.accentColor || '#6366f1'
-  const blockCount = design.blocks ?? design.nodeCount ?? 0
-  const isRepoDesign = !!design.repoUrl
+const STATUS_VARIANT = { production: 'success', review: 'warning', draft: 'draft', archived: 'default' }
+const STATUS_LABEL = { production: 'Production', review: 'In Review', draft: 'Draft', archived: 'Archived' }
 
-  const dropdownItems = [
-    { icon: Pencil, label: 'Edit Details', onClick: () => onEdit?.(design) },
-    { icon: Copy, label: 'Duplicate', onClick: () => onDuplicate?.(design) },
-    { icon: Trash2, label: 'Delete', danger: true, onClick: () => onDelete?.(design.id) },
-  ]
+const scoreColor = (score) =>
+  score >= 80 ? '#22c55e' : score >= 60 ? '#eab308' : score > 0 ? '#ef4444' : 'rgb(var(--border-color-rgb))'
 
-  // Repo design uses GitBranch icon, normal uses Layers
-  const DesignIcon = isRepoDesign ? FolderGit : FileCode
+const AVATAR_STYLES = [
+  { backgroundColor: '#DCFC5C', color: '#000000' },
+  { backgroundColor: '#6B7280', color: '#ffffff' },
+  { backgroundColor: '#9CA3AF', color: '#ffffff' },
+]
 
-  if (viewMode === 'list') {
-    return (
-      <div 
-        className={`flex items-center gap-4 p-4 rounded-lg border transition-all cursor-pointer ${
-          selected ? 'border-resonance-accent bg-resonance-accent/5' : 'border-resonance-border hover:border-resonance-accent/30'
-        }`}
-        onClick={onClick}
-      >
-        <button onClick={(e) => { e.stopPropagation(); onSelect(); }} className="text-resonance-text-muted">
-          {selected ? '✓' : '○'}
-        </button>
+const MetricTile = ({ label, value, suffix, sub }) => (
+  <div className="rounded-lg bg-resonance-bg-tertiary px-2.5 py-1.5 min-w-0">
+    <div className="text-[10px] uppercase tracking-wider text-resonance-text-muted truncate">{label}</div>
+    <div className="text-[13px] font-bold tabular-nums text-resonance-text-primary truncate">
+      {value}
+      {suffix && <span className="text-[10px] font-normal text-resonance-text-muted"> {suffix}</span>}
+    </div>
+    {sub && <div className="text-[10px] text-resonance-text-muted truncate">{sub}</div>}
+  </div>
+)
 
-        {/* Repo badge or accent dot */}
-        {isRepoDesign ? (
-          <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
-            <GitBranch size={16} className="text-blue-500" />
-          </div>
-        ) : (
-          <div 
-            className="w-3 h-3 rounded-full shrink-0" 
-            style={{ backgroundColor: accent }} 
-          />
-        )}
+export const DesignCard = ({ design, onChat, onEdit, onDuplicate, onDelete }) => {
+  const navigate = useNavigate()
+  const team = design.team || []
 
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <h3 className="font-semibold text-resonance-text-primary truncate">{design.name}</h3>
-            {isRepoDesign && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/10 text-blue-500 border border-blue-500/20">
-                GitHub
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-resonance-text-secondary truncate">{design.description || 'No description'}</p>
-        </div>
-
-        <div className="flex items-center gap-4 text-xs text-resonance-text-muted shrink-0">
-          <span className="flex items-center gap-1"><Layers size={12} /> {blockCount}</span>
-          <span className="flex items-center gap-1"><Calendar size={12} /> {new Date(design.updatedAt).toLocaleDateString()}</span>
-          {design.repoUrl && <GitBranch size={12} />}
-        </div>
-
-        <div onClick={(e) => e.stopPropagation()}>
-          <Dropdown 
-            trigger={<button className="p-1.5 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted"><MoreVertical size={14} /></button>}
-            items={dropdownItems}
-            align="right"
-          />
-        </div>
-      </div>
-    )
+  const stop = (fn) => (e) => {
+    e.stopPropagation()
+    fn()
   }
+  const actionBtn = 'p-1.5 rounded-md bg-resonance-bg-elevated border border-resonance-border transition-all'
+  const neutralBtn = 'text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover'
 
   return (
-    <div 
-      className={`rounded-xl border transition-all cursor-pointer group ${
-        selected ? 'border-resonance-accent bg-resonance-accent/5' : 'border-resonance-border hover:border-resonance-accent/30 hover:shadow-lg'
-      }`}
-      onClick={onClick}
+    <div
+      onClick={() => navigate(`/designs/${design.id}`)}
+      className="group relative bg-resonance-bg-secondary border border-resonance-border rounded-xl p-4 cursor-pointer hover:border-resonance-accent/40 hover:-translate-y-0.5 transition-all duration-150"
     >
-      {/* Header image area */}
-      <div className="h-32 bg-resonance-bg-tertiary flex items-center justify-center relative rounded-t-xl overflow-hidden">
-        {/* Repo designs get a GitHub-themed header, normal get accent */}
-        {isRepoDesign ? (
-          <div 
-            className="w-16 h-16 rounded-2xl flex items-center justify-center"
-            style={{ backgroundColor: '#3b82f615' }}
-          >
-            <FolderGit size={32} style={{ color: '#3b82f6' }} />
-          </div>
-        ) : (
-          <div 
-            className="w-16 h-16 rounded-2xl flex items-center justify-center"
-            style={{ backgroundColor: `${accent}15` }}
-          >
-            <FileCode size={32} style={{ color: accent }} />
-          </div>
-        )}
-
-        {/* Selection checkbox */}
-        <button 
-          onClick={(e) => { e.stopPropagation(); onSelect(); }}
-          className={`absolute top-2 right-2 w-6 h-6 rounded-full border flex items-center justify-center text-xs transition-colors ${
-            selected ? 'bg-resonance-accent text-white border-resonance-accent' : 'border-resonance-border text-transparent hover:text-resonance-text-muted'
-          }`}
+      {/* Status + score */}
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+          <Badge variant={STATUS_VARIANT[design.status] || 'draft'}>
+            {STATUS_LABEL[design.status] || 'Draft'}
+          </Badge>
+          {design.teamId && (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-resonance-accent/10 text-resonance-accent">
+              Team
+            </span>
+          )}
+        </div>
+        <div
+          className="w-9 h-9 rounded-full border-2 flex items-center justify-center text-[11px] font-bold tabular-nums shrink-0"
+          style={{ borderColor: scoreColor(design.score), color: design.score ? undefined : 'rgb(var(--text-muted-rgb))' }}
         >
-          {selected ? '✓' : ''}
-        </button>
-
-        {/* Top accent bar — repo designs get blue, normal get their accent */}
-        <div 
-          className="absolute top-0 left-0 w-full h-1" 
-          style={{ backgroundColor: isRepoDesign ? '#3b82f6' : accent }} 
-        />
-
-        {/* Repo badge on card */}
-        {isRepoDesign && (
-          <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[10px] font-medium bg-blue-500/10 text-blue-500 border border-blue-500/20 flex items-center gap-1">
-            <GitBranch size={10} />
-            GitHub
-          </div>
-        )}
+          {design.score || '—'}
+        </div>
       </div>
 
-      {/* Content area */}
-      <div className="p-4 rounded-b-xl">
-        <div className="flex items-start justify-between gap-2 mb-1">
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <h3 className="font-semibold text-resonance-text-primary truncate">{design.name}</h3>
-            {isRepoDesign && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/10 text-blue-500 border border-blue-500/20 shrink-0">
-                Repo
-              </span>
-            )}
-          </div>
-          <div onClick={(e) => e.stopPropagation()}>
-            <Dropdown 
-              trigger={<button className="p-1 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted opacity-0 group-hover:opacity-100 transition-opacity"><MoreVertical size={14} /></button>}
-              items={dropdownItems}
-              align="right"
-            />
-          </div>
+      {/* Name + description */}
+      <h3 className="text-sm font-semibold text-resonance-text-primary truncate">{design.name}</h3>
+      <p className="text-xs text-resonance-text-secondary line-clamp-2 mt-0.5">
+        {design.description || 'No description'}
+      </p>
+
+      {/* Metrics */}
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <MetricTile label="Last Sim" value={design.lastSim || '—'} sub={design.scenario} />
+        <MetricTile label="Cost" value={design.projectedCost ?? '—'} suffix="/mo" />
+        <MetricTile label="Blocks" value={design.blocks ?? 0} sub="nodes" />
+        <MetricTile label="Edges" value={design.edges ?? 0} sub="connections" />
+      </div>
+
+      {/* Footer: team avatars + hover actions */}
+      <div className="mt-3 pt-3 border-t border-resonance-border flex items-center justify-between gap-2">
+        <div className="flex items-center min-w-0">
+          {team.length > 0 ? (
+            <>
+              {team.slice(0, 3).map((member, i) => (
+                <div
+                  key={i}
+                  className="w-6 h-6 rounded-full border-2 border-resonance-bg-secondary flex items-center justify-center text-[9px] font-bold -ml-2 first:ml-0 shrink-0"
+                  style={AVATAR_STYLES[i] || AVATAR_STYLES[AVATAR_STYLES.length - 1]}
+                >
+                  {member.initials}
+                </div>
+              ))}
+              {team.length > 3 && (
+                <span className="ml-1 text-[9px] font-medium text-resonance-text-secondary">
+                  +{team.length - 3}
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="text-xs text-resonance-text-secondary truncate">
+              Updated {design.updatedAtLabel || design.lastSim || '—'}
+            </span>
+          )}
         </div>
 
-        <p className="text-sm text-resonance-text-secondary line-clamp-2 mb-3">{design.description || 'No description'}</p>
-
-        <div className="flex items-center justify-between text-xs text-resonance-text-muted">
-          <span className="flex items-center gap-1">
-            <Layers size={12} /> {blockCount} blocks
-          </span>
-          <span className="flex items-center gap-1">
-            <Calendar size={12} /> {new Date(design.updatedAt).toLocaleDateString()}
-          </span>
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+          {onChat && (
+            <button
+              type="button"
+              onClick={stop(() => onChat(design))}
+              title="Chat about this design"
+              className={`${actionBtn} text-resonance-accent hover:bg-resonance-bg-hover`}
+            >
+              <MessageCircle size={14} />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={stop(() => navigate(`/design/${design.id}`))}
+            title="Open in Canvas Editor"
+            className={`${actionBtn} ${neutralBtn}`}
+          >
+            <ArrowUpRight size={14} />
+          </button>
+          {onEdit && (
+            <button
+              type="button"
+              onClick={stop(() => onEdit(design))}
+              title="Edit details"
+              className={`${actionBtn} ${neutralBtn}`}
+            >
+              <Pencil size={14} />
+            </button>
+          )}
+          {onDuplicate && (
+            <button
+              type="button"
+              onClick={stop(() => onDuplicate(design))}
+              title="Duplicate"
+              className={`${actionBtn} ${neutralBtn}`}
+            >
+              <Copy size={14} />
+            </button>
+          )}
+          {onDelete && (
+            <button
+              type="button"
+              onClick={stop(() => onDelete(design.id))}
+              title="Delete"
+              className={`${actionBtn} text-resonance-text-secondary hover:text-red-500 hover:bg-red-500/10`}
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
         </div>
-
-        {/* Repo URL hint */}
-        {isRepoDesign && design.repoUrl && (
-          <div className="mt-2 pt-2 border-t border-resonance-border/50 flex items-center gap-1 text-[10px] text-blue-500/70">
-            <GitBranch size={10} />
-            <span className="truncate">{design.repoUrl.replace('https://github.com/', '')}</span>
-          </div>
-        )}
       </div>
     </div>
   )

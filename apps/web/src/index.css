@@ -268,6 +268,34 @@
 }
 
 /* ============================================
+   AI Chat — streaming indicators
+   ============================================ */
+
+@keyframes typing-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+  30% { transform: translateY(-3px); opacity: 1; }
+}
+
+.typing-dot {
+  animation: typing-dot 1.2s ease-in-out infinite;
+}
+
+/* Shimmering text used for the "thinking…" status label */
+.shimmer-text {
+  background: linear-gradient(
+    90deg,
+    rgb(var(--text-muted-rgb)) 25%,
+    rgb(var(--text-secondary-rgb)) 50%,
+    rgb(var(--text-muted-rgb)) 75%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: skeleton-shimmer 2s ease-in-out infinite;
+}
+
+/* ============================================
    Skeleton Shimmer Animation
    ============================================ */
 

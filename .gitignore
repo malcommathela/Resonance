@@ -39,4 +39,6 @@ coverage/
 backups/
 *.sql
 *.sql.gz
+# ...except Prisma migrations, which must ship with the schema
+!apps/api/prisma/migrations/**/*.sql
 Resonance start.txt

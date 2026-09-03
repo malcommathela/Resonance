@@ -6,6 +6,7 @@ import { useThemeStore } from '@/stores/themeStore'
 import { ToastProvider } from '@/components/ui/Toast'
 import { AppShell } from '@/components/layout/AppShell'
 import { Login } from '@/pages/Login'
+import { Home } from '@/pages/Home'
 import { Dashboard } from '@/pages/Dashboard'
 import { DesignDetail } from '@/pages/DesignDetail'
 import { CanvasEditor } from '@/pages/CanvasEditor'
@@ -40,18 +41,20 @@ export default function App() {
           <Route path="team/invite" element={<InviteAcceptPage />} />
           <Route
             path="/login"
-            element={isSignedIn ? <Navigate to="/dashboard" replace /> : <Login />}
+            element={isSignedIn ? <Navigate to="/" replace /> : <Login />}
           />
           <Route
             path="/sign-up"
-            element={isSignedIn ? <Navigate to="/dashboard" replace /> : <Login mode="signUp" />}
+            element={isSignedIn ? <Navigate to="/" replace /> : <Login mode="signUp" />}
           />
 
+          {/* Home — AI chat landing; renders its own chrome (top nav / chat sidebar) */}
           <Route
             path="/"
-            element={isSignedIn ? <AppShell /> : <Navigate to="/login" replace />}
-          >
-            <Route index element={<Navigate to="/dashboard" replace />} />
+            element={isSignedIn ? <Home /> : <Navigate to="/login" replace />}
+          />
+
+          <Route element={isSignedIn ? <AppShell /> : <Navigate to="/login" replace />}>
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="designs/:id" element={<DesignDetail />} />
             <Route path="settings" element={<Settings />} />

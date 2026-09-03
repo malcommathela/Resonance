@@ -36,13 +36,16 @@ class RedisRateLimitStore {
     const now = Date.now()
     const resetTime = new Date(now + this.windowMs)
 
+    // Hard timeout: ioredis offline-queues commands while disconnected, so
+    // an unguarded await hangs forever during a Redis outage and freezes
+    // every request. Fail open instead — Redis must not be a single point
+    // of failure (Chat spec §47).
     try {
-      const totalHits = await this.client.eval(
-        INCR_AND_EXPIRE_LUA,
-        1,
-        fullKey,
-        this.windowMs
-      )
+      const totalHits = await Promise.race([
+        this.client.eval(INCR_AND_EXPIRE_LUA, 1, fullKey, this.windowMs),
+        new Promise((resolve) => setTimeout(() => resolve(null), 1000)),
+      ])
+      if (totalHits === null) return { totalHits: 1, resetTime }
       return { totalHits: Number(totalHits), resetTime }
     } catch (err) {
       // Fail open: if Redis is down, don't block legitimate traffic
@@ -174,6 +177,67 @@ export const validationLimiter = rateLimit({
   handler: (req, res) => {
     res.status(429).json({
       error: 'Too many validation requests. Please wait.',
+      retryAfter: 60,
+    })
+  },
+})
+
+// ============================================================================
+// CHAT LIMITERS — Chat spec §81-82 (separate budgets per expensive operation)
+// ============================================================================
+
+/**
+ * Chat message limiter — each message starts an AI operation (cost + latency).
+ * 30 per minute per user.
+ */
+export const chatMessageLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: new RedisRateLimitStore(redisConnection, 'rl:chat:msg:'),
+  keyGenerator: getClientKey,
+  handler: (req, res) => {
+    res.status(429).json({
+      error: { code: 'RATE_LIMITED', message: 'Too many messages. Please slow down.', retryable: true },
+      retryAfter: 60,
+    })
+  },
+})
+
+/**
+ * Design generation limiter — the most expensive chat operation.
+ * 6 per minute per user.
+ */
+export const chatGenerateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 6,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: new RedisRateLimitStore(redisConnection, 'rl:chat:gen:'),
+  keyGenerator: getClientKey,
+  handler: (req, res) => {
+    res.status(429).json({
+      error: { code: 'RATE_LIMITED', message: 'Too many generation requests. Please wait a moment.', retryable: true },
+      retryAfter: 60,
+    })
+  },
+})
+
+/**
+ * Chat SSE limiter — streams are long-lived; reconnect storms must not
+ * exhaust sockets. 30 new streams per minute per user (multi-tab headroom).
+ */
+export const chatSseLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: new RedisRateLimitStore(redisConnection, 'rl:chat:sse:'),
+  keyGenerator: getClientKey,
+  handler: (req, res) => {
+    res.status(429).json({
+      error: { code: 'RATE_LIMITED', message: 'Too many stream requests. Please wait.', retryable: true },
       retryAfter: 60,
     })
   },

@@ -8,11 +8,13 @@ import {
   Users,
   Settings,
   Layers,
+  MessageSquare,
 } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
 import ProfileDropdown from '@/components/ui/ProfileDropdown'
 
 const workspaceItems = [
+  { id: 'chat', label: 'AI Chat', icon: MessageSquare, path: '/' },
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
   { id: 'designs', label: 'Designs', icon: FolderOpen, path: '/dashboard' },
   { id: 'templates', label: 'Templates', icon: LayoutTemplate, path: '/templates', beta: true },

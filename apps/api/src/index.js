@@ -25,6 +25,8 @@ import statusRoutes from './routes/status.js'
 import githubRoutes from './routes/github.js'
 import teamRoutes from './routes/team.js'
 import reverseEngineRoutes from './routes/reverseEngine.js'
+import chatRoutes from './routes/chat.js'
+import { generationQueue, createGenerationWorker, runGenerationRecoverySweep } from './chat/workers/generationWorker.js'
 
 // ============================================================================
 // SENTRY — L12: Error Tracking & Performance Monitoring
@@ -113,7 +115,12 @@ app.get('/health', asyncHandler(async (req, res) => {
   }
 
   try {
-    const redisHealth = await checkRedisHealth()
+    // Guarded: ioredis offline-queues commands while disconnected, so an
+    // unguarded ping() hangs forever during a Redis outage.
+    const redisHealth = await Promise.race([
+      checkRedisHealth(),
+      new Promise((resolve) => setTimeout(() => resolve({ ioredis: 'degraded' }), 1500)),
+    ])
     health.redis = redisHealth.ioredis
     if (redisHealth.ioredis !== 'ok') health.status = 'degraded'
   } catch (err) {
@@ -123,8 +130,16 @@ app.get('/health', asyncHandler(async (req, res) => {
   }
 
   try {
-    const queueJobs = await simulationQueue.getJobCounts()
-    health.queue = { status: 'ok', jobs: queueJobs }
+    // Guarded: BullMQ commands also offline-queue while Redis is
+    // disconnected — an unguarded call hangs the health check forever.
+    const queueJobs = await Promise.race([
+      simulationQueue.getJobCounts(),
+      new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
+    ])
+    health.queue = queueJobs
+      ? { status: 'ok', jobs: queueJobs }
+      : { status: 'degraded', jobs: null }
+    if (!queueJobs) health.status = 'degraded'
   } catch (err) {
     health.queue = { status: 'error', error: err.message }
     health.status = 'degraded'
@@ -148,6 +163,9 @@ app.use('/validation', asyncHandler(tenantContext), validationRoutes)
 app.use('/github', asyncHandler(tenantContext), githubRoutes)
 app.use('/team', asyncHandler(tenantContext), teamRoutes)
 app.use('/analyze', reverseEngineRoutes)
+app.use('/chat', asyncHandler(tenantContext), chatRoutes)
+
+// GET /ready is served by statusRoutes (mounted above).
 
 // RFC flat routes: /teams (list) and /team (create) need to reach the same router
 app.get('/teams', asyncHandler(tenantContext), (req, res, next) => {
@@ -207,15 +225,32 @@ app.use((req, res) => {
 // SERVER STARTUP + IN-PROCESS WORKER
 // ============================================================================
 let worker = null
+let generationWorker = null
 
 const server = app.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`)
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`)
 
-  // Start BullMQ worker in the same process (free tier — no separate service)
+  // Start BullMQ workers in the same process (free tier — no separate service)
   const concurrency = parseInt(process.env.WORKER_CONCURRENCY || '1', 10)
   worker = createSimulationWorker(concurrency)
   logger.info({ concurrency }, 'Simulation worker started in-process')
+
+  const generationConcurrency = parseInt(process.env.GENERATION_WORKER_CONCURRENCY || '1', 10)
+  generationWorker = createGenerationWorker(generationConcurrency)
+  logger.info({ concurrency: generationConcurrency }, 'Generation worker started in-process')
+
+  // Recovery sweep on boot (spec §74): fail/requeue jobs abandoned by a
+  // previous server instance, then re-check periodically.
+  runGenerationRecoverySweep()
+    .then((summary) => logger.info(summary, 'Generation recovery sweep (boot) complete'))
+    .catch((err) => logger.error({ err: err.message }, 'Boot recovery sweep failed'))
+  const sweepTimer = setInterval(() => {
+    runGenerationRecoverySweep().catch((err) =>
+      logger.error({ err: err.message }, 'Periodic recovery sweep failed')
+    )
+  }, 5 * 60 * 1000)
+  sweepTimer.unref?.()
 })
 
 // ============================================================================
@@ -238,13 +273,18 @@ async function gracefulShutdown(signal) {
       await worker.close()
       logger.info('BullMQ worker closed')
     }
+    if (generationWorker) {
+      await generationWorker.close()
+      logger.info('Generation worker closed')
+    }
   } catch (err) {
     logger.error({ err: err.message }, 'Worker close error')
   }
 
   try {
     await simulationQueue.close()
-    logger.info('BullMQ queue closed')
+    await generationQueue.close()
+    logger.info('BullMQ queues closed')
   } catch (err) {
     logger.error({ err: err.message }, 'Queue close error')
   }

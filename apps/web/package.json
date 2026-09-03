@@ -21,10 +21,13 @@
     "clsx": "^2.1.1",
     "framer-motion": "^12.40.0",
     "lucide-react": "^0.460.0",
+    "ogl": "^1.0.11",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.0.0",
     "recharts": "^2.13.0",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.6.0",
     "zustand": "^5.0.0"
   },
