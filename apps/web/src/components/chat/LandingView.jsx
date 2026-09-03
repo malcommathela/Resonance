@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowUpRight, Layers, MessageCircle } from 'lucide-react'
-import { Badge } from '@/components/ui/Badge'
+import { Layers } from 'lucide-react'
 import Topography from '@/components/ui/Topography'
+import { DesignCard } from '@/components/ui/DesignCard'
 import { useDesignStore } from '@/stores/designStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useThemeStore } from '@/stores/themeStore'
@@ -15,74 +15,6 @@ const formatRelativeTime = (date) => {
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
   if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`
   return `${Math.floor(diff / 604800)}w ago`
-}
-
-const STATUS_VARIANT = { production: 'success', review: 'warning', draft: 'draft', archived: 'default' }
-
-const scoreColor = (score) =>
-  score >= 80 ? '#22c55e' : score >= 60 ? '#eab308' : score > 0 ? '#ef4444' : 'rgb(var(--border-color-rgb))'
-
-const RecentDesignCard = ({ design, onChat }) => {
-  const navigate = useNavigate()
-  return (
-    <div
-      onClick={() => navigate(`/designs/${design.id}`)}
-      className="group relative bg-resonance-bg-secondary border border-resonance-border rounded-xl p-4 cursor-pointer hover:border-resonance-accent/40 hover:-translate-y-0.5 transition-all duration-150"
-    >
-      <div className="flex items-start justify-between gap-2 mb-2.5">
-        <Badge variant={STATUS_VARIANT[design.status] || 'draft'}>{design.statusLabel}</Badge>
-        <div
-          className="w-9 h-9 rounded-full border-2 flex items-center justify-center text-[11px] font-bold tabular-nums shrink-0"
-          style={{ borderColor: scoreColor(design.score), color: design.score ? undefined : 'rgb(var(--text-muted-rgb))' }}
-        >
-          {design.score || '—'}
-        </div>
-      </div>
-
-      <h3 className="text-sm font-semibold text-resonance-text-primary truncate">{design.name}</h3>
-      <p className="text-xs text-resonance-text-muted mt-0.5">Simulated {design.lastSim}</p>
-
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <div className="rounded-lg bg-resonance-bg-tertiary px-2.5 py-1.5">
-          <div className="text-[10px] uppercase tracking-wider text-resonance-text-muted">Cost</div>
-          <div className="text-[13px] font-bold tabular-nums text-resonance-text-primary">
-            {design.projectedCost}
-            <span className="text-[10px] font-normal text-resonance-text-muted"> /mo</span>
-          </div>
-        </div>
-        <div className="rounded-lg bg-resonance-bg-tertiary px-2.5 py-1.5">
-          <div className="text-[10px] uppercase tracking-wider text-resonance-text-muted">Blocks</div>
-          <div className="text-[13px] font-bold tabular-nums text-resonance-text-primary">{design.blocks || 0}</div>
-        </div>
-      </div>
-
-      {/* Hover actions: chat (primary secondary action) + open */}
-      <div className="absolute top-2.5 right-2.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            onChat(design)
-          }}
-          title="Chat about this design"
-          className="p-1.5 rounded-md bg-resonance-bg-elevated border border-resonance-border text-resonance-accent hover:bg-resonance-bg-hover transition-all"
-        >
-          <MessageCircle size={14} />
-        </button>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            navigate(`/design/${design.id}`)
-          }}
-          title="Open in Canvas Editor"
-          className="p-1.5 rounded-md bg-resonance-bg-elevated border border-resonance-border text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
-        >
-          <ArrowUpRight size={14} />
-        </button>
-      </div>
-    </div>
-  )
 }
 
 /* Hero + recent designs — the landing (`landing` mode) view of Home */
@@ -104,15 +36,15 @@ export const LandingView = () => {
       designs.slice(0, 8).map((d) => ({
         ...d,
         score: d.latestReport?.overallScore || 0,
-        statusLabel:
-          d.status === 'active' ? 'Production' : d.status === 'review' ? 'In Review' : d.status === 'archived' ? 'Archived' : 'Draft',
         status: d.status === 'active' ? 'production' : d.status === 'review' ? 'review' : d.status === 'archived' ? 'archived' : 'draft',
         projectedCost: d.latestSimulation?.projectedMonthlyCost
           ? `$${(d.latestSimulation.projectedMonthlyCost / 1000).toFixed(1)}k`
           : '—',
-        lastSim: d.latestSimulation?.createdAt
-          ? formatRelativeTime(d.latestSimulation.createdAt)
-          : formatRelativeTime(d.updatedAt),
+        lastSim: d.latestSimulation?.createdAt ? formatRelativeTime(d.latestSimulation.createdAt) : null,
+        updatedAtLabel: formatRelativeTime(d.updatedAt),
+        scenario: d.latestSimulation?.scenario || 'No simulations',
+        edges: d.edges || 0,
+        team: d.team || [],
       })),
     [designs]
   )
@@ -195,6 +127,8 @@ export const LandingView = () => {
                 <div className="grid grid-cols-2 gap-2">
                   <div className="skeleton-shimmer h-10 rounded-lg" />
                   <div className="skeleton-shimmer h-10 rounded-lg" />
+                  <div className="skeleton-shimmer h-10 rounded-lg" />
+                  <div className="skeleton-shimmer h-10 rounded-lg" />
                 </div>
               </div>
             ))}
@@ -213,7 +147,7 @@ export const LandingView = () => {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {recent.map((design) => (
-              <RecentDesignCard key={design.id} design={design} onChat={handleChat} />
+              <DesignCard key={design.id} design={design} onChat={handleChat} />
             ))}
           </div>
         )}

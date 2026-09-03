@@ -35,25 +35,25 @@ export function DesignCardSkeleton() {
           <ShimmerBar className="h-5 w-3/4" />
           <ShimmerBar className="h-3 w-full" />
         </div>
-        <ShimmerBar className="h-11 w-11 rounded-full shrink-0" />
+        <ShimmerBar className="h-9 w-9 rounded-full shrink-0" />
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-resonance-bg-tertiary rounded-lg p-3 space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        <div className="bg-resonance-bg-tertiary rounded-lg px-2.5 py-1.5 space-y-2">
           <ShimmerBar className="h-3 w-12" />
           <ShimmerBar className="h-6 w-16" />
           <ShimmerBar className="h-3 w-20" />
         </div>
-        <div className="bg-resonance-bg-tertiary rounded-lg p-3 space-y-2">
+        <div className="bg-resonance-bg-tertiary rounded-lg px-2.5 py-1.5 space-y-2">
           <ShimmerBar className="h-3 w-12" />
           <ShimmerBar className="h-6 w-16" />
           <ShimmerBar className="h-3 w-20" />
         </div>
-        <div className="bg-resonance-bg-tertiary rounded-lg p-3 space-y-2">
+        <div className="bg-resonance-bg-tertiary rounded-lg px-2.5 py-1.5 space-y-2">
           <ShimmerBar className="h-3 w-12" />
           <ShimmerBar className="h-6 w-16" />
           <ShimmerBar className="h-3 w-20" />
         </div>
-        <div className="bg-resonance-bg-tertiary rounded-lg p-3 space-y-2">
+        <div className="bg-resonance-bg-tertiary rounded-lg px-2.5 py-1.5 space-y-2">
           <ShimmerBar className="h-3 w-12" />
           <ShimmerBar className="h-6 w-16" />
           <ShimmerBar className="h-3 w-20" />
@@ -84,9 +84,6 @@ export function DashboardSkeleton() {
           <ShimmerBar className="h-4 w-72" />
         </div>
         <div className="flex items-center gap-2.5 flex-wrap">
-          <ShimmerBar className="h-10 w-64 rounded-xl" />
-          <ShimmerBar className="h-10 w-10 rounded-xl" />
-          <ShimmerBar className="h-10 w-10 rounded-xl" />
           <ShimmerBar className="h-10 w-36 rounded-xl" />
           <ShimmerBar className="h-10 w-28 rounded-xl" />
         </div>
@@ -113,7 +110,8 @@ export function DashboardSkeleton() {
             <ShimmerBar key={i} className="h-8 w-24 rounded-lg" />
           ))}
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <ShimmerBar className="h-8 w-56 rounded-lg" />
           <ShimmerBar className="h-8 w-20 rounded-lg" />
           <ShimmerBar className="h-8 w-20 rounded-lg" />
         </div>
