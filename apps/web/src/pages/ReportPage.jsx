@@ -664,9 +664,6 @@ export const ReportPage = () => {
                 Simulation results and analysis
               </p>
             </div>
-            <div className="w-10 h-10 rounded-xl bg-resonance-accent flex items-center justify-center">
-              <FileText size={20} className="text-resonance-neutral" />
-            </div>
           </div>
 
           <div className="grid grid-cols-3 gap-2 mb-4" aria-label="Report overview">

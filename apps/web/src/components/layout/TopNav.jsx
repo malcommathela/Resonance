@@ -1,6 +1,6 @@
 import React from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Bell, FileText, FolderOpen, House, MessageSquare, Users, Zap } from 'lucide-react'
+import { Bell, FileText, FolderOpen, House, MessageSquare, Users } from 'lucide-react'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { ProfileDropdown } from '@/components/ui/ProfileDropdown'
 import { useAuthStore } from '@/stores/authStore'
@@ -49,10 +49,14 @@ export const TopNav = ({ className = '' }) => {
             returnToLanding()
             navigate('/')
           }}
-          className="w-8 h-8 rounded-lg bg-resonance-accent flex items-center justify-center hover:opacity-90 transition-opacity"
+          className="shrink-0 hover:opacity-90 transition-opacity"
           title="Home"
         >
-          <Zap size={16} className="text-resonance-neutral" strokeWidth={2.5} />
+          <img
+            src="/logo.png"
+            alt="Resonance logo"
+            className="w-8 h-8 rounded-lg object-cover"
+          />
         </button>
         <span className="text-lg font-bold tracking-tight text-resonance-text-primary hidden sm:block">
           Resonance

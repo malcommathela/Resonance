@@ -1,7 +1,6 @@
 import React, { useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { SignIn, SignUp, useAuth } from '@clerk/clerk-react'
-import { Zap } from 'lucide-react'
 
 export const Login = ({ mode = 'signIn' }) => {
   const navigate = useNavigate()
@@ -61,9 +60,11 @@ export const Login = ({ mode = 'signIn' }) => {
         <div className="max-w-sm w-full mx-auto">
           {/* Logo */}
           <div className="flex items-center gap-3 mb-10 fade-in-up">
-            <div className="w-9 h-9 rounded-xl bg-[#DCFC5C] flex items-center justify-center">
-              <Zap size={18} className="text-black" strokeWidth={2.5} />
-            </div>
+            <img
+              src="/logo.png"
+              alt="Resonance logo"
+              className="w-9 h-9 rounded-xl object-cover"
+            />
             <span className="text-xl font-semibold tracking-tight text-white">Resonance</span>
           </div>
 

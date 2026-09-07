@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Home, ArrowLeft, Zap } from 'lucide-react'
+import { Home, ArrowLeft } from 'lucide-react'
 import { animations } from '@/lib/anime'
 import { Button } from '@/components/ui/Button'
 
@@ -27,9 +27,11 @@ export const NotFound = () => {
             404
           </h1>
           <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-20 h-20 rounded-2xl bg-resonance-accent/10 flex items-center justify-center">
-              <Zap size={40} className="text-resonance-accent" />
-            </div>
+            <img
+              src="/logo.png"
+              alt="Resonance logo"
+              className="w-20 h-20 rounded-2xl object-cover"
+            />
           </div>
         </div>
 
