@@ -3,7 +3,10 @@ import { THEMES } from '@shared/constants'
 
 export const useThemeStore = create((set, get) => ({
   theme: localStorage.getItem('resonance-theme') || 'dark',
-  accentColor: localStorage.getItem('resonance-accent') || '#DCFC5C',
+  // Brand accent is fixed lime. Never read the legacy 'resonance-accent'
+  // localStorage key: stale purple values from the removed accent picker
+  // would override this and recolor the home topography in production.
+  accentColor: '#DCFC5C',
   animationsEnabled: localStorage.getItem('resonance-animations') !== 'false',
 
   setTheme: (theme) => {

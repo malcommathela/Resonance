@@ -1,13 +1,12 @@
 import React from 'react'
-import { Bell, FolderOpen, Home, LayoutTemplate, Users, Zap } from 'lucide-react'
+import { Bell, FolderOpen, MessageSquare, Users, Zap } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { useAuthStore } from '@/stores/authStore'
 
 const NAV_ITEMS = [
-  { label: 'Home', icon: Home, path: '/', current: true },
+  { label: 'Chat', icon: MessageSquare, path: '/', current: true },
   { label: 'Designs', icon: FolderOpen, path: '/dashboard' },
-  { label: 'Templates', icon: LayoutTemplate, path: '/templates' },
   { label: 'Teams', icon: Users, path: '/team' },
 ]
 

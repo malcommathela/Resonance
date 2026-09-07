@@ -3,7 +3,7 @@ import { Outlet } from 'react-router-dom'
 import { TopNav } from '@/components/layout/TopNav'
 
 /*
- * App chrome for the main pages (Designs, Templates, Teams, Reports,
+ * App chrome for the main pages (Designs, Teams, Reports,
  * Settings): global TopNav on top, content below. The left navigation
  * sidebar is gone — the conversations sidebar only exists inside active
  * chat sessions (see pages/Home.jsx → ChatWorkspace).

@@ -408,59 +408,6 @@ export function UserProfileSkeleton() {
 }
 
 // --------------------------------------------------
-// Template Card Skeleton
-// --------------------------------------------------
-export function TemplateCardSkeleton() {
-  return (
-    <div className="p-[1px] rounded-[14px] bg-gradient-to-b from-[rgba(220,252,92,0.6)] via-[rgba(0,98,214,0.3)] to-[rgba(0,0,0,0.15)]">
-      <div className="bg-resonance-bg-secondary rounded-[13px] p-6 h-full flex flex-col gap-4">
-        <div className="flex items-start justify-between">
-          <ShimmerBar className="h-11 w-11 rounded-xl" />
-          <ShimmerBar className="h-5 w-16 rounded-full" />
-        </div>
-        <ShimmerBar className="h-5 w-3/4" />
-        <ShimmerBar className="h-3 w-full" />
-        <ShimmerBar className="h-3 w-5/6" />
-        <ShimmerBar className="h-20 w-full rounded-lg" />
-        <div className="flex gap-4 pt-3 border-t border-resonance-border">
-          <ShimmerBar className="h-3 w-20" />
-          <ShimmerBar className="h-3 w-20" />
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// --------------------------------------------------
-// Templates Page Skeleton
-// --------------------------------------------------
-export function TemplatesPageSkeleton() {
-  return (
-    <div className="max-w-[1200px] mx-auto px-6 lg:px-12 py-8 space-y-8">
-      <div className="text-center space-y-4 max-w-2xl mx-auto">
-        <ShimmerBar className="h-6 w-48 mx-auto rounded-full" />
-        <ShimmerBar className="h-9 w-72 mx-auto" />
-        <ShimmerBar className="h-4 w-96 mx-auto" />
-        <div className="flex justify-center gap-3 pt-2">
-          <ShimmerBar className="h-10 w-36 rounded-xl" />
-          <ShimmerBar className="h-10 w-32 rounded-xl" />
-        </div>
-      </div>
-      <ShimmerBar className="h-12 w-full max-w-xl mx-auto rounded-xl" />
-      <div className="flex justify-center gap-2 flex-wrap">
-        {[...Array(7)].map((_, i) => (
-          <ShimmerBar key={i} className="h-9 w-24 rounded-full" />
-        ))}
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-        {[...Array(6)].map((_, i) => (
-          <TemplateCardSkeleton key={i} />
-        ))}
-      </div>
-    </div>
-  )
-}
-
 
 // ── Team Management Skeleton ───────────────────────────────────────────────
 export function TeamManagementSkeleton() {

@@ -3,7 +3,6 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   FolderOpen,
-  LayoutTemplate,
   FileText,
   Users,
   Settings,
@@ -17,7 +16,6 @@ const workspaceItems = [
   { id: 'chat', label: 'AI Chat', icon: MessageSquare, path: '/' },
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
   { id: 'designs', label: 'Designs', icon: FolderOpen, path: '/dashboard' },
-  { id: 'templates', label: 'Templates', icon: LayoutTemplate, path: '/templates', beta: true },
   { id: 'reports', label: 'Reports', icon: FileText, path: '/reports' },
 ]
 

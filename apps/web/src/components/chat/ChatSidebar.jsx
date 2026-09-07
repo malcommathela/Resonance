@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   MoreHorizontal, Network, PanelLeftClose, PanelLeftOpen,
-  Pencil, Plus, Search, Trash2, Zap,
+  Pencil, Plus, Search, Trash2,
 } from 'lucide-react'
 import { useChatStore } from '@/stores/chatStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -193,8 +193,19 @@ export const ChatSidebar = () => {
   if (collapsed) {
     return (
       <aside className="w-[60px] shrink-0 border-r border-resonance-border bg-resonance-bg-secondary flex flex-col items-center py-3 gap-1.5 h-full transition-[width] duration-200">
-        <button type="button" onClick={toggleCollapsed} title="Expand sidebar" className={railButton}>
-          <PanelLeftOpen size={18} />
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          title="Expand sidebar"
+          aria-label="Expand sidebar"
+          className={`${railButton} group relative overflow-hidden`}
+        >
+          <img
+            src="/logo.png"
+            alt="Resonance logo"
+            className="w-[18px] h-[18px] rounded object-cover transition-all duration-150 group-hover:scale-75 group-hover:opacity-0 group-focus-visible:scale-75 group-focus-visible:opacity-0"
+          />
+          <PanelLeftOpen size={18} className="absolute opacity-0 scale-75 transition-all duration-150 group-hover:scale-100 group-hover:opacity-100 group-focus-visible:scale-100 group-focus-visible:opacity-100" />
         </button>
         <button type="button" onClick={() => createSession()} title="New conversation" className={`${railButton} bg-resonance-accent text-resonance-neutral hover:bg-resonance-accent-hover`}>
           <Plus size={18} />
@@ -232,9 +243,11 @@ export const ChatSidebar = () => {
           className="flex items-center gap-2 rounded-lg px-1 py-1 hover:opacity-90 transition-opacity"
           title="Back to Home"
         >
-          <span className="w-7 h-7 rounded-lg bg-resonance-accent flex items-center justify-center">
-            <Zap size={14} className="text-resonance-neutral" strokeWidth={2.5} />
-          </span>
+          <img
+            src="/logo.png"
+            alt="Resonance logo"
+            className="w-7 h-7 rounded-lg object-cover"
+          />
           <span className="text-[15px] font-bold tracking-tight text-resonance-text-primary">
             Resonance
           </span>

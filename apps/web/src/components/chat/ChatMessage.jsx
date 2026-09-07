@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { AlertCircle, Check, Copy, RefreshCw, Zap } from 'lucide-react'
+import { AlertCircle, Check, Copy, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer'
 import { ThinkingIndicator } from '@/components/chat/ThinkingIndicator'
@@ -9,7 +9,7 @@ import { useChatStore } from '@/stores/chatStore'
 /*
  * Claude-style message rendering:
  *  - user: right-aligned accent bubble
- *  - assistant: full-width markdown with avatar, hover actions, streaming caret
+ *  - assistant: full-width, content-first markdown with hover actions
  *  - type="error": red panel with retry
  */
 export const ChatMessage = ({ message }) => {
@@ -37,20 +37,13 @@ export const ChatMessage = ({ message }) => {
   }
 
   return (
-    <div className="flex gap-3 animate-fade-in group">
-      <div className="w-8 h-8 rounded-lg bg-resonance-accent flex items-center justify-center shrink-0 mt-0.5">
-        <Zap size={15} className="text-resonance-neutral" strokeWidth={2.5} />
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 mb-1.5">
-          <span className="text-[13px] font-semibold text-resonance-text-primary">Resonance</span>
-          {message.stopped && (
-            <span className="text-[11px] px-1.5 py-0.5 rounded bg-resonance-bg-tertiary text-resonance-text-muted">
-              stopped
-            </span>
-          )}
-        </div>
+    <div className="group animate-fade-in pl-0 sm:pl-1">
+      <div className="min-w-0 max-w-none">
+        {message.stopped && (
+          <span className="mb-2 inline-flex text-[11px] px-1.5 py-0.5 rounded bg-resonance-bg-tertiary text-resonance-text-muted">
+            Generation stopped
+          </span>
+        )}
 
         {message.type === 'error' ? (
           <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 flex items-start gap-2.5 max-w-xl">
