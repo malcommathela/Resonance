@@ -247,6 +247,32 @@ export const useDesignStore = create((set, get) => ({
     }
   },
 
+  // The reports workspace spans designs. Loading each design into one shared
+  // `reports` array caused the last request to win; aggregate first, then
+  // commit one stable list to the store.
+  loadAllReports: async (designs) => {
+    const designList = designs || get().designs
+    set({ reportsLoading: true, reportsError: null })
+    try {
+      const results = await Promise.all(
+        designList.map(async (design) => {
+          const reports = await fetchDesignReports(design.id)
+          return (reports || []).map((report) => ({
+            ...report,
+            designName: report.designName || design.name,
+            design: report.design || { id: design.id, name: design.name, accentColor: design.accentColor },
+          }))
+        })
+      )
+      const reports = results.flat()
+      set({ reports, reportsLoading: false })
+      return reports
+    } catch (err) {
+      set({ reportsError: err.message, reportsLoading: false })
+      return []
+    }
+  },
+
   selectReport: (reportId) => set({ selectedReportId: reportId }),
 
   loadReport: async (simulationId) => {

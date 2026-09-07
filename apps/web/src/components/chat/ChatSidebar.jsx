@@ -193,8 +193,15 @@ export const ChatSidebar = () => {
   if (collapsed) {
     return (
       <aside className="w-[60px] shrink-0 border-r border-resonance-border bg-resonance-bg-secondary flex flex-col items-center py-3 gap-1.5 h-full transition-[width] duration-200">
-        <button type="button" onClick={toggleCollapsed} title="Expand sidebar" className={railButton}>
-          <PanelLeftOpen size={18} />
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          title="Expand sidebar"
+          aria-label="Expand sidebar"
+          className={`${railButton} group relative overflow-hidden`}
+        >
+          <Zap size={17} strokeWidth={2.5} className="text-resonance-accent transition-all duration-150 group-hover:scale-75 group-hover:opacity-0 group-focus-visible:scale-75 group-focus-visible:opacity-0" />
+          <PanelLeftOpen size={18} className="absolute opacity-0 scale-75 transition-all duration-150 group-hover:scale-100 group-hover:opacity-100 group-focus-visible:scale-100 group-focus-visible:opacity-100" />
         </button>
         <button type="button" onClick={() => createSession()} title="New conversation" className={`${railButton} bg-resonance-accent text-resonance-neutral hover:bg-resonance-accent-hover`}>
           <Plus size={18} />

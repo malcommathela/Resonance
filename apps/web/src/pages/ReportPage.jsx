@@ -567,7 +567,7 @@ export const ReportPage = () => {
     reportsError,
     selectedReportId,
     currentReport,
-    loadReports,
+    loadAllReports,
     selectReport,
     loadReport,
     designs,
@@ -578,16 +578,15 @@ export const ReportPage = () => {
     currentReport ||
     reports.find((r) => r.id === selectedReportId || r.simulationId === selectedReportId)
 
-  // Load all reports on mount
+  // Load all reports as one aggregate request lifecycle. Individual design
+  // responses must not race to replace the shared report list.
   useEffect(() => {
-    if (designs.length === 0) {
-      loadDesigns().then((designs) => {
-        designs?.forEach((d) => loadReports(d.id))
-      })
-    } else {
-      designs.forEach((d) => loadReports(d.id))
+    const load = async () => {
+      const designList = designs.length ? designs : await loadDesigns()
+      await loadAllReports(designList || [])
     }
-  }, [])
+    load()
+  }, [loadAllReports, loadDesigns])
 
   // Handle URL param for pre-selected report
   useEffect(() => {
@@ -638,6 +637,13 @@ export const ReportPage = () => {
   const sortedReports = [...filteredReports].sort(
     (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
   )
+  const scores = reports
+    .map((report) => report.overallScore ?? report.score)
+    .filter((score) => Number.isFinite(score))
+  const averageScore = scores.length
+    ? Math.round(scores.reduce((total, score) => total + score, 0) / scores.length)
+    : null
+  const excellentCount = scores.filter((score) => score >= 80).length
 
   return (
     <div className="h-full flex bg-resonance-bg-primary">
@@ -660,6 +666,21 @@ export const ReportPage = () => {
             </div>
             <div className="w-10 h-10 rounded-xl bg-resonance-accent flex items-center justify-center">
               <FileText size={20} className="text-resonance-neutral" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 mb-4" aria-label="Report overview">
+            <div className="rounded-lg border border-resonance-border bg-resonance-bg-primary px-3 py-2.5">
+              <p className="text-[10px] uppercase tracking-wider text-resonance-text-muted">Reports</p>
+              <p className="mt-1 text-lg font-semibold text-resonance-text-primary">{reports.length}</p>
+            </div>
+            <div className="rounded-lg border border-resonance-border bg-resonance-bg-primary px-3 py-2.5">
+              <p className="text-[10px] uppercase tracking-wider text-resonance-text-muted">Average score</p>
+              <p className="mt-1 text-lg font-semibold text-resonance-text-primary">{averageScore ?? '—'}</p>
+            </div>
+            <div className="rounded-lg border border-resonance-border bg-resonance-bg-primary px-3 py-2.5">
+              <p className="text-[10px] uppercase tracking-wider text-resonance-text-muted">Excellent</p>
+              <p className="mt-1 text-lg font-semibold text-resonance-text-primary">{excellentCount}</p>
             </div>
           </div>
 
@@ -712,17 +733,19 @@ export const ReportPage = () => {
                 variant="secondary"
                 size="sm"
                 className="mt-4"
-                onClick={() => designs.forEach((d) => loadReports(d.id))}
+                onClick={() => loadAllReports(designs)}
               >
                 Retry
               </Button>
             </div>
           ) : sortedReports.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-64 px-6">
-              <FileText size={32} className="text-resonance-text-muted mb-3" />
-              <p className="text-sm font-medium text-resonance-text-primary">No reports yet</p>
-              <p className="text-xs text-resonance-text-secondary mt-1 text-center">
-                Run a simulation from the canvas to generate your first report.
+            <div className="flex flex-col items-center justify-center h-72 px-6 text-center">
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-resonance-accent/15 text-resonance-accent">
+                <FileText size={22} />
+              </div>
+              <p className="text-base font-semibold text-resonance-text-primary">Your simulation history will live here</p>
+              <p className="max-w-sm text-sm leading-6 text-resonance-text-secondary mt-2">
+                Reports turn each simulation into a durable record of reliability, performance, cost, and security findings.
               </p>
               <Button
                 variant="primary"
@@ -755,7 +778,7 @@ export const ReportPage = () => {
             {sortedReports.length} report{sortedReports.length !== 1 ? 's' : ''}
           </span>
           <span>
-            {reports.filter((r) => (r.overallScore ?? r.score ?? 0) >= 80).length} excellent
+            {excellentCount} excellent
           </span>
         </div>
       </div>

@@ -38,7 +38,7 @@ export const ChatThread = () => {
         {messages.length === 0 ? (
           <EmptyThread />
         ) : (
-          messages.map((m) => <ChatMessage key={m.id} message={m} />)
+          messages.map((m) => <ChatMessage key={m.clientKey || m.id} message={m} />)
         )}
 
         {showDesignChips && <QuickActionChips variant="design" />}
@@ -53,13 +53,14 @@ const isStreamingMessage = (m) => !!m?.streaming || !!m?.thinking
 
 function EmptyThread() {
   return (
-    <div className="flex flex-col items-center text-center pt-14 animate-fade-in">
-      <div className="w-12 h-12 rounded-2xl bg-resonance-accent flex items-center justify-center mb-4">
-        <Zap size={22} className="text-resonance-neutral" strokeWidth={2.5} />
+    <div className="flex flex-col items-center text-center pt-[min(18vh,9rem)] pb-12 animate-fade-in">
+      <div className="w-12 h-12 rounded-2xl bg-resonance-accent/15 border border-resonance-accent/25 flex items-center justify-center mb-5">
+        <Zap size={22} className="text-resonance-accent" strokeWidth={2.5} />
       </div>
-      <h2 className="text-xl font-semibold text-resonance-text-primary">New conversation</h2>
-      <p className="mt-1.5 text-sm text-resonance-text-secondary max-w-sm">
-        Ask about architecture patterns, analyze a design, or describe a system to generate.
+      <p className="text-[11px] font-semibold tracking-[0.16em] uppercase text-resonance-text-muted">Resonance workspace</p>
+      <h2 className="mt-3 text-2xl font-semibold tracking-tight text-resonance-text-primary">Design with clarity.</h2>
+      <p className="mt-2 text-sm leading-6 text-resonance-text-secondary max-w-md">
+        Explore architecture trade-offs, inspect an existing design, or describe a system to create a focused starting point.
       </p>
       <div className="mt-6">
         <QuickActionChips variant="thread" />

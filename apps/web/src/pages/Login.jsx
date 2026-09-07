@@ -8,8 +8,8 @@ export const Login = ({ mode = 'signIn' }) => {
   const { isSignedIn } = useAuth()
   const [searchParams] = useSearchParams()
 
-  // Read where the user originally wanted to go
-  const redirectUrl = searchParams.get('redirect') || '/dashboard'
+  // Read where the user originally wanted to go (default: the home page)
+  const redirectUrl = searchParams.get('redirect') || '/'
 
   useEffect(() => {
     if (isSignedIn) {

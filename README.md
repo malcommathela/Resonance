@@ -364,7 +364,6 @@ The backend exposes REST APIs for authentication, designs, simulations, chat, te
 | Invite Accept  | `/team/invite?token=...` | Accept team invitations                         |
 | Settings       | `/settings`              | Account and application settings                |
 | Reports        | `/reports`               | Simulation report history                       |
-| Templates      | `/templates`             | Pre-built architecture templates                |
 
 ## Canvas Editor
 

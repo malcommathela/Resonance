@@ -4,7 +4,8 @@ import { ChatHeader } from '@/components/chat/ChatHeader'
 import { ChatThread } from '@/components/chat/ChatThread'
 import { ChatComposer } from '@/components/chat/ChatComposer'
 
-/* Active (`active` mode) layout: conversations sidebar + thread + docked composer */
+/* Persistent chat layout. Do not conditionally replace this tree while a
+ * conversation is being created or streamed. */
 export const ChatWorkspace = () => (
   <div className="flex h-screen overflow-hidden">
     <ChatSidebar />

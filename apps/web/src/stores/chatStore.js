@@ -49,6 +49,16 @@ const mapMessage = (m) => {
 
 const mapMessages = (messages) => (messages || []).map(mapMessage)
 
+// Preserve React identity while temporary client messages are reconciled with
+// their durable server equivalents. This prevents a completed answer from
+// replaying its entrance animation or jumping the scroll position.
+const mergePersistedMessages = (localMessages, persistedMessages) =>
+  (persistedMessages || []).map((message, index) => {
+    const local = localMessages?.[index]
+    const clientKey = local?.clientKey || (local?.id?.startsWith('tmp') ? local.id : null)
+    return clientKey ? { ...message, clientKey } : message
+  })
+
 let activeController = null
 
 export const useChatStore = create((set, get) => ({
@@ -190,25 +200,6 @@ export const useChatStore = create((set, get) => ({
     const state = get()
     if (state.isStreaming || !trimmed) return
 
-    // Flow A (spec §10): prompt_submit transitions LANDING -> ACTIVE chat.
-    // Set immediately so the view switches before any network await.
-    set({ mode: 'active' })
-
-    // Draft → real session on first message.
-    let sessionId = state.activeSessionId
-    const known = state.sessions.find((s) => s.id === sessionId)
-    if (!sessionId || !known) {
-      const created = await chatRest.createSession({ title: deriveTitle(trimmed) })
-      const session = mapSession(created)
-      set((s) => ({
-        sessions: [session, ...s.sessions],
-        activeSessionId: session.id,
-        messagesBySession: { ...s.messagesBySession, [session.id]: [] },
-        mode: 'active',
-      }))
-      sessionId = session.id
-    }
-
     const now = new Date().toISOString()
     const userMsg = { id: uid('tmpu'), role: 'user', type: 'text', content: trimmed, createdAt: now }
     const assistantId = uid('tmpa')
@@ -222,13 +213,47 @@ export const useChatStore = create((set, get) => ({
       createdAt: now,
     }
 
+    // A draft key lets the user see their complete optimistic turn immediately.
+    // The real session is created in the background, without ever rendering an
+    // empty thread between the default state and the streamed response.
+    let sessionId = state.activeSessionId
+    const known = state.sessions.some((s) => s.id === sessionId)
+    const draftId = known ? sessionId : uid('draft')
+
     set((s) => ({
       messagesBySession: {
         ...s.messagesBySession,
-        [sessionId]: [...(s.messagesBySession[sessionId] || []), userMsg, assistantMsg],
+        [draftId]: [...(s.messagesBySession[draftId] || []), userMsg, assistantMsg],
       },
+      activeSessionId: draftId,
+      mode: 'active',
       isStreaming: true,
     }))
+
+    if (!known) {
+      try {
+        const created = await chatRest.createSession({ title: deriveTitle(trimmed) })
+        const session = mapSession(created)
+        sessionId = session.id
+        set((s) => {
+          const messagesBySession = { ...s.messagesBySession, [session.id]: s.messagesBySession[draftId] || [] }
+          delete messagesBySession[draftId]
+          return {
+            sessions: [session, ...s.sessions.filter((item) => item.id !== session.id)],
+            messagesBySession,
+            activeSessionId: s.activeSessionId === draftId ? session.id : s.activeSessionId,
+          }
+        })
+      } catch (err) {
+        get()._patchMessage(draftId, assistantId, {
+          type: 'error',
+          content: err?.message || 'Unable to start this conversation. Please try again.',
+          streaming: false,
+        })
+        set({ isStreaming: false })
+        return
+      }
+    }
 
     await get()._runAssistant(sessionId, assistantId, {
       kind: 'send',
@@ -332,7 +357,13 @@ export const useChatStore = create((set, get) => ({
       ])
       set((s) => {
         if (s.activeSessionId !== sessionId) return s
-        const updates = { messagesBySession: { ...s.messagesBySession, [sessionId]: mapMessages(messageData.messages) } }
+        const persisted = mapMessages(messageData.messages)
+        const updates = {
+          messagesBySession: {
+            ...s.messagesBySession,
+            [sessionId]: mergePersistedMessages(s.messagesBySession[sessionId], persisted),
+          },
+        }
         if (sessionData) {
           const mapped = mapSession(sessionData)
           updates.sessions = s.sessions.map((x) => (x.id === sessionId ? mapped : x))

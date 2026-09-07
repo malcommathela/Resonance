@@ -1,20 +1,28 @@
 import React from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Bell, FileText, FolderOpen, Home, LayoutTemplate, Users, Zap } from 'lucide-react'
+import { Bell, FileText, FolderOpen, House, MessageSquare, Users, Zap } from 'lucide-react'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { ProfileDropdown } from '@/components/ui/ProfileDropdown'
 import { useAuthStore } from '@/stores/authStore'
+import { useChatStore } from '@/stores/chatStore'
 
+/*
+ * Home and Chat share the dual-mode "/" route. `view` tells the chat store
+ * which face of that route to render before navigating: the hero landing
+ * ('landing') or the chat workspace ('chat' — a fresh default conversation).
+ */
 const NAV_ITEMS = [
-  { label: 'Home', icon: Home, path: '/', isActive: (p) => p === '/' },
+  { label: 'Home', icon: House, path: '/', isActive: (p) => p === '/', view: 'landing' },
+  // Chat highlights only if a dedicated /chat route exists, so Home and Chat
+  // never light up together on "/".
+  { label: 'Chat', icon: MessageSquare, path: '/', isActive: (p) => p === '/chat', view: 'chat' },
   { label: 'Designs', icon: FolderOpen, path: '/dashboard', isActive: (p) => p === '/dashboard' || p.startsWith('/designs') },
-  { label: 'Templates', icon: LayoutTemplate, path: '/templates', isActive: (p) => p.startsWith('/templates') },
   { label: 'Teams', icon: Users, path: '/team', isActive: (p) => p === '/team' || p.startsWith('/teams') },
   { label: 'Reports', icon: FileText, path: '/reports', isActive: (p) => p.startsWith('/reports') },
 ]
 
 /*
- * Global top navigation — the app chrome for Home, Designs, Templates,
+ * Global top navigation — the app chrome for Home, Chat, Designs,
  * Teams, Reports and Settings. Not rendered in the active-chat workspace,
  * which swaps it for the conversations sidebar.
  */
@@ -22,6 +30,13 @@ export const TopNav = ({ className = '' }) => {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const { user, logout } = useAuthStore()
+  const returnToLanding = useChatStore((s) => s.returnToLanding)
+  const createSession = useChatStore((s) => s.createSession)
+
+  const VIEW_ACTIONS = {
+    landing: returnToLanding,
+    chat: createSession,
+  }
 
   return (
     <header
@@ -30,7 +45,10 @@ export const TopNav = ({ className = '' }) => {
       <div className="flex items-center gap-2.5 shrink-0">
         <button
           type="button"
-          onClick={() => navigate('/')}
+          onClick={() => {
+            returnToLanding()
+            navigate('/')
+          }}
           className="w-8 h-8 rounded-lg bg-resonance-accent flex items-center justify-center hover:opacity-90 transition-opacity"
           title="Home"
         >
@@ -42,13 +60,16 @@ export const TopNav = ({ className = '' }) => {
       </div>
 
       <nav className="flex items-center gap-1 bg-resonance-bg-tertiary border border-resonance-border rounded-xl p-1 overflow-x-auto">
-        {NAV_ITEMS.map(({ label, icon: Icon, path, isActive }) => {
+        {NAV_ITEMS.map(({ label, icon: Icon, path, isActive, view }) => {
           const active = isActive(pathname)
           return (
             <button
               key={label}
               type="button"
-              onClick={() => navigate(path)}
+              onClick={() => {
+                if (view) VIEW_ACTIONS[view]()
+                navigate(path)
+              }}
               className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-[13px] font-medium whitespace-nowrap transition-all duration-150 ${
                 active
                   ? 'bg-resonance-bg-elevated text-resonance-text-primary shadow-sm'
