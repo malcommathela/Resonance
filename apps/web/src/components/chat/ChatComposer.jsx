@@ -69,7 +69,7 @@ export const ChatComposer = ({ variant = 'compact', autoFocus = false }) => {
 
   return (
     <div className="w-full">
-      <div className="rounded-2xl border border-resonance-border bg-resonance-bg-elevated shadow-[0_8px_30px_rgba(0,0,0,0.12)] transition-colors focus-within:border-resonance-accent/40">
+      <div className="rounded-2xl border border-resonance-border bg-resonance-bg-elevated shadow-[0_8px_30px_rgba(0,0,0,0.12)] transition-colors focus-within:border-resonance-text-muted/50">
         <textarea
           ref={textareaRef}
           value={value}

@@ -11,7 +11,7 @@ import React from 'react'
 // --------------------------------------------------
 // Base shimmer bar — NovaFlow themed
 // --------------------------------------------------
-const ShimmerBar = ({ className = '', style = {} }) => (
+export const ShimmerBar = ({ className = '', style = {} }) => (
   <div
     className={`skeleton-shimmer rounded-xl ${className}`}
     style={{

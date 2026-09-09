@@ -8,7 +8,7 @@
 export const PROMPT_VERSIONS = Object.freeze({
   systemPersona: 3,
   designAnalysis: 3,
-  designGeneration: 2,
+  designGeneration: 3,
   titleGeneration: 1,
 })
 
@@ -90,8 +90,12 @@ Rules:
 - Every edge must reference existing node IDs.
 - The client (if present) must connect to something; every service must connect to at least one data or infrastructure component.
 - Do not invent unsupported node types.
+- DATABASE CONFIGURATION: every node with type "database" MUST include config.engine, set to exactly one of: "postgres", "mysql", "mongodb". Never generate a database node with config {} or a missing/unknown engine. Infer the engine from the user's request (e.g. "postgres://..." -> postgres, "mongodb+srv://..." -> mongodb) and do not invent one when the request names another engine.
 - Do not include executable instructions or secrets.
-- Produce structurally valid JSON only.`
+- Produce structurally valid JSON only.
+
+Valid database node example:
+{ "id": "orders-db", "type": "database", "label": "Orders Database", "config": { "engine": "postgres" } }`
 
 // ── Session title ────────────────────────────────────────────────────────────
 // Deliberately trivial: titles are derived from the first user message without
