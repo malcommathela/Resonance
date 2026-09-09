@@ -67,15 +67,12 @@ const ConversationItem = ({ session, active, onOpen, onRename, onDelete }) => {
         title={session.title}
         className={`w-full flex items-center gap-2.5 pl-3 pr-8 py-2 rounded-lg text-left transition-all duration-150 ${
           active
-            ? 'bg-resonance-accent text-resonance-neutral'
+            ? 'bg-resonance-bg-hover text-resonance-text-primary ring-1 ring-resonance-border'
             : 'text-resonance-text-secondary hover:bg-resonance-bg-hover hover:text-resonance-text-primary'
         }`}
       >
         {session.designId && (
-          <Network
-            size={13}
-            className={`shrink-0 ${active ? 'text-resonance-neutral' : 'text-resonance-accent'}`}
-          />
+          <Network size={13} className="shrink-0 text-resonance-accent" />
         )}
         <span className="flex-1 text-[13px] font-medium truncate">{session.title}</span>
       </button>
@@ -87,11 +84,9 @@ const ConversationItem = ({ session, active, onOpen, onRename, onDelete }) => {
           setMenuOpen((v) => !v)
         }}
         title="More options"
-        className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-md transition-all ${
-          active
-            ? 'opacity-0 group-hover:opacity-100 text-resonance-neutral hover:bg-black/10'
-            : 'opacity-0 group-hover:opacity-100 text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-tertiary'
-        } ${menuOpen ? 'opacity-100' : ''}`}
+        className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-md transition-all opacity-0 group-hover:opacity-100 text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-tertiary ${
+          menuOpen ? 'opacity-100' : ''
+        }`}
       >
         <MoreHorizontal size={14} />
       </button>
@@ -216,18 +211,7 @@ export const ChatSidebar = () => {
 
         <div className="flex-1" />
 
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          title={user?.name || 'Profile'}
-          className="w-9 h-9 rounded-full bg-resonance-accent p-0.5 hover:opacity-90 transition-opacity"
-        >
-          <img
-            src={user?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(user?.email || user?.name || 'resonance-user')}`}
-            alt={user?.name || 'Profile'}
-            className="h-full w-full rounded-full object-cover bg-resonance-bg-secondary"
-          />
-        </button>
+        <ProfileDropdown user={user} onSignOut={logout} avatarOnly />
       </aside>
     )
   }

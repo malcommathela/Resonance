@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils'
 const fallbackAvatar = (seed = 'resonance-user') =>
   `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed)}`
 
-export function ProfileDropdown({ user, onSignOut, className, compact = false }) {
+export function ProfileDropdown({ user, onSignOut, className, compact = false, avatarOnly = false }) {
   const [isOpen, setIsOpen] = React.useState(false)
 
   const profile = {
@@ -35,7 +35,20 @@ export function ProfileDropdown({ user, onSignOut, className, compact = false })
       <DropdownMenu onOpenChange={setIsOpen}>
         <div className="group relative w-full">
           <DropdownMenuTrigger asChild>
-            {compact ? (
+            {avatarOnly ? (
+              <button
+                type="button"
+                title={profile.name}
+                aria-label="Open profile menu"
+                className="mx-auto flex h-9 w-9 items-center justify-center rounded-full bg-resonance-accent p-0.5 transition-opacity hover:opacity-90 focus:outline-none"
+              >
+                <img
+                  alt={profile.name}
+                  className="h-full w-full rounded-full object-cover bg-resonance-bg-secondary"
+                  src={profile.avatar}
+                />
+              </button>
+            ) : compact ? (
               <button
                 type="button"
                 className="flex w-full items-center gap-2 rounded-xl border border-resonance-border bg-resonance-bg-secondary px-1.5 py-1.5 text-left transition-all duration-200 hover:bg-resonance-bg-hover focus:outline-none"
@@ -88,7 +101,7 @@ export function ProfileDropdown({ user, onSignOut, className, compact = false })
             )}
           </DropdownMenuTrigger>
 
-          {!compact && (
+          {!compact && !avatarOnly && (
             <div
               className={cn(
                 'absolute top-1/2 -right-2 -translate-y-1/2 transition-all duration-200',
@@ -119,7 +132,7 @@ export function ProfileDropdown({ user, onSignOut, className, compact = false })
 
           <DropdownMenuContent
             align="end"
-            side={compact ? 'bottom' : 'top'}
+            side={avatarOnly ? 'right' : compact ? 'bottom' : 'top'}
             sideOffset={8}
             className="w-64 origin-bottom-right rounded-2xl border border-resonance-border bg-resonance-bg-elevated/95 p-2 shadow-xl backdrop-blur-sm"
           >

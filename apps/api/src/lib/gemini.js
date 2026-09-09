@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai'
+import { canonicalizeDatabaseConfig } from '@resonance/shared/constants'
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
 
@@ -256,6 +257,17 @@ Node types:
 - storage (s3, gcs)
 - cdn (cloudflare)
 
+DATABASE CONFIGURATION RULES:
+- Every node with type "database" MUST have a config object containing "engine".
+- config.engine MUST be exactly one of: "postgres", "mysql", "mongodb".
+- Never generate a database node with config {} or a missing/unknown engine.
+- If the database engine can be determined from the analyzed source, use that engine. Infer it from evidence such as:
+  - database drivers and client imports (pg, mysql2, mongoose, prisma, sequelize)
+  - connection strings / URLs: postgres:// or postgresql:// -> postgres, mysql:// -> mysql, mongodb:// or mongodb+srv:// -> mongodb
+  - environment variables (DATABASE_URL), ORM configuration, migration files, SQL syntax
+  - Docker images and docker-compose services (postgres, mysql, mongo)
+- Do not invent an engine when there is reliable evidence for another engine.
+
 MANDATORY CONNECTIONS:
 1. Client → API Gateway (or Client → Service if no gateway)
 2. API Gateway → every Service
@@ -296,7 +308,15 @@ Return ONLY valid JSON. Do NOT include markdown formatting, explanations, or cod
       "label": "Human Readable Name",
       "color": "#hexcolor",
       "position": {"x": 100, "y": 100},
-      "config": {"port": 3000, "framework": "express", "engine": "postgres"}
+      "config": {"port": 3000, "framework": "express"}
+    },
+    {
+      "id": "postgres-db",
+      "type": "database",
+      "label": "PostgreSQL Database",
+      "color": "#10b981",
+      "position": {"x": 600, "y": 800},
+      "config": {"engine": "postgres"}
     }
   ],
   "edges": [
@@ -335,7 +355,7 @@ function normalizeArchitecture(parsed) {
     label: n.label || 'Unknown',
     color: n.color || '#3b82f6',
     position: n.position || { x: 100 + (i % 4) * 250, y: 100 + Math.floor(i / 4) * 200 },
-    config: n.config || {},
+    config: n.type === 'database' ? canonicalizeDatabaseConfig(n.config) : (n.config || {}),
   }))
 
   const validIds = new Set(nodes.map(n => n.id))

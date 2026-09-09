@@ -33,7 +33,7 @@ import {
 } from 'lucide-react'
 import { useCanvasStore } from '@/stores/canvasStore'
 import { blockIconMap } from '@/lib/iconMap'
-import { categories, CONNECTION_TYPE_META, getBlockBehavioralModel, getConnectionBehavioralModel } from '@shared/constants'
+import { categories, CONNECTION_TYPE_META, DATABASE_ENGINES, getBlockBehavioralModel, getConnectionBehavioralModel } from '@shared/constants'
 import { DECORATIVE_PROPS } from '@/stores/canvasStore'
 import { validateSingleProperty } from '@/lib/validation'
 
@@ -438,8 +438,9 @@ export const PropertyPanel = forwardRef(({
 
   const allIcons = Object.keys(blockIconMap)
   const safeCategories = categories || []
+  const isDatabase = data.type === 'database'
   const genericConfig = Object.entries(data.config || {}).filter(
-    ([key]) => key !== 'behavioralModel' && !DECORATIVE_PROPS.has(key)
+    ([key]) => key !== 'behavioralModel' && !(isDatabase && key === 'engine') && !DECORATIVE_PROPS.has(key)
   )
   const hiddenDecorativeCount = Object.keys(data.config || {}).filter(
     key => key !== 'behavioralModel' && DECORATIVE_PROPS.has(key)
@@ -993,6 +994,41 @@ export const PropertyPanel = forwardRef(({
           {/* ── CUSTOM ── */}
           {activeTab === 'custom' && (
             <div className="space-y-3">
+              {isDatabase && (
+                <div className="space-y-2">
+                  <h5 className="text-[10px] font-semibold text-resonance-text-muted uppercase tracking-wider flex items-center gap-1.5">
+                    <HardDrive size={12} />
+                    Database Configuration
+                  </h5>
+                  <div className="space-y-1" data-property="engine">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs text-resonance-text-muted">Engine</label>
+                      {!data.config?.engine && (
+                        <span className="text-[10px] text-red-500 font-medium" title="Database engine is required.">Required</span>
+                      )}
+                    </div>
+                    <select
+                      value={data.config?.engine || ''}
+                      onChange={(e) => handleConfigChange('engine', e.target.value)}
+                      className={`w-full px-2.5 py-1.5 bg-resonance-bg-tertiary rounded-xl text-xs text-resonance-text-primary focus:outline-none focus:ring-2 transition-all ${
+                        data.config?.engine
+                          ? 'border border-resonance-border focus:border-resonance-accent focus:ring-resonance-accent/30'
+                          : 'border border-red-500 focus:border-red-500 focus:ring-red-500/20'
+                      }`}
+                      data-canvas-input="true"
+                    >
+                      <option value="">Select database engine…</option>
+                      {DATABASE_ENGINES.map(engine => (
+                        <option key={engine} value={engine}>{engine}</option>
+                      ))}
+                    </select>
+                    {!data.config?.engine && (
+                      <p className="text-[10px] text-red-500 leading-tight">Database engine is required.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {genericConfig.map(([key, value]) => (
                 <div key={key} className="group" data-property={key}>
                   <div className="flex items-center justify-between mb-1">

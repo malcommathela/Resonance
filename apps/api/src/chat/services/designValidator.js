@@ -7,6 +7,7 @@
 
 import { z } from 'zod'
 import { AppError, ERROR_CODES } from '../../utils/errors.js'
+import { canonicalizeDatabaseConfig } from '@resonance/shared/constants'
 
 // Component metadata — mirrors the canvas block library so generated designs
 // render identically to hand-built ones (frontend customBlock/customEdge).
@@ -91,7 +92,9 @@ export function validateGeneratedDesign(parsed) {
       id: node.id,
       type: node.type,
       label: (node.label || NODE_TYPE_META[node.type].label).slice(0, LIMITS.MAX_LABEL_LENGTH),
-      config: node.config && typeof node.config === 'object' ? node.config : {},
+      config: node.type === 'database'
+        ? canonicalizeDatabaseConfig(node.config)
+        : node.config && typeof node.config === 'object' ? node.config : {},
     })
   }
   if (nodes.length === 0) {

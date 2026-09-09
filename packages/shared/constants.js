@@ -132,6 +132,38 @@ export const categories = [
 ]
 
 // ============================================================================
+// DATABASE ENGINES — single source of truth for database node configs
+// ============================================================================
+
+export const DATABASE_ENGINES = Object.freeze(['postgres', 'mysql', 'mongodb'])
+
+// ponytail: protocol→engine map covers the common connection URLs; extend if a new engine lands
+const DATABASE_URL_PROTOCOLS = Object.freeze({
+  postgres: 'postgres',
+  postgresql: 'postgres',
+  mysql: 'mysql',
+  mongodb: 'mongodb',
+  'mongodb+srv': 'mongodb',
+})
+
+/**
+ * Canonicalize a database node config: valid engine lowercased, engine inferred
+ * from a connection URL when missing, `engine: null` when unknown/unsupported so
+ * validation keeps flagging the block and the Property Panel can fix it.
+ * All other config fields are preserved.
+ */
+export function canonicalizeDatabaseConfig(config) {
+  const c = { ...(config && typeof config === 'object' ? config : {}) }
+  const url = [c.url, c.connectionString].find((v) => typeof v === 'string' && v.includes(':'))
+  const fromUrl = url ? url.split(':')[0].trim().toLowerCase() : null
+  const declared = typeof c.engine === 'string' ? c.engine.trim().toLowerCase() : ''
+  c.engine = DATABASE_ENGINES.includes(declared)
+    ? declared
+    : DATABASE_URL_PROTOCOLS[fromUrl] || null
+  return c
+}
+
+// ============================================================================
 // CONNECTION TYPES — UI + Behavioral
 // ============================================================================
 
