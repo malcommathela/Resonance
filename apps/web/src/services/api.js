@@ -81,11 +81,11 @@ class ApiService {
   async createDesign(data) { return this.request('/designs', { method: 'POST', body: JSON.stringify(data) }) }
   async updateDesign(id, data) { return this.request(`/designs/${id}`, { method: 'PATCH', body: JSON.stringify(data) }) }
   async deleteDesign(id) { return this.request(`/designs/${id}`, { method: 'DELETE' }) }
-  async saveCanvas(id, { nodes, edges }) {
-    return this.request(`/designs/${id}/canvas`, { method: 'POST', body: JSON.stringify({ nodes, edges }) })
+  async saveCanvas(id, { nodes, edges, version }) {
+    return this.request(`/designs/${id}/canvas`, { method: 'POST', body: JSON.stringify({ nodes, edges, version }) })
   }
-  async autoSaveCanvas(id, { nodes, edges }) {
-    return this.request(`/designs/${id}/autosave`, { method: 'POST', body: JSON.stringify({ nodes, edges }) })
+  async autoSaveCanvas(id, { nodes, edges, version }) {
+    return this.request(`/designs/${id}/autosave`, { method: 'POST', body: JSON.stringify({ nodes, edges, version }) })
   }
 
   // Simulations

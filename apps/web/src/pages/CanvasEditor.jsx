@@ -69,6 +69,8 @@ function CanvasEditorInner() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { loadDesign, currentDesign, saveCanvas, saveStatus, isLoading: designLoading } = useDesignStore()
+
+  const [isInitialized, setIsInitialized] = useState(false)
   const {
     nodes: storeNodes,
     edges: storeEdges,
@@ -171,7 +173,34 @@ function CanvasEditorInner() {
   const isSyncingFromStore = useRef(false)
   const isSyncingToStore = useRef(false)
 
-  const { saveStatus: autoSaveStatus } = useAutoSave(id, nodes, edges, id && id !== 'new')
+  const {
+    saveStatus: autoSaveStatus,
+    markHydrated,
+    markDirty,
+  } = useAutoSave(
+    id,
+    nodes,
+    edges,
+    Boolean(id && id !== 'new' && isInitialized),
+    currentDesign?.version ?? null
+  )
+
+  // Wrapper to mark canvas dirty on user changes
+  const onNodesChangeWrapper = useCallback(
+    (error, newNodes) => {
+      onNodesChange(error, newNodes)
+      markDirty()
+    },
+    [onNodesChange, markDirty]
+  )
+
+  const onEdgesChangeWrapper = useCallback(
+    (error, newEdges) => {
+      onEdgesChange(error, newEdges)
+      markDirty()
+    },
+    [onEdgesChange, markDirty]
+  )
 
   // === BATCH 5E: LOAD HISTORICAL REPORTS ON DESIGN LOAD ===
   useEffect(() => {
@@ -222,34 +251,122 @@ function CanvasEditorInner() {
 
   // Load design
   useEffect(() => {
+    let cancelled = false
+
     const init = async () => {
+      /*
+       * Existing design:
+       *
+       * Do NOT clear the visible canvas before the server response.
+       * Empty state is not a valid representation of an unloaded design.
+       */
       if (id && id !== 'new') {
+        setIsInitialized(false)
+
         try {
-          clearCanvas()
-          setNodes([])
-          setEdges([])
           const design = await loadDesign(id)
-          if (design.nodes?.length > 0 || design.edges?.length > 0) {
-            isSyncingFromStore.current = true
-            setNodes(design.nodes || [])
-            setEdges(design.edges || [])
-            loadCanvasDesign(design)
-            setTimeout(() => { isSyncingFromStore.current = false }, 50)
-          }
+
+          if (cancelled) return
+
+          const loadedNodes = design?.nodes || []
+          const loadedEdges = design?.edges || []
+
+          /*
+           * Hydrate both React Flow and Zustand from the same server snapshot.
+           */
+          isSyncingFromStore.current = true
+
+          setNodes(loadedNodes)
+          setEdges(loadedEdges)
+
+          loadCanvasDesign({
+            ...design,
+            nodes: loadedNodes,
+            edges: loadedEdges,
+          })
+
+          /*
+           * Establish the loaded server state as the clean persistence
+           * baseline. Empty is VALID here if the database legitimately
+           * contains an empty design.
+           */
+          markHydrated(
+            loadedNodes,
+            loadedEdges,
+            design?.version ?? null
+          )
+
+          useCanvasStore.getState().markCanvasClean()
+
           setIsInitialized(true)
+
+          setTimeout(() => {
+            if (!cancelled) {
+              isSyncingFromStore.current = false
+            }
+          }, 50)
         } catch (err) {
-          setLogs(prev => [...prev, { type: 'error', message: `Failed to load design: ${err.message}`, timestamp: Date.now() }])
-          setIsInitialized(true)
+          if (cancelled) return
+
+          /*
+           * CRITICAL:
+           *
+           * Never set initialized=true after a failed load.
+           * Otherwise [] can become autosaveable.
+           */
+          setIsInitialized(false)
+
+          setLogs(prev => [
+            ...prev,
+            {
+              type: 'error',
+              message: `Failed to load design: ${err.message}`,
+              timestamp: Date.now(),
+            },
+          ])
+
+          console.error('Failed to load design:', err)
         }
-      } else {
+
+        return
+      }
+
+      /*
+       * New design.
+       */
+      if (!cancelled) {
         clearCanvas()
         setNodes([])
         setEdges([])
+
+        useCanvasStore.getState().markCanvasClean()
+
+        markHydrated([], [], null)
+
         setIsInitialized(true)
       }
     }
+
     init()
-  }, [id, loadDesign, setNodes, setEdges, loadCanvasDesign, clearCanvas])
+
+    return () => {
+      cancelled = true
+
+      /*
+       * Do not allow a previous design load to hydrate a newly selected
+       * design after the component has changed.
+       */
+      isSyncingFromStore.current = false
+    }
+  }, [
+    id,
+    loadDesign,
+    setNodes,
+    setEdges,
+    loadCanvasDesign,
+    clearCanvas,
+    markHydrated,
+  ])
 
   // Sync store ↔ local state
   useEffect(() => {
@@ -363,6 +480,7 @@ function CanvasEditorInner() {
   const onConnect = useCallback((params) => {
     setPendingConnection(params)
     setShowEdgeTypeMenu(true)
+    markDirty()
   }, [])
 
   // FIX: removed redundant addStoreEdge call. The sync effect copies React Flow edges to store automatically.
@@ -420,7 +538,10 @@ function CanvasEditorInner() {
     })
   }, [screenToFlowPosition, addNode])
 
-  const onNodeDragStop = useCallback((_, node) => updateNodePosition(node.id, node.position), [updateNodePosition])
+  const onNodeDragStop = useCallback((_, node) => {
+    updateNodePosition(node.id, node.position)
+    markDirty()
+  }, [updateNodePosition, markDirty])
   const onNodesDelete = useCallback((deletedNodes) => deletedNodes.forEach(node => removeNode(node.id)), [removeNode])
   const onEdgesDelete = useCallback((deletedEdges) => deletedEdges.forEach(edge => removeEdge(edge.id)), [removeEdge])
 
@@ -587,194 +708,194 @@ function CanvasEditorInner() {
     const p99Latency = globalMetrics?.p99LatencyMs || 0
 
     return {
-        id: `report-${simId}`,
-        simulationId: simId,
-        designId: id || 'new',
-        version: '1.0',
-        overallScore: Math.round(
-            Math.max(0, 100
-                - (errorRate > 0.1 ? 40 : errorRate > 0.05 ? 25 : errorRate > 0.01 ? 15 : errorRate > 0.001 ? 5 : 0)
-                - (avgLatency > 500 ? 30 : avgLatency > 200 ? 20 : avgLatency > 100 ? 10 : avgLatency > 50 ? 5 : 0)
-                - (availability < 95 ? 30 : availability < 99 ? 20 : availability < 99.9 ? 10 : availability < 99.99 ? 5 : 0)
-            )
-        ),
-        architectureScore: 70,
-        dataCompletenessScore: 70,
+      id: `report-${simId}`,
+      simulationId: simId,
+      designId: id || 'new',
+      version: '1.0',
+      overallScore: Math.round(
+        Math.max(0, 100
+          - (errorRate > 0.1 ? 40 : errorRate > 0.05 ? 25 : errorRate > 0.01 ? 15 : errorRate > 0.001 ? 5 : 0)
+          - (avgLatency > 500 ? 30 : avgLatency > 200 ? 20 : avgLatency > 100 ? 10 : avgLatency > 50 ? 5 : 0)
+          - (availability < 95 ? 30 : availability < 99 ? 20 : availability < 99.9 ? 10 : availability < 99.99 ? 5 : 0)
+        )
+      ),
+      architectureScore: 70,
+      dataCompletenessScore: 70,
+      reliabilityScore: Math.round(Math.max(0, availability)),
+      performanceScore: Math.round(Math.max(0, 100 - (avgLatency > 500 ? 30 : avgLatency > 200 ? 20 : avgLatency > 100 ? 10 : avgLatency > 50 ? 5 : 0))),
+      costScore: 60,
+      securityScore: 60,
+      confidenceScore: 80,
+      executiveSummary: {
+        summary: `Simulation ${simId} completed with ${totalRequests.toLocaleString()} requests. Average latency: ${Math.round(avgLatency)}ms. Availability: ${availability.toFixed(2)}%.`,
+        keyFinding: errorRate > 0.01
+          ? `Elevated error rate detected (${(errorRate * 100).toFixed(2)}%). Investigate failure scenarios.`
+          : avgLatency > 200
+            ? `High average latency (${Math.round(avgLatency)}ms). Consider scaling or optimization.`
+            : 'Simulation completed within acceptable parameters.',
+        keyRecommendation: errorRate > 0.01
+          ? 'Review error-prone blocks and consider redundancy.'
+          : avgLatency > 200
+            ? 'Scale horizontally or optimize hot paths.'
+            : 'Continue monitoring and consider running Monte Carlo analysis.',
+        overallScore: null,
+        dataCompletenessScore: null,
+        reliabilityScore: null,
+        performanceScore: null,
+        costScore: null,
+        securityScore: null,
+        confidenceScore: null,
+        assumptionCount: 0,
+        criticalAssumptionCount: 0,
+        scorePenaltyFromAssumptions: 0,
+      },
+      topologyAnalysis: {
+        nodeCount: currentNodes.length,
+        edgeCount: currentEdges.length,
+        avgFanOut: 0,
+        maxFanOut: 0,
+        avgFanIn: 0,
+        maxFanIn: 0,
+        cyclomaticComplexity: 0,
+        connectedComponents: 1,
+        totalBlocks: currentNodes.length,
+        totalEdges: currentEdges.length,
+        criticalErrors: [],
+        warnings: [],
+        risks: [],
+        graphStructureSummary: `${currentNodes.length} nodes, ${currentEdges.length} edges in current design.`,
+      },
+      performanceAnalysis: {
+        globalMetrics: {
+          totalRequests,
+          throughputRps: globalMetrics?.throughputRps || 0,
+          avgLatencyMs: avgLatency,
+          p99LatencyMs: p99Latency,
+          errorRate: errorRate,
+          availability,
+          droppedRequests,
+          failedRequests,
+          totalSimulatedCost: globalMetrics?.totalSimulatedCost || 0,
+          projectedMonthlyCost: globalMetrics?.projectedMonthlyCost || 0,
+          projectedAnnualCost: globalMetrics?.projectedAnnualCost || 0,
+        },
+        topLatencyBlocks: [],
+        topErrorBlocks: [],
+        topUtilizationBlocks: [],
+        topCostBlocks: [],
+        endToEndLatency: {
+          avg: avgLatency,
+          p95: globalMetrics?.p95LatencyMs || 0,
+          p99: p99Latency,
+          percentiles: {
+            p50: globalMetrics?.p50LatencyMs || avgLatency,
+            p75: globalMetrics?.p75LatencyMs || 0,
+            p90: globalMetrics?.p90LatencyMs || 0,
+            p95: globalMetrics?.p95LatencyMs || 0,
+            p99: p99Latency,
+            p999: globalMetrics?.p999LatencyMs || 0,
+          }
+        },
+        latencyBottleneck: null,
+        throughputBottleneck: null,
+        costBottleneck: null,
+      },
+      // FLAT — not wrapped in { analysis, recommendations }
+      reliabilityAnalysis: {
         reliabilityScore: Math.round(Math.max(0, availability)),
-        performanceScore: Math.round(Math.max(0, 100 - (avgLatency > 500 ? 30 : avgLatency > 200 ? 20 : avgLatency > 100 ? 10 : avgLatency > 50 ? 5 : 0))),
-        costScore: 60,
+        availability,
+        mttrMinutes: 0,
+        mtbfHours: 0,
+        failureProbabilityPerDay: 0,
+        singlePointsOfFailure: [],
+        failureChains: [],
+        blastRadiuses: [],
+        recommendations: [],
+        resilienceScore: null,
+        explainability: null,
+        blockAvailabilities: [],
+      },
+      // FLAT
+      scalabilityAnalysis: {
+        scalabilityScore: 60,
+        saturationPoints: [],
+        growthProjections: [],
+        bottlenecks: [],
+        supportsHorizontalScaling: true,
+        supportsVerticalScaling: true,
+        supportsAutoScaling: true,
+        recommendations: [],
+        explainability: null,
+        capacityLimits: [],
+        slaCompliance: [],
+        errorDistribution: {},
+      },
+      // FLAT
+      costAnalysis: {
+        currentMonthlyCost: globalMetrics?.projectedMonthlyCost || 0,
+        currentAnnualCost: (globalMetrics?.projectedMonthlyCost || 0) * 12,
+        totalCost: globalMetrics?.totalSimulatedCost || 0,
+        breakdown: { edges: [], blocks: [] },
+        drivers: [],
+        growthProjections: [],
+        recommendations: [],
+        confidence: null,
+        assumptions: { notes: [] },
+        explainability: null,
+        currency: 'USD',
+      },
+      // FLAT
+      securityAnalysis: {
         securityScore: 60,
-        confidenceScore: 80,
-        executiveSummary: {
-            summary: `Simulation ${simId} completed with ${totalRequests.toLocaleString()} requests. Average latency: ${Math.round(avgLatency)}ms. Availability: ${availability.toFixed(2)}%.`,
-            keyFinding: errorRate > 0.01
-                ? `Elevated error rate detected (${(errorRate * 100).toFixed(2)}%). Investigate failure scenarios.`
-                : avgLatency > 200
-                ? `High average latency (${Math.round(avgLatency)}ms). Consider scaling or optimization.`
-                : 'Simulation completed within acceptable parameters.',
-            keyRecommendation: errorRate > 0.01
-                ? 'Review error-prone blocks and consider redundancy.'
-                : avgLatency > 200
-                ? 'Scale horizontally or optimize hot paths.'
-                : 'Continue monitoring and consider running Monte Carlo analysis.',
-            overallScore: null,
-            dataCompletenessScore: null,
-            reliabilityScore: null,
-            performanceScore: null,
-            costScore: null,
-            securityScore: null,
-            confidenceScore: null,
-            assumptionCount: 0,
-            criticalAssumptionCount: 0,
-            scorePenaltyFromAssumptions: 0,
-        },
-        topologyAnalysis: {
-            nodeCount: currentNodes.length,
-            edgeCount: currentEdges.length,
-            avgFanOut: 0,
-            maxFanOut: 0,
-            avgFanIn: 0,
-            maxFanIn: 0,
-            cyclomaticComplexity: 0,
-            connectedComponents: 1,
-            totalBlocks: currentNodes.length,
-            totalEdges: currentEdges.length,
-            criticalErrors: [],
-            warnings: [],
-            risks: [],
-            graphStructureSummary: `${currentNodes.length} nodes, ${currentEdges.length} edges in current design.`,
-        },
-        performanceAnalysis: {
-            globalMetrics: {
-                totalRequests,
-                throughputRps: globalMetrics?.throughputRps || 0,
-                avgLatencyMs: avgLatency,
-                p99LatencyMs: p99Latency,
-                errorRate: errorRate,
-                availability,
-                droppedRequests,
-                failedRequests,
-                totalSimulatedCost: globalMetrics?.totalSimulatedCost || 0,
-                projectedMonthlyCost: globalMetrics?.projectedMonthlyCost || 0,
-                projectedAnnualCost: globalMetrics?.projectedAnnualCost || 0,
-            },
-            topLatencyBlocks: [],
-            topErrorBlocks: [],
-            topUtilizationBlocks: [],
-            topCostBlocks: [],
-            endToEndLatency: {
-                avg: avgLatency,
-                p95: globalMetrics?.p95LatencyMs || 0,
-                p99: p99Latency,
-                percentiles: {
-                    p50: globalMetrics?.p50LatencyMs || avgLatency,
-                    p75: globalMetrics?.p75LatencyMs || 0,
-                    p90: globalMetrics?.p90LatencyMs || 0,
-                    p95: globalMetrics?.p95LatencyMs || 0,
-                    p99: p99Latency,
-                    p999: globalMetrics?.p999LatencyMs || 0,
-                }
-            },
-            latencyBottleneck: null,
-            throughputBottleneck: null,
-            costBottleneck: null,
-        },
-        // FLAT — not wrapped in { analysis, recommendations }
-        reliabilityAnalysis: {
-            reliabilityScore: Math.round(Math.max(0, availability)),
-            availability,
-            mttrMinutes: 0,
-            mtbfHours: 0,
-            failureProbabilityPerDay: 0,
-            singlePointsOfFailure: [],
-            failureChains: [],
-            blastRadiuses: [],
-            recommendations: [],
-            resilienceScore: null,
-            explainability: null,
-            blockAvailabilities: [],
-        },
-        // FLAT
-        scalabilityAnalysis: {
-            scalabilityScore: 60,
-            saturationPoints: [],
-            growthProjections: [],
-            bottlenecks: [],
-            supportsHorizontalScaling: true,
-            supportsVerticalScaling: true,
-            supportsAutoScaling: true,
-            recommendations: [],
-            explainability: null,
-            capacityLimits: [],
-            slaCompliance: [],
-            errorDistribution: {},
-        },
-        // FLAT
-        costAnalysis: {
-            currentMonthlyCost: globalMetrics?.projectedMonthlyCost || 0,
-            currentAnnualCost: (globalMetrics?.projectedMonthlyCost || 0) * 12,
-            totalCost: globalMetrics?.totalSimulatedCost || 0,
-            breakdown: { edges: [], blocks: [] },
-            drivers: [],
-            growthProjections: [],
-            recommendations: [],
-            confidence: null,
-            assumptions: { notes: [] },
-            explainability: null,
-            currency: 'USD',
-        },
-        // FLAT
-        securityAnalysis: {
-            securityScore: 60,
-            findings: [],
-            criticalCount: 0,
-            highCount: 0,
-            mediumCount: 0,
-            lowCount: 0,
-            bySeverity: { critical: [], high: [], medium: [], low: [] },
-            recommendations: [],
-            explainability: null,
-        },
-        // ARRAY — not { results: [] }
-        failureScenarios: [],
-        // Correct shape for AI tab
-        aiInsights: {
-            fallback: true,
-            insights: [],
-            generatedAt: new Date().toISOString(),
-            modelVersion: 'unknown',
-            evidencePacket: null,
-            bottleneckAnalysis: null,
-            rootCauseAnalysis: null,
-            optimizationRecommendations: null,
-            riskAssessment: null,
-            costOptimization: null,
-        },
-        actionPlan: {
-            critical: [],
-            high: [],
-            medium: [],
-            low: [],
-            summary: errorRate > 0.01 || avgLatency > 200
-                ? 'Action items generated from simulation results.'
-                : 'No critical action items at this time.',
-        },
-        metadata: {
-            engineVersion: '2.0',
-            reportVersion: '1.0.0',
-            assumptions: {},
-            confidenceScore: 80,
-            aiGenerated: null,
-            aiModelVersion: null,
-            aiFallback: true,
-            aiEvidenceValidated: false,
-            assumptionCount: 0,
-            criticalAssumptionCount: 0,
-            scorePenaltyFromAssumptions: 0,
-        },
+        findings: [],
+        criticalCount: 0,
+        highCount: 0,
+        mediumCount: 0,
+        lowCount: 0,
+        bySeverity: { critical: [], high: [], medium: [], low: [] },
+        recommendations: [],
+        explainability: null,
+      },
+      // ARRAY — not { results: [] }
+      failureScenarios: [],
+      // Correct shape for AI tab
+      aiInsights: {
+        fallback: true,
+        insights: [],
         generatedAt: new Date().toISOString(),
+        modelVersion: 'unknown',
+        evidencePacket: null,
+        bottleneckAnalysis: null,
+        rootCauseAnalysis: null,
+        optimizationRecommendations: null,
+        riskAssessment: null,
+        costOptimization: null,
+      },
+      actionPlan: {
+        critical: [],
+        high: [],
+        medium: [],
+        low: [],
+        summary: errorRate > 0.01 || avgLatency > 200
+          ? 'Action items generated from simulation results.'
+          : 'No critical action items at this time.',
+      },
+      metadata: {
+        engineVersion: '2.0',
+        reportVersion: '1.0.0',
+        assumptions: {},
+        confidenceScore: 80,
+        aiGenerated: null,
+        aiModelVersion: null,
+        aiFallback: true,
+        aiEvidenceValidated: false,
+        assumptionCount: 0,
+        criticalAssumptionCount: 0,
+        scorePenaltyFromAssumptions: 0,
+      },
+      generatedAt: new Date().toISOString(),
     }
-}
+  }
   // === END BATCH 5E ===
 
   // === REAL SIMULATION INTEGRATION ===
@@ -829,7 +950,7 @@ function CanvasEditorInner() {
     setSimulationProgress(0)
 
     try {
-        const result = await api.runSimulation(id, {
+      const result = await api.runSimulation(id, {
         trafficPattern: config.trafficPattern || 'steady',
         rps: config.rps || 100,
         duration: config.duration || 300,
@@ -1232,8 +1353,8 @@ function CanvasEditorInner() {
             <ReactFlow
               nodes={nodes}
               edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
+              onNodesChange={onNodesChangeWrapper}
+              onEdgesChange={onEdgesChangeWrapper}
               onConnect={onConnect}
               onNodeClick={onNodeClick}
               onEdgeClick={onEdgeClick}
@@ -1368,12 +1489,12 @@ function CanvasEditorInner() {
               activePanel === 'validation'
                 ? 'bg-resonance-accent/20 text-resonance-accent'
                 : validationResult?.findings?.some(f => f.severity === 'critical')
-                ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20'
-                : validationResult?.findings?.some(f => f.severity === 'warning')
-                ? 'bg-amber-500/10 text-amber-500 hover:bg-amber-500/20'
-                : validationResult?.findings?.length > 0
-                ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20'
-                : 'text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-hover'
+                  ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20'
+                  : validationResult?.findings?.some(f => f.severity === 'warning')
+                    ? 'bg-amber-500/10 text-amber-500 hover:bg-amber-500/20'
+                    : validationResult?.findings?.length > 0
+                      ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20'
+                      : 'text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-hover'
             }`}
             title="Validation Results"
           >

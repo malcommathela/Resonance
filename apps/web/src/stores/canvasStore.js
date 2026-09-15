@@ -97,6 +97,8 @@ export const useCanvasStore = create((set, get) => ({
   nodes: [],
   edges: [],
 
+  isDirty: false,
+
   selectedNodeId: null,
   selectedEdgeId: null,
   selectedNodeIds: [],
@@ -232,6 +234,16 @@ export const useCanvasStore = create((set, get) => ({
     savePanelState(defaultPanels)
     set({ panels: defaultPanels })
   },
+
+  // ==========================================================================
+  // CANVAS PERSISTENCE STATE
+  // ==========================================================================
+
+  markCanvasDirty: () => set({ isDirty: true }),
+
+  markCanvasClean: () => set({ isDirty: false }),
+
+  resetCanvasPersistence: () => set({ isDirty: false }),
 
   // ==========================================================================
   // SIMULATION AUTO-REPORT ACTIONS
@@ -419,7 +431,7 @@ export const useCanvasStore = create((set, get) => ({
         isCustom: overrides.isCustom || false,
       },
     }
-    set({ nodes: [...get().nodes, newNode] })
+    set({ nodes: [...get().nodes, newNode], isDirty: true })
     return newNode
   },
 
@@ -439,7 +451,7 @@ export const useCanvasStore = create((set, get) => ({
         config: stripDecorativeProps(node.data?.config || {}),
       },
     }
-    set({ nodes: [...get().nodes, newNode] })
+    set({ nodes: [...get().nodes, newNode], isDirty: true })
     return newNode
   },
 
@@ -483,7 +495,8 @@ export const useCanvasStore = create((set, get) => ({
     set({
       nodes: get().nodes.map(n =>
         n.id === id ? { ...n, position: { x: snapToGrid(position.x), y: snapToGrid(position.y) } } : n
-      )
+      ),
+      isDirty: true
     })
   },
 
@@ -499,6 +512,7 @@ export const useCanvasStore = create((set, get) => ({
         const tgt = e.target || e.targetId
         return src !== id && tgt !== id
       }),
+      isDirty: true,
       selectedNodeId: wasSelected ? null : state.selectedNodeId,
       selectedNodeIds: wasInMulti ? state.selectedNodeIds.filter(sid => sid !== id) : state.selectedNodeIds,
       selectedNode: wasSelected ? null : state.selectedNode,
@@ -534,7 +548,7 @@ export const useCanvasStore = create((set, get) => ({
           ...(edge.data || {}),
         },
       }
-      set({ edges: [...get().edges, newEdge] })
+      set({ edges: [...get().edges, newEdge], isDirty: true })
       return newEdge
     }
     return null
@@ -547,6 +561,7 @@ export const useCanvasStore = create((set, get) => ({
     const wasInMulti = state.selectedEdgeIds.includes(id)
     set({
       edges: state.edges.filter(e => e.id !== id),
+      isDirty: true,
       selectedEdgeId: wasSelected ? null : state.selectedEdgeId,
       selectedEdgeIds: wasInMulti ? state.selectedEdgeIds.filter(seid => seid !== id) : state.selectedEdgeIds,
       selectedEdge: wasSelected ? null : state.selectedEdge,
@@ -584,7 +599,8 @@ export const useCanvasStore = create((set, get) => ({
           mergedData.behavioralModel = deepMerge(e.data?.behavioralModel || {}, dataUpdates.behavioralModel)
         }
         return { ...e, data: mergedData }
-      })
+      }),
+      isDirty: true
     })
   },
 

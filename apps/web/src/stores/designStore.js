@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { api } from '@/services/api'
+import { useCanvasStore } from './canvasStore'
 import {
   fetchDesignReports,
   fetchSimulationReport,
@@ -167,10 +167,11 @@ export const useDesignStore = create((set, get) => ({
     }
   },
 
-  saveCanvas: async (id, { nodes, edges }) => {
+  saveCanvas: async (id, { nodes, edges, version }) => {
     set({ isSaving: true, saveStatus: 'saving' })
+
     try {
-      await api.saveCanvas(id, { nodes, edges })
+      const result = await api.saveCanvas(id, { nodes, edges, version })
 
       const blockCount = nodes?.length || 0
 
@@ -185,47 +186,62 @@ export const useDesignStore = create((set, get) => ({
         currentDesign:
           state.currentDesign?.id === id
             ? {
-                ...state.currentDesign,
-                blocks: blockCount,
-                updatedAt: new Date().toISOString(),
-              }
+              ...state.currentDesign,
+              blocks: blockCount,
+              updatedAt: new Date().toISOString(),
+              ...(result?.version != null ? { version: result.version } : {}),
+            }
             : state.currentDesign,
       }))
 
+      useCanvasStore.getState().markCanvasClean()
+
       setTimeout(() => set({ saveStatus: 'idle' }), 2000)
+
+      return result
     } catch (err) {
       set({ isSaving: false, saveStatus: 'error', error: err.message })
       throw err
     }
   },
 
-  autoSaveCanvas: async (id, { nodes, edges }) => {
+  autoSaveCanvas: async (id, { nodes, edges, version }) => {
+    set({ saveStatus: 'saving' })
+
     try {
-      await api.autoSaveCanvas(id, { nodes, edges })
+      const result = await api.autoSaveCanvas(id, { nodes, edges, version })
 
       const blockCount = nodes?.length || 0
 
       set((state) => ({
         saveStatus: 'saved',
+
         designs: state.designs.map((d) =>
           d.id === id
             ? { ...d, blocks: blockCount, updatedAt: new Date().toISOString() }
             : d
         ),
+
         currentDesign:
           state.currentDesign?.id === id
             ? {
-                ...state.currentDesign,
-                blocks: blockCount,
-                updatedAt: new Date().toISOString(),
-              }
+              ...state.currentDesign,
+              blocks: blockCount,
+              updatedAt: new Date().toISOString(),
+              ...(result?.version != null ? { version: result.version } : {}),
+            }
             : state.currentDesign,
       }))
 
+      useCanvasStore.getState().markCanvasClean()
+
       setTimeout(() => set({ saveStatus: 'idle' }), 2000)
+
+      return result
     } catch (err) {
       set({ saveStatus: 'error' })
       console.error('Auto-save failed:', err)
+      throw err
     }
   },
 
@@ -241,32 +257,6 @@ export const useDesignStore = create((set, get) => ({
       const reports = await fetchDesignReports(designId)
       set({ reports: reports || [], reportsLoading: false })
       return reports || []
-    } catch (err) {
-      set({ reportsError: err.message, reportsLoading: false })
-      return []
-    }
-  },
-
-  // The reports workspace spans designs. Loading each design into one shared
-  // `reports` array caused the last request to win; aggregate first, then
-  // commit one stable list to the store.
-  loadAllReports: async (designs) => {
-    const designList = designs || get().designs
-    set({ reportsLoading: true, reportsError: null })
-    try {
-      const results = await Promise.all(
-        designList.map(async (design) => {
-          const reports = await fetchDesignReports(design.id)
-          return (reports || []).map((report) => ({
-            ...report,
-            designName: report.designName || design.name,
-            design: report.design || { id: design.id, name: design.name, accentColor: design.accentColor },
-          }))
-        })
-      )
-      const reports = results.flat()
-      set({ reports, reportsLoading: false })
-      return reports
     } catch (err) {
       set({ reportsError: err.message, reportsLoading: false })
       return []

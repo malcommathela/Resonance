@@ -62,17 +62,17 @@ router.get('/', async (req, res) => {
     // 2. Latest simulation per design (uses simulations_designId_createdAt_idx)
     const simulations = designIds.length
       ? await prisma.simulation.findMany({
-          where: { designId: { in: designIds } },
-          orderBy: [{ designId: 'asc' }, { createdAt: 'desc' }],
-          select: {
-            designId: true,
-            id: true,
-            scenario: true,
-            createdAt: true,
-            projectedMonthlyCost: true,
-            status: true,
-          },
-        })
+        where: { designId: { in: designIds } },
+        orderBy: [{ designId: 'asc' }, { createdAt: 'desc' }],
+        select: {
+          designId: true,
+          id: true,
+          scenario: true,
+          createdAt: true,
+          projectedMonthlyCost: true,
+          status: true,
+        },
+      })
       : []
 
     const simMap = new Map()
@@ -83,15 +83,15 @@ router.get('/', async (req, res) => {
     // 3. Latest report per design (uses simulation_reports_designId_generatedAt_idx)
     const reports = designIds.length
       ? await prisma.simulationReport.findMany({
-          where: { designId: { in: designIds } },
-          orderBy: [{ designId: 'asc' }, { generatedAt: 'desc' }],
-          select: {
-            designId: true,
-            id: true,
-            overallScore: true,
-            generatedAt: true,
-          },
-        })
+        where: { designId: { in: designIds } },
+        orderBy: [{ designId: 'asc' }, { generatedAt: 'desc' }],
+        select: {
+          designId: true,
+          id: true,
+          overallScore: true,
+          generatedAt: true,
+        },
+      })
       : []
 
     const reportMap = new Map()
@@ -103,15 +103,15 @@ router.get('/', async (req, res) => {
     const teams =
       teamIds.length > 0
         ? await prisma.team.findMany({
-            where: { id: { in: teamIds } },
-            include: {
-              members: {
-                include: {
-                  user: { select: { name: true, avatar: true } },
-                },
+          where: { id: { in: teamIds } },
+          include: {
+            members: {
+              include: {
+                user: { select: { name: true, avatar: true } },
               },
             },
-          })
+          },
+        })
         : []
 
     const teamMap = new Map(teams.map((t) => [t.id, t]))
@@ -206,7 +206,7 @@ router.get('/:id', async (req, res) => {
       },
     }))
 
-    res.json({ ...design, nodes, edges })
+    res.json({ ...design, nodes, edges, version: design.version })
   } catch (err) {
     logger.error({ err: err.message, designId: req.params.id }, 'Failed to get design')
     res.status(500).json({ error: err.message })
@@ -279,124 +279,289 @@ router.patch('/:id', async (req, res) => {
 // ============================================================================
 // BATCHED CANVAS SYNC — replaces N+1 sequential upserts
 // ============================================================================
-async function syncCanvasData(designId, nodes, edges) {
-  const design = await prisma.design.findUnique({
-    where: { id: designId },
-  })
-  if (!design) {
-    const err = new Error('Design not found')
-    err.status = 404
-    throw err
-  }
+async function syncCanvasData(
+  designId,
+  nodes,
+  edges,
+  expectedVersion
+) {
+  const result = await prisma.$transaction(async (tx) => {
+    const design = await tx.design.findUnique({
+      where: { id: designId },
+      select: {
+        id: true,
+        version: true,
+      },
+    })
 
-  const nodeIds = nodes?.map((n) => n.id).filter(Boolean) || []
-  const edgeIds = edges?.map((e) => e.id).filter(Boolean) || []
+    if (!design) {
+      const err = new Error('Design not found')
+      err.status = 404
+      err.code = 'DESIGN_NOT_FOUND'
+      throw err
+    }
 
-  // Delete stale in parallel
-  await prisma.$transaction([
-    nodeIds.length > 0
-      ? prisma.block.deleteMany({ where: { designId, id: { notIn: nodeIds } } })
-      : prisma.block.deleteMany({ where: { designId } }),
-    edgeIds.length > 0
-      ? prisma.edge.deleteMany({ where: { designId, id: { notIn: edgeIds } } })
-      : prisma.edge.deleteMany({ where: { designId } }),
-  ])
+    /*
+     * Optimistic concurrency protection.
+     *
+     * An autosave based on an old canvas snapshot must never overwrite
+     * a newer snapshot.
+     */
+    if (
+      expectedVersion != null &&
+      design.version !== expectedVersion
+    ) {
+      const err = new Error(
+        `Design has changed since this canvas was loaded. ` +
+        `Expected version ${expectedVersion}, current version ${design.version}.`
+      )
 
-  // Batch upsert blocks + edges in one transaction
-  const blockOps = (nodes || []).map((node) =>
-    prisma.block.upsert({
-      where: { id: node.id },
-      update: {
-        label: node.data?.label,
-        type: node.data?.type,
-        x: node.position?.x || 0,
-        y: node.position?.y || 0,
-        color: node.data?.color,
-        config: node.data?.config ? JSON.stringify(node.data.config) : '{}',
-        metrics: node.data?.metrics ? JSON.stringify(node.data.metrics) : null,
+      err.status = 409
+      err.code = 'DESIGN_VERSION_CONFLICT'
+      err.currentVersion = design.version
+
+      throw err
+    }
+
+    const safeNodes = Array.isArray(nodes) ? nodes : []
+    const safeEdges = Array.isArray(edges) ? edges : []
+
+    const nodeIds = safeNodes.map((n) => n.id).filter(Boolean)
+    const edgeIds = safeEdges.map((e) => e.id).filter(Boolean)
+
+    /*
+     * Empty [] is now allowed ONLY when it arrives with a valid revision.
+     *
+     * This means:
+     *
+     * - legitimate user "delete everything" -> allowed
+     * - stale initial autosave -> rejected by version
+     * - stale tab -> rejected by version
+     */
+    await tx.block.deleteMany({
+      where: {
+        designId,
+        ...(nodeIds.length > 0
+          ? { id: { notIn: nodeIds } }
+          : {}),
+      },
+    })
+
+    await tx.edge.deleteMany({
+      where: {
+        designId,
+        ...(edgeIds.length > 0
+          ? { id: { notIn: edgeIds } }
+          : {}),
+      },
+    })
+
+    /*
+     * Batch upsert blocks.
+     */
+    const blockOps = safeNodes.map((node) =>
+      tx.block.upsert({
+        where: { id: node.id },
+
+        update: {
+          label: node.data?.label,
+          type: node.data?.type,
+          x: node.position?.x || 0,
+          y: node.position?.y || 0,
+          color: node.data?.color,
+          config: node.data?.config
+            ? JSON.stringify(node.data.config)
+            : '{}',
+          metrics: node.data?.metrics
+            ? JSON.stringify(node.data.metrics)
+            : null,
+          updatedAt: new Date(),
+        },
+
+        create: {
+          id: node.id,
+          designId,
+          label: node.data?.label || 'Block',
+          type: node.data?.type || 'service',
+          x: node.position?.x || 0,
+          y: node.position?.y || 0,
+          color: node.data?.color || '#3b82f6',
+          config: node.data?.config
+            ? JSON.stringify(node.data.config)
+            : '{}',
+          metrics: node.data?.metrics
+            ? JSON.stringify(node.data.metrics)
+            : null,
+        },
+      })
+    )
+
+    /*
+     * Batch upsert edges.
+     */
+    const edgeOps = safeEdges.map((edge) =>
+      tx.edge.upsert({
+        where: { id: edge.id },
+
+        update: {
+          sourceId: edge.source,
+          targetId: edge.target,
+          connectionType:
+            edge.data?.connectionType || 'http',
+          animated:
+            edge.animated ?? true,
+          label:
+            edge.data?.label || null,
+          config:
+            edge.data
+              ? JSON.stringify(edge.data)
+              : '{}',
+        },
+
+        create: {
+          id: edge.id,
+          designId,
+          sourceId: edge.source,
+          targetId: edge.target,
+          connectionType:
+            edge.data?.connectionType || 'http',
+          animated:
+            edge.animated ?? true,
+          label:
+            edge.data?.label || null,
+          config:
+            edge.data
+              ? JSON.stringify(edge.data)
+              : '{}',
+        },
+      })
+    )
+
+    /*
+     * Prisma transactions can execute the operations together.
+     * Keep the existing chunking behavior if your current file already
+     * has very large designs.
+     */
+    const CHUNK_SIZE = 50
+
+    for (let i = 0; i < blockOps.length; i += CHUNK_SIZE) {
+      await Promise.all(
+        blockOps.slice(i, i + CHUNK_SIZE).map((op) => op())
+      )
+    }
+
+    for (let i = 0; i < edgeOps.length; i += CHUNK_SIZE) {
+      await Promise.all(
+        edgeOps.slice(i, i + CHUNK_SIZE).map((op) => op())
+      )
+    }
+
+    /*
+     * Version increments atomically with the canvas mutation.
+     */
+    const updatedDesign = await tx.design.update({
+      where: {
+        id: designId,
+      },
+
+      data: {
+        version: {
+          increment: 1,
+        },
         updatedAt: new Date(),
       },
-      create: {
-        id: node.id,
-        designId,
-        label: node.data?.label || 'Block',
-        type: node.data?.type || 'service',
-        x: node.position?.x || 0,
-        y: node.position?.y || 0,
-        color: node.data?.color || '#3b82f6',
-        config: node.data?.config ? JSON.stringify(node.data.config) : '{}',
-        metrics: node.data?.metrics ? JSON.stringify(node.data.metrics) : null,
+
+      select: {
+        id: true,
+        version: true,
+        updatedAt: true,
       },
     })
-  )
 
-  const edgeOps = (edges || []).map((edge) =>
-    prisma.edge.upsert({
-      where: { id: edge.id },
-      update: {
-        sourceId: edge.source,
-        targetId: edge.target,
-        connectionType: edge.data?.connectionType || 'http',
-        animated: edge.animated ?? true,
-        label: edge.label,
-      },
-      create: {
-        id: edge.id,
-        designId,
-        sourceId: edge.source,
-        targetId: edge.target,
-        connectionType: edge.data?.connectionType || 'http',
-        animated: edge.animated ?? true,
-        label: edge.label,
-      },
-    })
-  )
-
-  const allOps = [...blockOps, ...edgeOps]
-  // Chunk to avoid huge transactions (Prisma/Postgres comfort zone)
-  const CHUNK_SIZE = 50
-  for (let i = 0; i < allOps.length; i += CHUNK_SIZE) {
-    await prisma.$transaction(allOps.slice(i, i + CHUNK_SIZE))
-  }
-
-  await prisma.design.update({
-    where: { id: designId },
-    data: { updatedAt: new Date() },
+    return updatedDesign
   })
+
+  return result
 }
 
 router.post('/:id/canvas', async (req, res) => {
   try {
-    const { nodes, edges } = req.body
+    const { nodes, edges, version } = req.body
     await assertDesignWriteAccess(req, req.params.id)
-    await syncCanvasData(req.params.id, nodes, edges)
+    const savedDesign = await syncCanvasData(
+      req.params.id,
+      nodes,
+      edges,
+      version
+    )
     await invalidateDesignCache(req.dbUser.id, req.params.id)
     await logAuditEvent({
       userId: req.dbUser.id,
       designId: req.params.id,
       action: 'design_canvas_saved',
-      details: { blockCount: nodes?.length || 0, edgeCount: edges?.length || 0 },
+      details: {
+        blockCount: nodes?.length || 0,
+        edgeCount: edges?.length || 0,
+        version: savedDesign.version,
+      },
       clientInfo: getClientInfo(req),
     })
-    res.json({ success: true })
+    res.json({
+      success: true,
+      version: savedDesign.version,
+      updatedAt: savedDesign.updatedAt,
+    })
   } catch (err) {
     const status = err.status || 500
-    logger.error({ err: err.message, designId: req.params.id }, 'Failed to save canvas')
-    res.status(status).json({ error: err.message })
+    logger.error(
+      {
+        err: err.message,
+        designId: req.params.id,
+        code: err.code,
+      },
+      'Failed to save canvas'
+    )
+
+    res.status(status).json({
+      error: err.message,
+      code: err.code,
+      currentVersion: err.currentVersion,
+    })
   }
 })
 
 router.post('/:id/autosave', async (req, res) => {
   try {
-    const { nodes, edges } = req.body
+    const { nodes, edges, version } = req.body
     await assertDesignWriteAccess(req, req.params.id)
-    await syncCanvasData(req.params.id, nodes, edges)
+    const savedDesign = await syncCanvasData(
+      req.params.id,
+      nodes,
+      edges,
+      version
+    )
     await invalidateDesignCache(req.dbUser.id, req.params.id)
-    res.json({ success: true })
+    res.json({
+      success: true,
+      version: savedDesign.version,
+      updatedAt: savedDesign.updatedAt,
+    })
   } catch (err) {
     const status = err.status || 500
-    logger.error({ err: err.message, designId: req.params.id }, 'Failed to autosave')
-    res.status(status).json({ error: err.message })
+    logger.error(
+      {
+        err: err.message,
+        designId: req.params.id,
+        code: err.code,
+      },
+      'Failed to autosave'
+    )
+
+    res.status(status).json({
+      error: err.message,
+      code: err.code,
+      currentVersion: err.currentVersion,
+    })
   }
 })
 
@@ -503,32 +668,32 @@ router.get('/:id/overview', async (req, res) => {
       },
       latestReport: latestReport
         ? {
-            id: latestReport.id,
-            version: latestReport.version,
-            overallScore: latestReport.overallScore,
-            architectureScore: latestReport.architectureScore,
-            reliabilityScore: latestReport.reliabilityScore,
-            performanceScore: latestReport.performanceScore,
-            costScore: latestReport.costScore,
-            executiveSummary: latestReport.executiveSummary,
-            actionPlan: latestReport.actionPlan,
-            generatedAt: latestReport.generatedAt,
-          }
+          id: latestReport.id,
+          version: latestReport.version,
+          overallScore: latestReport.overallScore,
+          architectureScore: latestReport.architectureScore,
+          reliabilityScore: latestReport.reliabilityScore,
+          performanceScore: latestReport.performanceScore,
+          costScore: latestReport.costScore,
+          executiveSummary: latestReport.executiveSummary,
+          actionPlan: latestReport.actionPlan,
+          generatedAt: latestReport.generatedAt,
+        }
         : null,
       latestSimulation: latestSimulation
         ? {
-            id: latestSimulation.id,
-            scenario: latestSimulation.scenario,
-            trafficPattern: latestSimulation.trafficPattern,
-            duration: latestSimulation.duration,
-            confidenceLevel: latestSimulation.confidenceLevel,
-            monteCarloPasses: latestSimulation.monteCarloPasses,
-            totalSimulatedCost: latestSimulation.totalSimulatedCost,
-            projectedMonthlyCost: latestSimulation.projectedMonthlyCost,
-            projectedAnnualCost: latestSimulation.projectedAnnualCost,
-            status: latestSimulation.status,
-            createdAt: latestSimulation.createdAt,
-          }
+          id: latestSimulation.id,
+          scenario: latestSimulation.scenario,
+          trafficPattern: latestSimulation.trafficPattern,
+          duration: latestSimulation.duration,
+          confidenceLevel: latestSimulation.confidenceLevel,
+          monteCarloPasses: latestSimulation.monteCarloPasses,
+          totalSimulatedCost: latestSimulation.totalSimulatedCost,
+          projectedMonthlyCost: latestSimulation.projectedMonthlyCost,
+          projectedAnnualCost: latestSimulation.projectedAnnualCost,
+          status: latestSimulation.status,
+          createdAt: latestSimulation.createdAt,
+        }
         : null,
     }
 
