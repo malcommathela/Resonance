@@ -143,7 +143,6 @@ function CanvasEditorInner() {
   const [simulationProgress, setSimulationProgress] = useState(0)
   const [simulationId, setSimulationId] = useState(null)
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false)
-  const [isInitialized, setIsInitialized] = useState(false)
   const [showSaveNewModal, setShowSaveNewModal] = useState(false)
   const [newDesignName, setNewDesignName] = useState('')
   const [showEdgeTypeMenu, setShowEdgeTypeMenu] = useState(false)
