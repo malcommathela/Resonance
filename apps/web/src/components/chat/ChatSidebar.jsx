@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   MoreHorizontal, Network, PanelLeftClose, PanelLeftOpen,
-  Pencil, Plus, Search, Trash2,
+  Pencil, Plus, Search, Trash2, Zap,
 } from 'lucide-react'
 import { useChatStore } from '@/stores/chatStore'
 import { useAuthStore } from '@/stores/authStore'
 import { ProfileDropdown } from '@/components/ui/ProfileDropdown'
+import { ShimmerBar } from '@/components/ui/skeletons'
 
 const DAY_MS = 86400000
 const COLLAPSE_KEY = 'resonance-chat-sidebar-collapsed'
@@ -67,12 +68,15 @@ const ConversationItem = ({ session, active, onOpen, onRename, onDelete }) => {
         title={session.title}
         className={`w-full flex items-center gap-2.5 pl-3 pr-8 py-2 rounded-lg text-left transition-all duration-150 ${
           active
-            ? 'bg-resonance-bg-hover text-resonance-text-primary ring-1 ring-resonance-border'
+            ? 'bg-resonance-accent text-resonance-neutral'
             : 'text-resonance-text-secondary hover:bg-resonance-bg-hover hover:text-resonance-text-primary'
         }`}
       >
         {session.designId && (
-          <Network size={13} className="shrink-0 text-resonance-accent" />
+          <Network
+            size={13}
+            className={`shrink-0 ${active ? 'text-resonance-neutral' : 'text-resonance-accent'}`}
+          />
         )}
         <span className="flex-1 text-[13px] font-medium truncate">{session.title}</span>
       </button>
@@ -84,9 +88,11 @@ const ConversationItem = ({ session, active, onOpen, onRename, onDelete }) => {
           setMenuOpen((v) => !v)
         }}
         title="More options"
-        className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-md transition-all opacity-0 group-hover:opacity-100 text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-tertiary ${
-          menuOpen ? 'opacity-100' : ''
-        }`}
+        className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-md transition-all ${
+          active
+            ? 'opacity-0 group-hover:opacity-100 text-resonance-neutral hover:bg-black/10'
+            : 'opacity-0 group-hover:opacity-100 text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-tertiary'
+        } ${menuOpen ? 'opacity-100' : ''}`}
       >
         <MoreHorizontal size={14} />
       </button>
@@ -121,12 +127,31 @@ const ConversationItem = ({ session, active, onOpen, onRename, onDelete }) => {
   )
 }
 
+/* Skeleton rows mirroring ConversationItem geometry — ShimmerBar only */
+const SKELETON_WIDTHS = ['w-4/5', 'w-3/5', 'w-11/12', 'w-2/3', 'w-3/4', 'w-1/2']
+
+const ConversationListSkeleton = () => (
+  <div aria-hidden="true">
+    <div className="px-3 py-1.5">
+      <ShimmerBar className="h-3 w-14" />
+    </div>
+    <div className="space-y-0.5">
+      {SKELETON_WIDTHS.map((w) => (
+        <div key={w} className="flex items-center gap-2.5 pl-3 pr-8 py-2">
+          <ShimmerBar className={`h-[13px] ${w}`} />
+        </div>
+      ))}
+    </div>
+  </div>
+)
+
 /*
  * Conversations sidebar (ChatGPT/Claude conventions) — only rendered inside
  * active chat sessions. Collapses to an icon rail; collapse state persists.
  */
 export const ChatSidebar = () => {
   const sessions = useChatStore((s) => s.sessions)
+  const sessionsLoaded = useChatStore((s) => s.sessionsLoaded)
   const activeSessionId = useChatStore((s) => s.activeSessionId)
   const loadSession = useChatStore((s) => s.loadSession)
   const loadSessions = useChatStore((s) => s.loadSessions)
@@ -188,19 +213,8 @@ export const ChatSidebar = () => {
   if (collapsed) {
     return (
       <aside className="w-[60px] shrink-0 border-r border-resonance-border bg-resonance-bg-secondary flex flex-col items-center py-3 gap-1.5 h-full transition-[width] duration-200">
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          title="Expand sidebar"
-          aria-label="Expand sidebar"
-          className={`${railButton} group relative overflow-hidden`}
-        >
-          <img
-            src="/logo.png"
-            alt="Resonance logo"
-            className="w-[18px] h-[18px] rounded object-cover transition-all duration-150 group-hover:scale-75 group-hover:opacity-0 group-focus-visible:scale-75 group-focus-visible:opacity-0"
-          />
-          <PanelLeftOpen size={18} className="absolute opacity-0 scale-75 transition-all duration-150 group-hover:scale-100 group-hover:opacity-100 group-focus-visible:scale-100 group-focus-visible:opacity-100" />
+        <button type="button" onClick={toggleCollapsed} title="Expand sidebar" className={railButton}>
+          <PanelLeftOpen size={18} />
         </button>
         <button type="button" onClick={() => createSession()} title="New conversation" className={`${railButton} bg-resonance-accent text-resonance-neutral hover:bg-resonance-accent-hover`}>
           <Plus size={18} />
@@ -211,7 +225,18 @@ export const ChatSidebar = () => {
 
         <div className="flex-1" />
 
-        <ProfileDropdown user={user} onSignOut={logout} avatarOnly />
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          title={user?.name || 'Profile'}
+          className="w-9 h-9 rounded-full bg-resonance-accent p-0.5 hover:opacity-90 transition-opacity"
+        >
+          <img
+            src={user?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(user?.email || user?.name || 'resonance-user')}`}
+            alt={user?.name || 'Profile'}
+            className="h-full w-full rounded-full object-cover bg-resonance-bg-secondary"
+          />
+        </button>
       </aside>
     )
   }
@@ -227,11 +252,9 @@ export const ChatSidebar = () => {
           className="flex items-center gap-2 rounded-lg px-1 py-1 hover:opacity-90 transition-opacity"
           title="Back to Home"
         >
-          <img
-            src="/logo.png"
-            alt="Resonance logo"
-            className="w-7 h-7 rounded-lg object-cover"
-          />
+          <span className="w-7 h-7 rounded-lg bg-resonance-accent flex items-center justify-center">
+            <Zap size={14} className="text-resonance-neutral" strokeWidth={2.5} />
+          </span>
           <span className="text-[15px] font-bold tracking-tight text-resonance-text-primary">
             Resonance
           </span>
@@ -270,8 +293,10 @@ export const ChatSidebar = () => {
       </div>
 
       {/* Conversation list */}
-      <div className="flex-1 overflow-y-auto px-2 pt-3 pb-2 min-h-0">
-        {groups.length === 0 ? (
+      <div className="flex-1 overflow-y-auto px-2 pt-3 pb-2 min-h-0" aria-busy={!sessionsLoaded}>
+        {!sessionsLoaded && sessions.length === 0 ? (
+          <ConversationListSkeleton />
+        ) : groups.length === 0 ? (
           <p className="text-xs text-resonance-text-muted text-center px-3 py-8">
             {query ? 'No conversations match your search' : 'No conversations yet'}
           </p>
