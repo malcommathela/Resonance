@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { useCanvasStore } from './canvasStore'
+import { api } from '@/services/api'
 import {
   fetchDesignReports,
   fetchSimulationReport,
