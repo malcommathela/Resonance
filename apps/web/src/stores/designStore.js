@@ -1,12 +1,15 @@
 import { create } from 'zustand'
 import { useCanvasStore } from './canvasStore'
-import { api } from '@/services/api'
+import { api } from '@/services/api.js'
 import {
   fetchDesignReports,
   fetchSimulationReport,
   compareReports as compareSimulationReports,
   cacheReport,
 } from '@/services/simulation'
+
+// Monotonic id so a slow loadAllReports can't overwrite a newer one.
+let reportRequestId = 0
 
 // Helper to ensure designs always have computed fields
 const enrichDesign = (design) => {
@@ -265,6 +268,65 @@ export const useDesignStore = create((set, get) => ({
   },
 
   selectReport: (reportId) => set({ selectedReportId: reportId }),
+
+  loadAllReports: async (designs) => {
+    const designList = designs || get().designs || []
+    const requestId = ++reportRequestId
+    set({ reportsLoading: true, reportsError: null })
+    try {
+      const results = await Promise.allSettled(
+        designList.map(async (design) => {
+          const list = await fetchDesignReports(design.id)
+          return (list || []).map((report) => ({
+            ...report,
+            designName: report.designName || design.name,
+            design: report.design || {
+              id: design.id,
+              name: design.name,
+              accentColor: design.accentColor,
+            },
+          }))
+        })
+      )
+      if (requestId !== reportRequestId) return get().reports
+      const reports = results
+        .filter((r) => r.status === 'fulfilled')
+        .flatMap((r) => r.value || [])
+      const failures = results.filter((r) => r.status === 'rejected')
+      set((state) => ({
+        reports,
+        reportsLoading: false,
+        reportsError:
+          failures.length > 0
+            ? `${failures.length} design report request(s) failed`
+            : null,
+        // Clear a selection that no longer exists in the fresh list.
+        selectedReportId: reports.some(
+          (r) =>
+            r.id === state.selectedReportId ||
+            r.simulationId === state.selectedReportId
+        )
+          ? state.selectedReportId
+          : null,
+        currentReport: reports.some(
+          (r) =>
+            r.id === state.selectedReportId ||
+            r.simulationId === state.selectedReportId
+        )
+          ? state.currentReport
+          : null,
+      }))
+      return reports
+    } catch (err) {
+      if (requestId !== reportRequestId) return get().reports
+      set({
+        reports: [],
+        reportsLoading: false,
+        reportsError: err.message || 'Failed to load reports',
+      })
+      return []
+    }
+  },
 
   loadReport: async (simulationId) => {
     if (!simulationId) return null
