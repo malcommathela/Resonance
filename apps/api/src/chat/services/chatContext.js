@@ -1,15 +1,15 @@
 // ============================================================================
 // CHAT CONTEXT — Chat spec §19-20, §40-41, §68, §70
-// Builds the design-aware context for a request, keyed by design version so
+// Builds the design-aware context for a request, keyed by context revision so
 // cached context can never go stale: "Invalidate for performance. Version for
 // correctness." Every context carries a fingerprint identifying exactly which
-// design/simulation state it describes.
+// design/simulation/report state it describes.
 // ============================================================================
 
 import { prisma } from '../../lib/db.js'
 import { logger } from '../../lib/logger.js'
 import { contextFingerprint, hashParts } from '../../utils/hashing.js'
-import { withTimeout } from '../../utils/retry.js'
+import { withRetry, withTimeout } from '../../utils/retry.js'
 import { ERROR_CODES } from '../../utils/errors.js'
 import { getDesignContextCache, setDesignContextCache, acquireLock, releaseLock, chatKeys } from './cacheService.js'
 import { SYSTEM_PERSONA, buildDesignContextPrefix, PROMPT_VERSIONS } from '../prompts.js'
@@ -22,9 +22,44 @@ const HISTORY_WINDOW = 20             // recent turns sent to the model (spec §
 const MAX_COMPONENTS = 60             // context size protection (spec §104)
 const MAX_CONNECTIONS = 100
 
+// Bounded config keys from Block.config worth sending to the model.
+// Everything else (credentials, raw metadata) stays out.
+const CONFIG_KEYS = [
+  'engine', 'replicas', 'rateLimit', 'timeout', 'timeoutMs', 'cpu', 'memory',
+  'port', 'maxConnections', 'maxPartitions', 'slaTarget', 'mttrMinutes',
+  'mtbfHours', 'failureProbabilityPerHour', 'recoveryProbabilityPerMinute',
+  'hourlyComputeCost', 'perRequestCost', 'perGbNetworkCost', 'storageCostPerGbMonth',
+]
+
+function pickConfig(config) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return undefined
+  const out = {}
+  for (const k of CONFIG_KEYS) {
+    if (config[k] !== undefined && config[k] !== null) out[k] = config[k]
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
+// Token/latency guard: cap arrays, strings, depth. Preserves first items
+// (report pipeline orders by priority) instead of summarizing.
+function compact(value, depth = 0) {
+  if (value == null) return value
+  if (typeof value === 'string') return value.length > 600 ? value.slice(0, 600) + '…' : value
+  if (Array.isArray(value)) return value.slice(0, 12).map((v) => compact(v, depth + 1))
+  if (typeof value === 'object') {
+    if (depth >= 4) return Array.isArray(value) ? '[…]' : '{…}'
+    const out = {}
+    for (const [k, v] of Object.entries(value)) out[k] = compact(v, depth + 1)
+    return out
+  }
+  return value
+}
+
+const iso = (d) => (d instanceof Date ? d.toISOString() : (d ?? null))
+
 /**
- * Build the DesignContext for a design at its CURRENT version.
- * Cache lookup: versioned Redis key -> DB -> populate cache.
+ * Build the DesignContext for a design at its CURRENT revision.
+ * Cache lookup: revision-scoped Redis key -> DB -> populate cache.
  * Redis failures are fail-open (spec §47).
  */
 export async function buildDesignContext(designId) {
@@ -38,14 +73,46 @@ export async function buildDesignContext(designId) {
     throw err
   }
 
-  const cached = await getDesignContextCache(designId, design.version)
+  // Lightweight identity: must change when canvas, latest simulation state,
+  // latest report, or latest applied optimization changes. Uses updatedAt/
+  // status — not just IDs — so pending->completed transitions invalidate.
+  const [simIdRes, repIdRes, optIdRes] = await Promise.allSettled([
+    prisma.simulation.findFirst({
+      where: { designId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, status: true, updatedAt: true },
+    }),
+    prisma.simulationReport.findFirst({
+      where: { designId },
+      orderBy: { generatedAt: 'desc' },
+      select: { id: true, simulationId: true, generatedAt: true },
+    }),
+    prisma.optimizationHistory.findFirst({
+      where: { designId, status: 'applied' },
+      orderBy: { appliedAt: 'desc' },
+      select: { id: true, appliedAt: true },
+    }),
+  ])
+  const simId = simIdRes.status === 'fulfilled' ? simIdRes.value : null
+  const repId = repIdRes.status === 'fulfilled' ? repIdRes.value : null
+  const optId = optIdRes.status === 'fulfilled' ? optIdRes.value : null
+
+  const contextRevision = hashParts(
+    'chat-context-v2',
+    design.version,
+    simId?.id, simId?.status, simId?.updatedAt?.toISOString(),
+    repId?.id, repId?.generatedAt?.toISOString(),
+    optId?.id, optId?.appliedAt?.toISOString()
+  )
+
+  const cached = await getDesignContextCache(designId, contextRevision)
   if (cached) return { ...cached, cacheHit: true }
 
   // Build — with single-flight protection against stampedes (spec §44).
-  const lock = await acquireLock(chatKeys.contextLock(designId, design.version), 10)
+  const lock = await acquireLock(chatKeys.contextLock(designId, contextRevision), 10)
   try {
     if (lock) {
-      const fresh = await getDesignContextCache(designId, design.version)
+      const fresh = await getDesignContextCache(designId, contextRevision)
       if (fresh) return { ...fresh, cacheHit: true }
     }
 
@@ -55,7 +122,7 @@ export async function buildDesignContext(designId) {
     const [blocksRes, edgesRes, simulationRes, reportRes, optimizationsRes] = await Promise.allSettled([
       prisma.block.findMany({
         where: { designId },
-        select: { id: true, type: true, label: true, replicas: true, rateLimit: true, timeoutMs: true },
+        select: { id: true, type: true, label: true, replicas: true, rateLimit: true, timeoutMs: true, config: true },
         take: 120,
       }),
       prisma.edge.findMany({
@@ -63,23 +130,30 @@ export async function buildDesignContext(designId) {
         select: { id: true, sourceId: true, targetId: true, connectionType: true, label: true },
         take: 200,
       }),
-      prisma.simulation.findFirst({
-        where: { designId },
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          designId: true,
-          status: true,
-          createdAt: true,
-          confidenceScore: true,
-          projectedMonthlyCost: true,
-        },
-      }),
-      prisma.simulationReport.findFirst({
-        where: { designId },
-        orderBy: { generatedAt: 'desc' },
-        select: { id: true, overallScore: true, generatedAt: true },
-      }),
+      simId?.id
+        ? prisma.simulation.findUnique({
+            where: { id: simId.id },
+            select: {
+              id: true, status: true, createdAt: true, updatedAt: true,
+              confidenceScore: true, projectedMonthlyCost: true, currentRps: true,
+              globalMetrics: true, validationResult: true,
+            },
+          })
+        : Promise.resolve(null),
+      repId?.id
+        ? prisma.simulationReport.findUnique({
+            where: { id: repId.id },
+            select: {
+              id: true, simulationId: true, designId: true, version: true, generatedAt: true,
+              overallScore: true, architectureScore: true, reliabilityScore: true,
+              performanceScore: true, costScore: true, securityScore: true,
+              scalabilityScore: true, confidenceScore: true,
+              executiveSummary: true, topologyAnalysis: true, performanceAnalysis: true,
+              reliabilityAnalysis: true, scalabilityAnalysis: true, costAnalysis: true,
+              securityAnalysis: true, failureScenarios: true, aiInsights: true, actionPlan: true,
+            },
+          })
+        : Promise.resolve(null),
       prisma.optimizationHistory.findMany({
         where: { designId, status: 'applied' },
         orderBy: { appliedAt: 'desc' },
@@ -101,6 +175,15 @@ export async function buildDesignContext(designId) {
     const latestReport = value(reportRes)
     const recentOptimizations = value(optimizationsRes) || []
 
+    const contextHealth = {
+      design: 'available',
+      components: blocksRes.status === 'fulfilled' ? 'available' : 'unavailable',
+      connections: edgesRes.status === 'fulfilled' ? 'available' : 'unavailable',
+      simulation: simulationRes.status === 'fulfilled' ? (latestSimulation ? 'available' : 'not_generated') : 'unavailable',
+      report: reportRes.status === 'fulfilled' ? (latestReport ? 'available' : 'not_generated') : 'unavailable',
+      optimizations: optimizationsRes.status === 'fulfilled' ? 'available' : 'unavailable',
+    }
+
     const designContext = {
       id: design.id,
       version: design.version,
@@ -115,6 +198,7 @@ export async function buildDesignContext(designId) {
         ...(b.replicas != null ? { replicas: b.replicas } : {}),
         ...(b.rateLimit != null ? { rateLimitPerMinute: b.rateLimit } : {}),
         ...(b.timeoutMs != null ? { timeoutMs: b.timeoutMs } : {}),
+        ...(pickConfig(b.config) ? { config: pickConfig(b.config) } : {}),
       })),
       connections: edges.slice(0, MAX_CONNECTIONS).map((e) => ({
         source: e.sourceId,
@@ -126,22 +210,54 @@ export async function buildDesignContext(designId) {
         ? {
             simulationId: latestSimulation.id,
             status: latestSimulation.status,
-            createdAt: latestSimulation.createdAt?.toISOString(),
+            createdAt: iso(latestSimulation.createdAt),
+            updatedAt: iso(latestSimulation.updatedAt),
             confidenceScore: latestSimulation.confidenceScore,
             projectedMonthlyCost: latestSimulation.projectedMonthlyCost,
-            // Score comes from the report of the SAME design version era —
-            // surfaced separately so the AI can caveat staleness (spec §107).
-            overallScore: latestReport?.overallScore ?? null,
-            reportGeneratedAt: latestReport?.generatedAt?.toISOString() ?? null,
+            currentRps: latestSimulation.currentRps ?? null,
+            globalMetrics: compact(latestSimulation.globalMetrics),
+            validationResult: compact(latestSimulation.validationResult),
+          }
+        : null,
+      latestReport: latestReport
+        ? {
+            reportId: latestReport.id,
+            simulationId: latestReport.simulationId,
+            version: latestReport.version,
+            generatedAt: iso(latestReport.generatedAt),
+            scores: {
+              overall: latestReport.overallScore,
+              architecture: latestReport.architectureScore,
+              reliability: latestReport.reliabilityScore,
+              performance: latestReport.performanceScore,
+              cost: latestReport.costScore,
+              security: latestReport.securityScore,
+              scalability: latestReport.scalabilityScore,
+              confidence: latestReport.confidenceScore,
+            },
+            executiveSummary: compact(latestReport.executiveSummary),
+            topologyAnalysis: compact(latestReport.topologyAnalysis),
+            performanceAnalysis: compact(latestReport.performanceAnalysis),
+            reliabilityAnalysis: compact(latestReport.reliabilityAnalysis),
+            scalabilityAnalysis: compact(latestReport.scalabilityAnalysis),
+            costAnalysis: compact(latestReport.costAnalysis),
+            securityAnalysis: compact(latestReport.securityAnalysis),
+            failureScenarios: compact(latestReport.failureScenarios),
+            actionPlan: compact(latestReport.actionPlan),
+            aiInsights: compact(latestReport.aiInsights),
           }
         : null,
       recentOptimizations: recentOptimizations.map((o) => ({
         ruleName: o.ruleName,
-        appliedAt: o.appliedAt?.toISOString(),
+        appliedAt: iso(o.appliedAt),
       })),
+      contextHealth,
+      contextRevision,
       fingerprint: contextFingerprint({
         designVersion: design.version,
         simulationVersion: latestSimulation?.id,
+        simulationUpdatedAt: latestSimulation?.updatedAt?.toISOString?.() ?? latestSimulation?.updatedAt,
+        reportVersion: latestReport?.id,
         optimizationVersion: recentOptimizations[0]?.id,
         nodeCount: blocks.length,
         edgeCount: edges.length,
@@ -151,9 +267,26 @@ export async function buildDesignContext(designId) {
     }
 
     // Cache write is fire-and-forget — never inside the latency budget.
-    setDesignContextCache(designId, design.version, designContext).catch(() => {})
+    setDesignContextCache(designId, contextRevision, designContext).catch(() => {})
 
-    logger.debug({ designId, buildMs: designContext.buildMs }, 'Design context built')
+    logger.info({
+      designId,
+      designVersion: design.version,
+      contextRevision: contextRevision.slice(0, 12),
+      componentCount: blocks.length,
+      connectionCount: edges.length,
+      simulationId: latestSimulation?.id ?? null,
+      simulationStatus: latestSimulation?.status ?? null,
+      reportId: latestReport?.id ?? null,
+      reportSimulationId: latestReport?.simulationId ?? null,
+      reportAvailable: !!latestReport,
+      contextCacheHit: false,
+      contextBuildMs: designContext.buildMs,
+      contextHealth,
+    }, 'Chat design context resolved')
+    if (latestReport && latestSimulation && latestReport.simulationId !== latestSimulation.id) {
+      logger.warn({ designId, reportSim: latestReport.simulationId, latestSim: latestSimulation.id }, 'Report belongs to an earlier simulation run')
+    }
     return designContext
   } finally {
     await releaseLock(lock)
@@ -173,6 +306,8 @@ export async function buildChatContext({ session, history, userMessage, designSy
     versions: {
       designVersion: null,
       simulationVersion: null,
+      simulationUpdatedAt: null,
+      reportVersion: null,
       optimizationVersion: null,
       contextFingerprint: null,
     },
@@ -205,10 +340,13 @@ export async function buildChatContext({ session, history, userMessage, designSy
       systemInstruction,
       designContext,
       contextCacheHit: designContext.cacheHit,
+      contextHealth: designContext.contextHealth,
       versions: {
         designId: designContext.id,
         designVersion: designContext.version,
         simulationVersion: designContext.latestSimulation?.simulationId ?? null,
+        simulationUpdatedAt: designContext.latestSimulation?.updatedAt ?? null,
+        reportVersion: designContext.latestReport?.reportId ?? null,
         optimizationVersion: designContext.recentOptimizations?.[0]?.appliedAt ?? null,
         contextFingerprint: designContext.fingerprint,
       },
@@ -262,6 +400,8 @@ export function responseCacheHash({ model, userMessage, session, versions, desig
     session.designId ?? '',
     versions.designVersion ?? '',
     versions.simulationVersion ?? '',
+    versions.simulationUpdatedAt ?? '',
+    versions.reportVersion ?? '',
     versions.contextFingerprint ?? '',
     designSystemEnabled ? 'ds:1' : 'ds:0'
   )
