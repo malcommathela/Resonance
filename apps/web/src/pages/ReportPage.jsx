@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Clock3,
   Download,
+  FileJson,
   FileText,
   Filter,
   Info,
@@ -24,7 +25,9 @@ import {
 import { useDesignStore } from '@/stores/designStore'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { Modal } from '@/components/ui/Modal'
 import { ReportListSkeleton } from '@/components/ui/skeletons'
+import { formatReportAsJson, formatReportAsMarkdown, buildReportFilename, downloadReport } from '@/utils/reportExport'
 
 /*
   NovaFlow Reports — redesign direction
@@ -147,6 +150,20 @@ function FindingRow({ finding }) {
 }
 
 function ReportDetailPanel({ report, onBack }) {
+  const [exportOpen, setExportOpen] = useState(false)
+  const handleExport = (format) => {
+    if (!report) return
+    try {
+      if (format === 'json') {
+        downloadReport(formatReportAsJson(report), buildReportFilename(report, 'json'), 'application/json;charset=utf-8')
+      } else {
+        downloadReport(formatReportAsMarkdown(report), buildReportFilename(report, 'md'), 'text/markdown;charset=utf-8')
+      }
+      setExportOpen(false)
+    } catch {
+      setExportOpen(false)
+    }
+  }
   const score = report.overallScore ?? report.score ?? 0
   const designName = report.designName || report.design?.name || 'Untitled design'
   const metricItems = [
@@ -164,7 +181,21 @@ function ReportDetailPanel({ report, onBack }) {
       <header className="flex shrink-0 items-center gap-3 border-b border-resonance-border px-4 py-3 sm:px-8">
         <button type="button" onClick={onBack} aria-label="Back to reports" className="rounded-lg p-2 text-resonance-text-secondary transition-colors hover:bg-resonance-bg-hover hover:text-resonance-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-resonance-accent"><ArrowLeft size={17} /></button>
         <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-resonance-text-primary">{report.name || `Report #${report.id?.slice(0, 8)}`}</p><p className="truncate text-xs text-resonance-text-muted">{designName}</p></div>
-        <div className="flex gap-2"><Button variant="ghost" size="sm" icon={Share2}>Share</Button><Button variant="secondary" size="sm" icon={Download}>Export</Button></div>
+        <div className="flex gap-2"><Button variant="ghost" size="sm" icon={Share2}>Share</Button><Button variant="secondary" size="sm" icon={Download} onClick={() => setExportOpen(true)}>Export</Button></div>
+        <Modal isOpen={exportOpen} onClose={() => setExportOpen(false)} title="Export Report" size="sm">
+          <div className="space-y-2">
+            <button type="button" onClick={() => handleExport('json')} className="flex w-full items-center gap-3 rounded-xl border border-resonance-border p-3 text-left transition-colors hover:border-resonance-accent/40 hover:bg-resonance-bg-hover">
+              <FileJson size={20} className="shrink-0 text-resonance-accent" />
+              <span><p className="text-sm font-medium text-resonance-text-primary">JSON</p>
+              <p className="mt-0.5 text-xs text-resonance-text-muted">Complete report data</p></span>
+            </button>
+            <button type="button" onClick={() => handleExport('markdown')} className="flex w-full items-center gap-3 rounded-xl border border-resonance-border p-3 text-left transition-colors hover:border-resonance-accent/40 hover:bg-resonance-bg-hover">
+              <FileText size={20} className="shrink-0 text-resonance-accent" />
+              <span><p className="text-sm font-medium text-resonance-text-primary">Markdown</p>
+              <p className="mt-0.5 text-xs text-resonance-text-muted">Human-readable report</p></span>
+            </button>
+          </div>
+        </Modal>
       </header>
       <main className="min-h-0 flex-1 overflow-auto px-4 py-6 sm:px-8 lg:px-12">
         <div className="mx-auto max-w-5xl space-y-8">
