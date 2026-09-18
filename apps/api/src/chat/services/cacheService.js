@@ -31,11 +31,11 @@ const REDIS_OP_TIMEOUT_MS = parseInt(process.env.CHAT_REDIS_TIMEOUT_MS || '500',
 
 function keys() {
   return {
-    context: (designId, version) => `resonance:v1:chat:context:${designId}:${version}`,
+    context: (designId, revision) => `resonance:v1:chat:context:${designId}:${revision}`,
     response: (hash) => `resonance:v1:chat:response:${hash}`,
     idempotency: (userId, key) => `resonance:v1:chat:idempotency:${userId}:${key}`,
     sessionLock: (sessionId) => `resonance:v1:chat:lock:${sessionId}`,
-    contextLock: (designId, version) => `resonance:v1:chat:lock:context:${designId}:${version}`,
+    contextLock: (designId, revision) => `resonance:v1:chat:lock:context:${designId}:${revision}`,
     sseEvents: (requestId) => `resonance:v1:sse:${requestId}`,
     sseSeq: (requestId) => `resonance:v1:sse:${requestId}:seq`,
   }
@@ -84,14 +84,15 @@ export async function cacheSetJson(key, value, ttlSeconds) {
 }
 
 // ── Design context cache (spec §40-41) ──────────────────────────────────────
-// Correctness comes from the version in the key, not from invalidation.
+// Correctness comes from the revision in the key, not from invalidation.
+// Revision = design version + simulation/report/optimization identity.
 
-export async function getDesignContextCache(designId, version) {
-  return cacheGetJson(chatKeys.context(designId, version))
+export async function getDesignContextCache(designId, revision) {
+  return cacheGetJson(chatKeys.context(designId, revision))
 }
 
-export async function setDesignContextCache(designId, version, context) {
-  return cacheSetJson(chatKeys.context(designId, version), context, TTL.DESIGN_CONTEXT)
+export async function setDesignContextCache(designId, revision, context) {
+  return cacheSetJson(chatKeys.context(designId, revision), context, TTL.DESIGN_CONTEXT)
 }
 
 // ── AI response cache (spec §42) ────────────────────────────────────────────

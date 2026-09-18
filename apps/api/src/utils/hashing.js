@@ -29,11 +29,13 @@ export function hashParts(...parts) {
  * AI request was generated against. If unchanged, cached context can be
  * reused; if changed, context must be rebuilt.
  */
-export function contextFingerprint({ designVersion, simulationVersion, optimizationVersion, nodeCount, edgeCount }) {
+export function contextFingerprint({ designVersion, simulationVersion, simulationUpdatedAt, reportVersion, optimizationVersion, nodeCount, edgeCount }) {
   return hashParts(
-    'ctx-v1',
+    'ctx-v2',
     designVersion,
     simulationVersion,
+    simulationUpdatedAt,
+    reportVersion,
     optimizationVersion,
     nodeCount,
     edgeCount
