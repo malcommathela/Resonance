@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   MoreHorizontal, Network, PanelLeftClose, PanelLeftOpen,
-  Pencil, Plus, Search, Trash2, Zap,
+  Pencil, Plus, Search, Trash2,
 } from 'lucide-react'
 import { useChatStore } from '@/stores/chatStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -252,9 +252,11 @@ export const ChatSidebar = () => {
           className="flex items-center gap-2 rounded-lg px-1 py-1 hover:opacity-90 transition-opacity"
           title="Back to Home"
         >
-          <span className="w-7 h-7 rounded-lg bg-resonance-accent flex items-center justify-center">
-            <Zap size={14} className="text-resonance-neutral" strokeWidth={2.5} />
-          </span>
+          <img
+            src="/logo.png"
+            alt="Resonance logo"
+            className="w-7 h-7 rounded-lg object-cover"
+          />
           <span className="text-[15px] font-bold tracking-tight text-resonance-text-primary">
             Resonance
           </span>

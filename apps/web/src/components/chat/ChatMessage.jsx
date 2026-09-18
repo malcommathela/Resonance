@@ -56,7 +56,9 @@ export const ChatMessage = ({ message }) => {
           </div>
         ) : (
           <>
-            {message.thinking && <ThinkingIndicator label={message.thinking} />}
+            {(message.thinking || (message.streaming && !message.content)) && (
+              <ThinkingIndicator label={message.thinking} />
+            )}
 
             {message.content && (
               <div className="text-resonance-text-primary">
