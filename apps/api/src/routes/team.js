@@ -79,13 +79,26 @@ router.post('/', async (req, res) => {
         },
       },
       include: {
-        members: { select: { userId: true, role: true } },
+        members: {
+          select: {
+            userId: true,
+            role: true,
+            user: { select: { id: true, name: true, avatar: true } },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
         _count: { select: { members: true, designs: true } },
       },
     })
 
     invalidateTeam(team.id, req.dbUser.id)
-    res.status(201).json(transformTeam(team, req.dbUser.id))
+    res.status(201).json({
+      ...transformTeam(team, req.dbUser.id),
+      members: (team.members || [])
+        .filter((m) => m.user)
+        .slice(0, 4)
+        .map((m) => ({ id: m.user.id, name: m.user.name, avatar: m.user.avatar, role: m.role })),
+    })
   } catch (err) {
     logger.error({ err: err.message, userId: req.dbUser.id }, 'Failed to create team')
     res.status(500).json({ error: err.message })
@@ -102,12 +115,28 @@ router.get('/teams', async (req, res) => {
       const data = await prisma.team.findMany({
         where: { members: { some: { userId } } },
         include: {
-          members: { select: { userId: true, role: true } },
+          // Single query (no N+1): full membership for myRole + user preview.
+          // Rows bounded by maxMembers; preview sliced to 4 in mapping below.
+          members: {
+            select: {
+              userId: true,
+              role: true,
+              user: { select: { id: true, name: true, avatar: true } },
+            },
+            orderBy: { createdAt: 'asc' },
+          },
           _count: { select: { members: true, designs: true } },
         },
         orderBy: { updatedAt: 'desc' },
       })
-      return data.map((team) => transformTeam(team, userId))
+      return data.map((team) => ({
+        ...transformTeam(team, userId),
+        // First 4 members, deterministic order. memberCount stays authoritative.
+        members: (team.members || [])
+          .filter((m) => m.user)
+          .slice(0, 4)
+          .map((m) => ({ id: m.user.id, name: m.user.name, avatar: m.user.avatar, role: m.role })),
+      }))
     })
 
     res.json(teams)
@@ -386,10 +415,13 @@ router.post('/:id/invite', async (req, res) => {
 
     cache.del(`team:${teamId}:invites`).catch(() => {})
 
+    // Invite is created; email sends in background (see .catch above).
+    // emailQueued is the accurate signal; emailSent kept for backward compat.
     res.status(201).json({
       success: true,
       inviteId: invite.id,
-      emailSent: true, // Optimistic: we trust SMTP will work; user doesn't wait
+      emailQueued: true,
+      emailSent: true,
     })
   } catch (err) {
     const status = err.status || 500

@@ -208,12 +208,14 @@ const TeamOverviewComponent = () => {
     setInviting(true)
     try {
       await api.inviteTeamMember(teamId, { email, role: inviteRole })
+      // Invite request complete: finish user-facing state first, refresh in background.
+      setInviting(false)
       showToast({ message: 'Invitation sent successfully', type: 'success' })
       setInviteEmail('')
       setInviteRole('member')
       setInviteError(null)
       setShowInviteModal(false)
-      await loadTeamData(true)
+      loadTeamData(true).catch((err) => console.error('Background team refresh failed:', err))
     } catch (err) {
       console.error('Failed to invite:', err)
       showToast({ message: err.message || 'Failed to send invitation', type: 'error' })
@@ -237,8 +239,9 @@ const TeamOverviewComponent = () => {
     setResendingInviteId(invite.id)
     try {
       await api.inviteTeamMember(teamId, { email: invite.email, role: invite.role })
+      setResendingInviteId(null)
       showToast({ message: 'Invitation resent', type: 'success' })
-      await loadTeamData(true)
+      loadTeamData(true).catch((err) => console.error('Background team refresh failed:', err))
     } catch (err) {
       console.error('Failed to resend invite:', err)
       showToast({ message: err.message || 'Failed to resend invitation', type: 'error' })
