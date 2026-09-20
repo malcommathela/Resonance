@@ -23,6 +23,11 @@ const ROLES = {
   member: { label: 'Member', icon: User, badge: 'default' },
 }
 
+const getInitials = (name) => {
+  if (!name) return '?'
+  return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
+}
+
 export const Team = () => {
   const navigate = useNavigate()
   const { showToast } = useToast()
@@ -186,17 +191,25 @@ export const Team = () => {
 
                   <div className="flex items-center justify-between">
                     <div className="flex items-center">
-                      {/* Placeholder avatars */}
-                      {[...Array(Math.min(4, team.memberCount || 0))].map((_, i) => (
+                      {(team.members || []).slice(0, 4).map((member, i) => (
                         <div
-                          key={i}
-                          className="w-8 h-8 rounded-full border-2 border-resonance-bg-secondary bg-resonance-bg-tertiary flex items-center justify-center text-[10px] font-bold text-resonance-text-secondary shrink-0"
+                          key={member.id || i}
+                          title={member.name}
+                          className="w-8 h-8 rounded-full border-2 border-resonance-bg-secondary bg-resonance-bg-tertiary flex items-center justify-center text-[10px] font-bold text-resonance-text-secondary shrink-0 overflow-hidden"
                           style={{
                             marginLeft: i > 0 ? -10 : 0,
                             zIndex: 4 - i,
                           }}
                         >
-                          M
+                          {member.avatar ? (
+                            <img
+                              src={member.avatar}
+                              alt={member.name}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            getInitials(member.name)
+                          )}
                         </div>
                       ))}
                       {(team.memberCount || 0) > 4 && (
