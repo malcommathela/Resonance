@@ -28,22 +28,7 @@ const DEFAULT_COST_CONFIG = Object.freeze({
   secondsPerMonth: 30 * 24 * 60 * 60,
   defaultProvider: 'generic',
   defaultRegion: 'us-east-1',
-  averagePayloadBytes: {
-    http: 1024,
-    https: 1024,
-    rest: 2048,
-    graphql: 4096,
-    websocket: 512,
-    grpc: 1024,
-    kafka: 2048,
-    rabbitmq: 1024,
-    amqp: 1024,
-    mqtt: 256,
-    tcp: 512,
-    udp: 256,
-    sftp: 1048576,
-    'event-stream': 2048,
-  },
+  // No invented per-type payload bytes (spec §16): unknown payload bills 0, labeled unknown.
   highConfidenceThreshold: 0.8,
   mediumConfidenceThreshold: 0.5,
 })
@@ -64,9 +49,9 @@ export function analyzeCosts(simulationResult, options = {}) {
   const blocks = inputSnapshot?.blocks || []
   const edges = inputSnapshot?.edges || []
 
-  // Build usage models from simulation results
+  // Build usage models from simulation observations (never invented splits)
   const blockUsages = calculateBlockUsages(blocks, blockMetrics, engineConfig)
-  const edgeUsages = calculateEdgeUsages(edges, globalMetrics, engineConfig)
+  const edgeUsages = calculateEdgeUsages(edges, simulationResult, engineConfig)
 
   // Calculate costs per component
   const blockCosts = []
@@ -96,7 +81,7 @@ export function analyzeCosts(simulationResult, options = {}) {
 
   return {
     currentMonthlyCost: totalCost,
-    currentAnnualCost: totalCost * 12,
+    currentAnnualCost: Math.round(totalCost * 12 * 100) / 100,
     totalCost,
     currency: 'USD',
     confidence: avgConfidence,
@@ -185,16 +170,16 @@ function calculateBlockUsages(blocks, blockMetrics, config) {
   return usages
 }
 
-function calculateEdgeUsages(edges, globalMetrics, config) {
+function calculateEdgeUsages(edges, simulationResult, config) {
   const usages = []
-  const totalRequests = globalMetrics?.totalRequests || 0
-  const totalTransferredGb = estimateTotalBandwidth(edges, totalRequests, config)
+  // Real per-edge observations from the discrete-event engine (spec §15, §67).
+  const observed = simulationResult?.edgeMetrics || {}
 
   for (const edge of edges) {
     const connectionType = edge.connectionType || 'http'
-    const payloadBytes = config.averagePayloadBytes[connectionType] || 1024
-    const requestsThroughEdge = Math.round(totalRequests / Math.max(edges.length, 1))
-    const transferredGb = (requestsThroughEdge * payloadBytes) / (1024 * 1024 * 1024)
+    const obs = observed[edge.id]
+    const requestsThroughEdge = obs ? obs.requests : null
+    const transferredBytes = obs ? (obs.bytesSent || 0) + (obs.bytesReceived || 0) : null
 
     usages.push({
       edgeId: edge.id,
@@ -203,22 +188,15 @@ function calculateEdgeUsages(edges, globalMetrics, config) {
       connectionType,
       resourceType: CONNECTION_TYPE_RESOURCE_MAP[connectionType],
       requestsThroughEdge,
-      transferredGb,
-      payloadBytes,
+      transferredGb: transferredBytes != null ? transferredBytes / (1024 * 1024 * 1024) : null,
+      transferredBytes,
+      payloadBytes: null,
+      payloadProvenance: 'unknown',
+      observed: !!obs,
     })
   }
 
   return usages
-}
-
-function estimateTotalBandwidth(edges, totalRequests, config) {
-  if (!edges || edges.length === 0 || totalRequests === 0) return 0
-  let totalBytes = 0
-  for (const edge of edges) {
-    const payloadBytes = config.averagePayloadBytes[edge.connectionType || 'http'] || 1024
-    totalBytes += totalRequests * payloadBytes / Math.max(edges.length, 1)
-  }
-  return totalBytes / (1024 * 1024 * 1024)
 }
 
 // ============================================================================
@@ -248,11 +226,21 @@ function calculateBlockCost(usage, providerSnapshot, config, userOverride = null
   // P6: If behavioral model cost properties are available, use them for real cost calculation
   if (usage.hasBehavioralCost && usage.simulatedCost) {
     const costProfile = usage.costProfile || {}
-    const computeCost = usage.simulatedCost.compute || 0
-    const requestCost = usage.simulatedCost.request || 0
-    const networkCost = usage.simulatedCost.network || 0
-    const storageCost = usage.simulatedCost.storage || 0
-    const totalCost = computeCost + requestCost + networkCost + storageCost
+    // Unit-explicit projections when the engine provides them; window sums otherwise.
+    const sim = usage.simulatedCost
+    const computeCost = sim.compute || 0
+    const requestCost = sim.request || 0
+    const networkCost = sim.network || 0
+    const storageCost = sim.storage || 0
+    const monthlyCost = sim.monthlyProjectedCostUsd ?? (computeCost + requestCost + networkCost + storageCost)
+    const totalCost = monthlyCost
+    // Defined calculation, not a written constant (spec §75).
+    const pricedDims = ['hourlyComputeCost', 'perRequestCost', 'perGbNetworkCost', 'storageCostPerGbMonth']
+      .filter(k => costProfile[k] !== undefined && costProfile[k] !== null).length
+    const measuredConfidence = Math.round((0.5 + 0.5 * (pricedDims / 4)) * 100) / 100
+
+    const windowSum = computeCost + requestCost + networkCost + storageCost
+    const toMonthly = (v) => Math.round(v * (windowSum > 0 ? monthlyCost / windowSum : 0) * 100) / 100
 
     return {
       blockId: usage.blockId,
@@ -261,14 +249,15 @@ function calculateBlockCost(usage, providerSnapshot, config, userOverride = null
       resourceType,
       totalCost: Math.round(totalCost * 100) / 100,
       currency: 'USD',
-      confidence: 0.95,
+      confidence: measuredConfidence,
+      confidenceFormula: 'cost-confidence-v1: 0.5 base + 0.5 × priced-dimension share',
       breakdown: [
-        { dimension: 'compute', cost: Math.round(computeCost * 100) / 100 },
-        { dimension: 'request', cost: Math.round(requestCost * 100) / 100 },
-        { dimension: 'network', cost: Math.round(networkCost * 100) / 100 },
-        { dimension: 'storage', cost: Math.round(storageCost * 100) / 100 },
+        { dimension: 'compute', cost: toMonthly(computeCost) },
+        { dimension: 'request', cost: toMonthly(requestCost) },
+        { dimension: 'network', cost: toMonthly(networkCost) },
+        { dimension: 'storage', cost: toMonthly(storageCost) },
       ],
-      notes: ['Cost calculated from behavioral model properties (P6)'],
+      notes: ['Monthly-projected cost from measured simulation-window usage (replica-seconds/attempts/edge bytes)'],
       usage,
     }
   }
@@ -278,7 +267,8 @@ function calculateBlockCost(usage, providerSnapshot, config, userOverride = null
   if (cp && (cp.hourlyComputeCost || cp.perRequestCost)) {
     const computeCost = (cp.hourlyComputeCost || 0) * usage.runtimeHours * usage.currentReplicas
     const requestCost = (cp.perRequestCost || 0) * usage.monthlyRequests
-    const networkCost = (cp.perGbNetworkCost || 0) * (usage.totalRequests * 1024 / (1024 * 1024 * 1024)) // assume 1KB avg
+    // No invented 1KB/request: unobserved payload bytes bill 0 with low confidence.
+    const networkCost = 0
     const storageCost = (cp.storageCostPerGbMonth || 0) * usage.storageGb
     const totalCost = computeCost + requestCost + networkCost + storageCost
 
@@ -289,14 +279,15 @@ function calculateBlockCost(usage, providerSnapshot, config, userOverride = null
       resourceType,
       totalCost: Math.round(totalCost * 100) / 100,
       currency: 'USD',
-      confidence: 0.85,
+      confidence: 0.5,
+      confidenceFormula: 'cost-confidence-v1: 0.5 without observed byte billing, 0.9+ with behavioral+observed usage',
       breakdown: [
         { dimension: 'compute', cost: Math.round(computeCost * 100) / 100 },
         { dimension: 'request', cost: Math.round(requestCost * 100) / 100 },
-        { dimension: 'network', cost: Math.round(networkCost * 100) / 100 },
+        { dimension: 'network', cost: 0 },
         { dimension: 'storage', cost: Math.round(storageCost * 100) / 100 },
       ],
-      notes: ['Cost estimated from behavioral model cost profile (P6)'],
+      notes: ['Cost estimated from behavioral model cost profile (P6)', 'Network cost unknown: no observed payload bytes for this path'],
       usage,
     }
   }
@@ -385,6 +376,23 @@ function calculateEdgeCost(usage, providerSnapshot, config) {
     }
   }
 
+  // Honest absence: unobserved edges cost nothing known, not an invented split.
+  if (!usage.observed) {
+    return {
+      edgeId: usage.edgeId,
+      sourceId: usage.sourceId,
+      targetId: usage.targetId,
+      connectionType: usage.connectionType,
+      resourceType,
+      totalCost: 0,
+      currency: 'USD',
+      confidence: 0,
+      breakdown: [],
+      notes: ['No observed edge traffic for this run; cost unknown, not estimated'],
+      usage,
+    }
+  }
+
   const pricing = providerSnapshot.getPricing(provider, resourceType, region)
   if (!pricing) {
     return {
@@ -469,45 +477,55 @@ function generateDriverRecommendation(costEntry, percentage) {
 }
 
 function projectGrowthCosts(blockCosts, edgeCosts, simulationResult, config) {
-  const multipliers = [2, 5, 10]
-  const projections = []
+  // Real growth experiments only — never cost × multiplier (spec §28, §32).
+  const experiments = simulationResult?.growthExperiments || {}
+  const expKeys = Object.keys(experiments)
+    .map(k => ({ key: k, m: parseFloat(k) }))
+    .filter(x => Number.isFinite(x.m) && experiments[x.key]?.globalMetrics)
+    .sort((a, b) => a.m - b.m)
 
-  for (const multiplier of multipliers) {
-    let projectedCost = 0
-    const projectedBreakdown = []
-
-    for (const cost of blockCosts) {
-      const scaledCost = cost.totalCost * multiplier
-      projectedCost += scaledCost
-      projectedBreakdown.push({
-        componentId: cost.blockId,
-        baseCost: cost.totalCost,
-        projectedCost: scaledCost,
-        scalingFactor: multiplier,
-      })
-    }
-
-    for (const cost of edgeCosts) {
-      const scaledCost = cost.totalCost * multiplier
-      projectedCost += scaledCost
-      projectedBreakdown.push({
-        componentId: cost.edgeId,
-        baseCost: cost.totalCost,
-        projectedCost: scaledCost,
-        scalingFactor: multiplier,
-      })
-    }
-
-    projections.push({
+  if (expKeys.length === 0) {
+    return [2, 5, 10].map(multiplier => ({
       trafficMultiplier: multiplier,
-      projectedMonthlyCost: Math.round(projectedCost * 100) / 100,
-      projectedAnnualCost: Math.round(projectedCost * 12 * 100) / 100,
-      breakdown: projectedBreakdown,
-      isSustainable: true,
-    })
+      projectedMonthlyCost: null,
+      projectedAnnualCost: null,
+      status: 'unavailable',
+      reason: 'no_growth_experiment',
+      breakdown: [],
+      isSustainable: null,
+    }))
   }
 
-  return projections
+  return expKeys
+    .filter(({ m }) => m !== 1)
+    .map(({ key, m: multiplier }) => {
+      const exp = experiments[key]
+      const gm = exp.globalMetrics || {}
+      const windowHours = (exp.durationSeconds || 60) / 3600
+      // Fixed (capacity) vs variable (usage) split from measured experiment costs.
+      const capShare = gm.capacityCostUsd || 0
+      const useShare = gm.usageCostUsd ?? ((gm.simulationWindowCostUsd || 0) - capShare)
+      const windowCost = gm.simulationWindowCostUsd ?? 0
+      const hourly = windowHours > 0 ? windowCost / windowHours : 0
+      return {
+        trafficMultiplier: multiplier,
+        projectedMonthlyCost: Math.round(hourly * 24 * 30 * 100) / 100,
+        projectedAnnualCost: Math.round(hourly * 24 * 365 * 100) / 100,
+        status: 'measured',
+        reason: `single-pass ${multiplier}x experiment, same architecture/policies/model`,
+        breakdown: [
+          { dimension: 'capacity', windowCost: capShare },
+          { dimension: 'usage', windowCost: Math.max(0, useShare) },
+        ],
+        experiment: {
+          rps: exp.rps,
+          throughputRps: gm.throughputRps,
+          errorRate: gm.errorRate,
+          availability: gm.availability,
+        },
+        isSustainable: null,
+      }
+    })
 }
 
 function generateCostRecommendations(blockCosts, edgeCosts, totalCost) {
@@ -518,10 +536,12 @@ function generateCostRecommendations(blockCosts, edgeCosts, totalCost) {
     recommendations.push({
       priority: 'high',
       title: `Optimize ${c.label} cost`,
-      description: `Currently ${c.totalCost.toFixed(2)} USD/month. Review instance sizing, reserved capacity, or alternative providers.`,
+      description: `Currently ${c.totalCost.toFixed(2)} USD/month (${((c.totalCost / totalCost) * 100).toFixed(1)}% of total). Review instance sizing or reserved capacity.`,
       componentId: c.blockId,
-      estimatedSavings: c.totalCost * 0.3,
+      // No invented savings model — null until a validated model exists (spec §34, §77).
+      estimatedSavings: null,
       confidence: c.confidence,
+      evidence: { blockId: c.blockId, monthlyCost: c.totalCost, breakdown: c.breakdown },
     })
   }
 
@@ -531,7 +551,7 @@ function generateCostRecommendations(blockCosts, edgeCosts, totalCost) {
       priority: 'medium',
       title: 'Improve cost estimate accuracy',
       description: `${lowConfidence.length} component(s) have low-confidence cost estimates. Configure provider-specific pricing for accuracy.`,
-      estimatedSavings: 0,
+      estimatedSavings: null,
       confidence: 0.5,
     })
   }
@@ -542,8 +562,8 @@ function generateCostRecommendations(blockCosts, edgeCosts, totalCost) {
       priority: 'medium',
       title: 'Optimize data transfer costs',
       description: `Network costs are ${networkCost.toFixed(2)} USD/month (${((networkCost / totalCost) * 100).toFixed(1)}%). Consider caching, compression, or same-region deployment.`,
-      estimatedSavings: networkCost * 0.25,
-      confidence: 0.7,
+      estimatedSavings: null,
+      confidence: 0.5,
     })
   }
 

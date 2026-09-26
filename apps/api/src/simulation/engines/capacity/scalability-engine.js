@@ -44,11 +44,14 @@ export function analyzeScalability(simulationResult, options = {}) {
   // Saturation points
   const saturationPoints = calculateSaturationPoints(blocks, blockMetrics, config)
 
+  // System saturation = minimum effective capacity across active constraints (spec §29).
+  const systemSaturation = calculateSystemSaturation(blocks, blockMetrics, saturationPoints)
+
   // Bottlenecks
   const bottlenecks = identifyBottlenecks(blocks, blockMetrics, saturationPoints, config)
 
-  // Growth projections
-  const growthProjections = projectGrowth(blocks, blockMetrics, globalMetrics, config)
+  // Growth: real experiments only, never baseline × formula (spec §27-28).
+  const growthProjections = projectGrowth(simulationResult, config)
 
   // Scaling support analysis
   const scalingSupport = analyzeScalingSupport(blocks, config)
@@ -73,6 +76,7 @@ export function analyzeScalability(simulationResult, options = {}) {
     scalabilityScore,
     capacityLimits,
     saturationPoints,
+    systemSaturation,
     growthProjections,
     supportsHorizontalScaling: scalingSupport.horizontal,
     supportsVerticalScaling: scalingSupport.vertical,
@@ -155,23 +159,23 @@ function calculateSaturationPoints(blocks, blockMetrics, config) {
     const capacity = behavioralModel.capacity || {}
     const metrics = metricsMap[block.id] || {}
 
-    const maxThroughput = capacity.maxThroughput || 1000
     const currentThroughput = metrics.throughputRps || 0
     const currentUtilization = metrics.utilization || 0
+    const maxUtil = metrics.utilizationMax ?? currentUtilization
+    // Observed saturation wins; theoretical effective capacity otherwise. Never
+    // currentThroughput/currentUtilization division (spec §29).
+    const observedSaturated = (metrics.timeSaturated || 0) > 0 || maxUtil >= 1
+    const effectiveCapacity = metrics.saturationPoint || capacity.maxThroughput || 1000
+    const rpsAtSaturation = observedSaturated ? currentThroughput : effectiveCapacity
 
-    let rpsAtSaturation = maxThroughput
-    if (currentUtilization > 0 && currentThroughput > 0) {
-      rpsAtSaturation = currentThroughput / currentUtilization
-    }
-
-    const headroomPercent = currentUtilization >= 1 
-      ? 0 
-      : Math.max(0, (1 - currentUtilization) * 100)
+    const headroomPercent = maxUtil >= 1
+      ? 0
+      : Math.max(0, (1 - maxUtil) * 100)
 
     let resource = 'throughput'
-    if (currentUtilization >= config.saturationCriticalThreshold) {
+    if (maxUtil >= config.saturationCriticalThreshold) {
       resource = 'concurrent_capacity'
-    } else if (metrics.queueDepth >= (capacity.maxQueueDepth || 1000) * 0.8) {
+    } else if ((metrics.maxQueueDepth || 0) >= (capacity.maxQueueDepth || 1000) * 0.8 || (metrics.queueDropRate || 0) > 0) {
       resource = 'queue_capacity'
     }
 
@@ -180,16 +184,36 @@ function calculateSaturationPoints(blocks, blockMetrics, config) {
       blockType: block.type,
       label: block.label || block.id,
       rpsAtSaturation: Math.round(rpsAtSaturation),
+      basis: observedSaturated ? 'observed' : 'theoretical',
       resource,
       currentUtilization: Math.round(currentUtilization * 1000) / 1000,
+      utilizationMax: Math.round(maxUtil * 1000) / 1000,
+      timeSaturated: metrics.timeSaturated || 0,
       headroomPercent: Math.round(headroomPercent * 10) / 10,
-      isSaturated: currentUtilization >= 1,
-      isNearSaturation: currentUtilization >= config.saturationWarningThreshold,
-      evidence: { maxThroughput, currentThroughput, currentUtilization },
+      isSaturated: observedSaturated,
+      isNearSaturation: !observedSaturated && maxUtil >= config.saturationWarningThreshold,
+      evidence: { effectiveCapacity, currentThroughput, utilizationMax: maxUtil, timeSaturated: metrics.timeSaturated || 0 },
     })
   }
 
   return points
+}
+
+// System saturation = minimum effective capacity across blocks carrying traffic.
+function calculateSystemSaturation(blocks, blockMetrics, saturationPoints) {
+  const metricsMap = blockMetrics?.blocks || {}
+  let limiting = null
+  for (const point of saturationPoints) {
+    const metrics = metricsMap[point.blockId] || {}
+    if ((metrics.throughputRps || 0) <= 0) continue
+    const cap = point.basis === 'observed' ? point.rpsAtSaturation : (point.evidence?.effectiveCapacity || point.rpsAtSaturation)
+    if (limiting == null || cap < limiting.rps) {
+      limiting = { rps: cap, blockId: point.blockId, label: point.label, basis: point.basis, resource: point.resource }
+    }
+  }
+  return limiting
+    ? { ...limiting, rps: Math.round(limiting.rps) }
+    : { rps: null, blockId: null, label: null, basis: 'unknown', resource: 'unknown', reason: 'no_traffic_observed' }
 }
 
 // ============================================================================
@@ -268,80 +292,58 @@ function identifyBottlenecks(blocks, blockMetrics, saturationPoints, config) {
 // GROWTH PROJECTIONS
 // ============================================================================
 
-function projectGrowth(blocks, blockMetrics, globalMetrics, config) {
+function projectGrowth(simulationResult, config) {
+  // Actual growth experiments run through the same simulator (spec §27-28).
+  // Each entry reports observed values; missing experiments stay unavailable.
+  const experiments = simulationResult?.growthExperiments || {}
+  const multipliers = config.growthMultipliers || [2, 5, 10]
   const projections = []
-  const metricsMap = blockMetrics?.blocks || {}
-  const baseLatency = globalMetrics?.avgLatencyMs || 0
-  const baseErrorRate = globalMetrics?.errorRate || 0
-  const baseAvailability = globalMetrics?.availability || 100
 
-  for (const multiplier of config.growthMultipliers) {
-    const projectedBottlenecks = []
-    let maxPredictedLatency = baseLatency
-    let maxPredictedErrorRate = baseErrorRate
-    let minPredictedAvailability = baseAvailability
-
-    for (const block of blocks) {
-      const behavioralModel = block.behavioralModel || {}
-      const capacity = behavioralModel.capacity || {}
-      const metrics = metricsMap[block.id] || {}
-      const scaling = behavioralModel.scalingBehavior || {}
-
-      const maxThroughput = capacity.maxThroughput || 1000
-      const currentThroughput = metrics.throughputRps || 0
-      const projectedThroughput = currentThroughput * multiplier
-
-      if (projectedThroughput > maxThroughput) {
-        projectedBottlenecks.push({
-          blockId: block.id,
-          label: block.label || block.id,
-          blockType: block.type,
-          currentThroughput,
-          projectedThroughput,
-          maxThroughput,
-        })
-      }
-
-      const loadFactor = Math.min(projectedThroughput / maxThroughput, 2)
-      const latencyMultiplier = 1 + (loadFactor * loadFactor * 0.5)
-      const blockLatency = (metrics.avgLatencyMs || 0) * latencyMultiplier
-      maxPredictedLatency = Math.max(maxPredictedLatency, blockLatency)
-
-      const errorModel = behavioralModel.errorCharacteristics || {}
-      const baseErr = errorModel.baseErrorRate || 0
-      const loadErr = errorModel.errorRateUnderLoad || 0
-      const projectedError = baseErr + loadErr * Math.min(loadFactor, 1)
-      maxPredictedErrorRate = Math.max(maxPredictedErrorRate, projectedError)
-
-      const availModel = behavioralModel.availability || {}
-      const baseAvail = availModel.slaTarget || 0.999
-      const availabilityDrop = Math.min(loadFactor * 5, 50)
-      const projectedAvail = Math.max(0, (baseAvail * 100) - availabilityDrop)
-      minPredictedAvailability = Math.min(minPredictedAvailability, projectedAvail)
+  for (const multiplier of multipliers) {
+    const exp = experiments[`${multiplier}x`]
+    if (!exp?.globalMetrics) {
+      projections.push({
+        trafficMultiplier: multiplier,
+        status: 'unavailable',
+        reason: 'no_growth_experiment',
+        predictedLatencyMs: null,
+        predictedErrorRate: null,
+        predictedAvailability: null,
+        predictedBottlenecks: [],
+        isSustainable: null,
+      })
+      continue
     }
 
-    const canAutoScale = blocks.some(b => {
-      const scaling = b.behavioralModel?.scalingBehavior || {}
-      return scaling.type === 'auto' || scaling.type === 'horizontal'
-    })
-
-    const sustainableWithScaling = canAutoScale && projectedBottlenecks.length === 0
+    const gm = exp.globalMetrics
+    const saturatedBlocks = Object.entries(exp.blocks || {})
+      .filter(([, b]) => (b.timeSaturated || 0) > 0 || (b.utilizationMax || 0) >= 1 || (b.queueDropRate || 0) > 0)
+      .map(([id, b]) => ({
+        blockId: id,
+        throughputRps: b.throughputRps,
+        utilizationMax: b.utilizationMax,
+        timeSaturated: b.timeSaturated,
+        queueDropRate: b.queueDropRate,
+        saturationPoint: b.saturationPoint,
+      }))
 
     projections.push({
       trafficMultiplier: multiplier,
-      predictedLatencyMs: Math.round(maxPredictedLatency),
-      predictedErrorRate: Math.round(maxPredictedErrorRate * 10000) / 10000,
-      predictedAvailability: Math.round(minPredictedAvailability * 100) / 100,
-      predictedBottlenecks: projectedBottlenecks,
-      isSustainable: projectedBottlenecks.length === 0,
-      isSustainableWithScaling: sustainableWithScaling,
-      scalingRequired: projectedBottlenecks.length > 0 && canAutoScale,
-      evidence: {
-        baseLatency,
-        baseErrorRate,
-        baseAvailability,
-        bottleneckCount: projectedBottlenecks.length,
-      },
+      status: 'measured',
+      rps: exp.rps,
+      actualThroughputRps: gm.throughputRps,
+      actualLatencyMs: gm.avgLatencyMs,
+      actualLatencyP95Ms: gm.p95LatencyMs,
+      actualErrorRate: gm.errorRate,
+      actualAvailability: gm.availability,
+      actualMonthlyCostUsd: gm.monthlyProjectedCostUsd,
+      // Legacy predicted* keys carry observed values so existing charts keep working.
+      predictedLatencyMs: gm.avgLatencyMs,
+      predictedErrorRate: gm.errorRate,
+      predictedAvailability: gm.availability,
+      predictedBottlenecks: saturatedBlocks,
+      isSustainable: saturatedBlocks.length === 0,
+      evidence: { experimentRps: exp.rps, saturatedCount: saturatedBlocks.length },
     })
   }
 
@@ -470,10 +472,12 @@ function calculateScalabilityScore(inputs, config) {
   else if (scalingSupport.vertical) scalingScore = 60
   else scalingScore = 30
 
-  const sustainableProjections = growthProjections.filter(p => p.isSustainable).length
-  const growthScore = growthProjections.length > 0
-    ? (sustainableProjections / growthProjections.length) * 100
-    : 100
+  const measuredProjections = growthProjections.filter(p => p.status !== 'unavailable')
+  const sustainableProjections = measuredProjections.filter(p => p.isSustainable).length
+  // Null-aware: with no measured growth data the growth term drops out (C5 pattern).
+  const growthScore = measuredProjections.length > 0
+    ? (sustainableProjections / measuredProjections.length) * 100
+    : null
 
   // P6: SLA compliance penalty
   let slaScore = 100
@@ -483,12 +487,16 @@ function calculateScalabilityScore(inputs, config) {
     slaScore = Math.max(0, slaScore)
   }
 
-  const rawScore = (
-    capacityScore * config.capacityWeight +
-    headroomScore * config.headroomWeight +
-    scalingScore * config.scalingSupportWeight +
-    growthScore * config.growthSustainabilityWeight
-  )
+  const weights = [
+    [capacityScore, config.capacityWeight],
+    [headroomScore, config.headroomWeight],
+    [scalingScore, config.scalingSupportWeight],
+    ...(growthScore == null ? [] : [[growthScore, config.growthSustainabilityWeight]]),
+  ]
+  const weightSum = weights.reduce((s, [, w]) => s + w, 0)
+  const rawScore = weightSum > 0
+    ? weights.reduce((s, [v, w]) => s + v * w, 0) / weightSum
+    : 0
 
   const criticalBottlenecks = bottlenecks.filter(b => b.severity === 'critical').length
   const penalty = criticalBottlenecks * 10
@@ -514,9 +522,10 @@ function generateScalabilityRecommendations(inputs, config) {
       title: `Scale ${b.label} immediately`,
       description: b.message,
       blockId: b.blockId,
-      estimatedEffort: 4,
-      estimatedImpact: 25,
+      estimatedEffort: null,
+      estimatedImpact: null,
       supportingEvidence: [b.blockId],
+      evidence: { utilizationMax: b.evidence?.utilizationMax, timeSaturated: b.evidence?.timeSaturated },
     })
   }
 
@@ -525,24 +534,26 @@ function generateScalabilityRecommendations(inputs, config) {
     recommendations.push({
       priority: 'high',
       title: `Plan scaling for ${p.label}`,
-      description: `${p.label} is at ${(p.currentUtilization * 100).toFixed(1)}% with only ${p.headroomPercent.toFixed(1)}% headroom.`,
+      description: `${p.label} peaked at ${(p.utilizationMax * 100).toFixed(1)}% utilization with ${p.headroomPercent.toFixed(1)}% headroom.`,
       blockId: p.blockId,
-      estimatedEffort: 6,
-      estimatedImpact: 15,
+      estimatedEffort: null,
+      estimatedImpact: null,
       supportingEvidence: [p.blockId],
+      evidence: { utilizationMax: p.utilizationMax, headroomPercent: p.headroomPercent },
     })
   }
 
-  const unsustainable = growthProjections.filter(p => !p.isSustainable)
+  const unsustainable = growthProjections.filter(p => p.isSustainable === false)
   if (unsustainable.length > 0) {
     const firstFailure = unsustainable[0]
     recommendations.push({
       priority: 'high',
       title: `Architecture cannot sustain ${firstFailure.trafficMultiplier}x growth`,
-      description: `At ${firstFailure.trafficMultiplier}x traffic, ${firstFailure.predictedBottlenecks.length} component(s) will saturate.`,
-      estimatedEffort: 12,
-      estimatedImpact: 20,
+      description: `At ${firstFailure.trafficMultiplier}x traffic (${firstFailure.rps} RPS), ${firstFailure.predictedBottlenecks.length} component(s) saturated in simulation.`,
+      estimatedEffort: null,
+      estimatedImpact: null,
       supportingEvidence: firstFailure.predictedBottlenecks,
+      evidence: { experimentRps: firstFailure.rps, errorRate: firstFailure.actualErrorRate },
     })
   }
 
@@ -551,8 +562,8 @@ function generateScalabilityRecommendations(inputs, config) {
       priority: 'medium',
       title: 'Enable auto-scaling',
       description: 'No components have auto-scaling configured. Manual intervention will be required for traffic spikes.',
-      estimatedEffort: 8,
-      estimatedImpact: 12,
+      estimatedEffort: null,
+      estimatedImpact: null,
       supportingEvidence: ['scaling_support'],
     })
   }
@@ -564,8 +575,8 @@ function generateScalabilityRecommendations(inputs, config) {
       priority: 'high',
       title: `Fix SLA violations in ${slaViolations.length} component(s)`,
       description: `Components ${slaViolations.map(c => c.label).join(', ')} are not meeting their SLA targets.`,
-      estimatedEffort: 10,
-      estimatedImpact: 18,
+      estimatedEffort: null,
+      estimatedImpact: null,
       supportingEvidence: slaViolations.map(c => c.blockId),
     })
   }
@@ -601,6 +612,7 @@ function buildScalabilityExplainability(inputs, config) {
       slaPenalty: (slaCompliance || []).length > 0 ? ((slaCompliance.filter(c => !c.slaMet).length / slaCompliance.length) * 30) * 0.2 : 0,
     },
     finalResult: scalabilityScore,
-    confidence: 0.85,
+    confidence: null,
+    confidenceReason: 'heuristic confidence not available; see evidence inputs',
   }
 }

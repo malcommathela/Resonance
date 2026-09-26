@@ -10,6 +10,7 @@
     "./deterministic": "./deterministic.js",
     "./simulation-models": "./simulation-models.js",
     "./traffic-models": "./traffic-models.js",
-    "./simulation-engine": "./simulation-engine.js"
+    "./simulation-engine": "./simulation-engine.js",
+    "./canonical-model": "./canonical-model.js"
   }
 }

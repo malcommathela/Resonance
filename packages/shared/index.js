@@ -21,3 +21,12 @@ export {
   getTrafficPatternList,
   normalizeTrafficPattern
 } from './traffic-models.js'
+export {
+  CANONICAL_MODEL_VERSION,
+  SIMULATION_ENGINE_VERSION,
+  REPORT_SCHEMA_VERSION,
+  LEGACY_ENGINE_VERSION,
+  compileDesignToSimulationModel,
+  validateCanonicalSimulationModel,
+  derivedSeed,
+} from './canonical-model.js'

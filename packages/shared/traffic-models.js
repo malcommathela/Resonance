@@ -71,6 +71,16 @@ export const TRAFFIC_PATTERNS = {
     generator: generateRandomizedTraffic,
   },
 
+  ramp: {
+    id: 'ramp',
+    label: 'Ramp',
+    description: 'Monotonic linear ramp from baseline to baseline * endMultiplier',
+    params: {
+      endMultiplier: { type: 'number', default: 2, min: 1.1, max: 100, description: 'End multiplier of baseline' },
+    },
+    generator: generateRampTraffic,
+  },
+
   custom: {
     id: 'custom',
     label: 'Custom',
@@ -93,7 +103,6 @@ const TRAFFIC_PATTERN_ALIASES = {
   'flat': 'constant',
   'uniform': 'constant',
   'spike': 'bursty',       // Old "spike" = new "bursty" (periodic bursts)
-  'ramp': 'seasonal',      // Old "ramp" = new "seasonal" (gradual change)
   'chaos': 'randomized',   // Old "chaos" = new "randomized" (random spikes)
 }
 
@@ -169,6 +178,20 @@ function generateSpikyTraffic(baseRps, duration, params, rng) {
       }
     }
     curve.push({ time: t, rps: currentSpikeRps })
+  }
+  return curve
+}
+
+/**
+ * Ramp traffic: monotonic linear ramp, distinct from seasonal (spec §61).
+ * rps(t) = baseRps * (1 + (endMultiplier - 1) * t / duration)
+ */
+function generateRampTraffic(baseRps, duration, params, rng) {
+  const { endMultiplier = 2 } = params
+  const curve = []
+  for (let t = 0; t <= duration; t++) {
+    const progress = duration > 0 ? t / duration : 1
+    curve.push({ time: t, rps: Math.max(0, baseRps * (1 + (endMultiplier - 1) * progress)) })
   }
   return curve
 }
