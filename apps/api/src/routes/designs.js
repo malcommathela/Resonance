@@ -446,13 +446,13 @@ async function syncCanvasData(
 
     for (let i = 0; i < blockOps.length; i += CHUNK_SIZE) {
       await Promise.all(
-        blockOps.slice(i, i + CHUNK_SIZE).map((op) => op())
+        blockOps.slice(i, i + CHUNK_SIZE)
       )
     }
 
     for (let i = 0; i < edgeOps.length; i += CHUNK_SIZE) {
       await Promise.all(
-        edgeOps.slice(i, i + CHUNK_SIZE).map((op) => op())
+        edgeOps.slice(i, i + CHUNK_SIZE)
       )
     }
 
