@@ -38,16 +38,15 @@ function getUtilizationTextColor(util) {
 // COMPONENT
 // ----------------------------------------------------------------------------
 
-export const SimulationOverlay = ({ progress }) => {
+export const SimulationOverlay = () => {
   const [collapsed, setCollapsed] = useState(false)
-  const {
-    simulationMetrics,
-    simulationBlockMetrics,
-    simulationEdgeMetrics,
-    simulationAlerts,
-    nodes,
-    edges,
-  } = useCanvasStore()
+  const simulationMetrics = useCanvasStore((s) => s.simulationMetrics)
+  const simulationBlockMetrics = useCanvasStore((s) => s.simulationBlockMetrics)
+  const simulationEdgeMetrics = useCanvasStore((s) => s.simulationEdgeMetrics)
+  const simulationAlerts = useCanvasStore((s) => s.simulationAlerts)
+  const nodes = useCanvasStore((s) => s.nodes)
+  const edges = useCanvasStore((s) => s.edges)
+  const progress = useCanvasStore((s) => s.simulationProgress)
 
   // -- Top-bar scalars (existing contract) --
   const totalRequests = simulationMetrics?.totalRequests || 0

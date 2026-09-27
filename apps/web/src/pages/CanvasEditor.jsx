@@ -5,8 +5,6 @@ import {
   Background,
   Controls,
   MiniMap,
-  useNodesState,
-  useEdgesState,
   addEdge,
   useReactFlow,
   ReactFlowProvider,
@@ -28,6 +26,7 @@ import {
   BarChart3,
   Zap,
   Settings,
+  Plus,
 } from 'lucide-react'
 import { useCanvasStore } from '@/stores/canvasStore'
 import { useDesignStore } from '@/stores/designStore'
@@ -41,8 +40,6 @@ import { SimulationOverlay } from '@/components/canvas/SimulationOverlay'
 import { SimulationControls } from '@/components/canvas/SimulationControls'
 import { ExportModal } from '@/components/canvas/ExportModal'
 import { SimulationReportModal } from '@/components/canvas/SimulationReportModal'
-import { CustomEdge } from '@/components/canvas/CustomEdge'
-import { CustomBlockNode } from '@/components/canvas/CustomBlockNode'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { api, useApiWithAuth } from '@/services/api'
@@ -52,13 +49,17 @@ import { ValidationPanel } from '@/components/canvas/ValidationPanel'
 import { TopologyRiskOverlay } from '@/components/canvas/TopologyRiskOverlay'
 import { getValidationSummary, preValidateArchitecture } from '@/lib/validation'
 // === END P1 + BATCH 4 ===
-
-const nodeTypes = { customBlock: CustomBlockNode }
-const edgeTypes = { customEdge: CustomEdge }
+import { useCanvasDocument } from '@/features/canvas/core/useCanvasDocument'
+import { normalizeDocument, isBlockNode } from '@/features/canvas/core/document'
+import { persistCanvasMeta } from '@/features/canvas/groups/meta'
+import { nodeTypes, edgeTypes } from '@/features/canvas/core/canvasTypes'
+import { canvasCommands } from '@/features/canvas/core/canvasCommands'
+import { setFlowInstance } from '@/features/canvas/core/flowInstance'
+import { NodePicker } from '@/features/canvas/picker/NodePicker'
+import { CanvasContextMenu } from '@/features/canvas/interactions/CanvasContextMenu'
+import { SimulationBar } from '@/features/canvas/overlays/SimulationBar'
 
 const edgeOptions = {
-  animated: true,
-  style: { stroke: '#8b5cf6', strokeWidth: 2 },
   type: 'customEdge',
   data: { connectionType: 'http' },
 }
@@ -71,82 +72,55 @@ function CanvasEditorInner() {
   const { loadDesign, currentDesign, saveCanvas, saveStatus, isLoading: designLoading } = useDesignStore()
 
   const [isInitialized, setIsInitialized] = useState(false)
-  const {
-    nodes: storeNodes,
-    edges: storeEdges,
-    selectedNode,
-    selectedNodes,
-    selectedEdge,
-    simulationRunning,
-    activeTab,
-    // === BATCH 1: NEW STATE ===
-    panels,
-    togglePanel,
-    // === END BATCH 1 ===
-    // === BATCH 3: SELECTION + VALIDATION HIGHLIGHT (canonical state) ===
-    selectedNodeId,
-    selectedEdgeId,
-    selectedNodeIds,
-    selectedEdgeIds,
-    validationHighlight,
-    selectNode,
-    selectEdge,
-    clearSelection,
-    setValidationHighlight,
-    clearValidationHighlight,
-    // === END BATCH 3 ===
-    // === P1: VALIDATION STATE FROM STORE ===
-    validationResult,
-    isValidating,
-    setValidationResult,
-    setIsValidating,
-    clearValidation,
-    // === END P1 ===
-    // === BATCH 5B: EXPANDED SIMULATION ACTIONS ===
-    setSimulationBlockMetrics,
-    setSimulationEdgeMetrics,
-    setSimulationAlerts,
-    // === END BATCH 5B ===
-    // === BATCH 5: SIMULATION AUTO-REPORT STATE ===
-    simulationAutoOpenReport,
-    simulationReportId,
-    // === END BATCH 5 ===
-    setNodes: setStoreNodes,
-    setEdges: setStoreEdges,
-    setSelectedNode,
-    setSelectedNodes,
-    setSelectedEdge,
-    setActiveTab,
-    addNode,
-    updateNode,
-    updateNodePosition,
-    removeNode,
-    addEdge: addStoreEdge,
-    removeEdge,
-    updateEdge,        // <-- FIX: added missing store action
-    undo,
-    redo,
-    deleteSelected,
-    startSimulation,
-    stopSimulation,
-    setSimulationMetrics,
-    loadDesign: loadCanvasDesign,
-    clearCanvas,
-    getAllConnectionTypes,
-  } = useCanvasStore()
+  // Phase 11: selective subscriptions — sim ticks touch only runtime maps,
+  // so the editor shell no longer re-renders on every simulation update.
+  const simulationRunning = useCanvasStore((s) => s.simulationRunning)
+  const activeTab = useCanvasStore((s) => s.activeTab)
+  const panels = useCanvasStore((s) => s.panels)
+  const togglePanel = useCanvasStore((s) => s.togglePanel)
+  const selectedNodeId = useCanvasStore((s) => s.selectedNodeId)
+  const selectedEdgeId = useCanvasStore((s) => s.selectedEdgeId)
+  const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds)
+  const selectedEdgeIds = useCanvasStore((s) => s.selectedEdgeIds)
+  const validationHighlight = useCanvasStore((s) => s.validationHighlight)
+  const selectNode = useCanvasStore((s) => s.selectNode)
+  const selectEdge = useCanvasStore((s) => s.selectEdge)
+  const clearSelection = useCanvasStore((s) => s.clearSelection)
+  const setValidationHighlight = useCanvasStore((s) => s.setValidationHighlight)
+  const clearValidationHighlight = useCanvasStore((s) => s.clearValidationHighlight)
+  const validationResult = useCanvasStore((s) => s.validationResult)
+  const isValidating = useCanvasStore((s) => s.isValidating)
+  const setValidationResult = useCanvasStore((s) => s.setValidationResult)
+  const setIsValidating = useCanvasStore((s) => s.setIsValidating)
+  const setSimulationBlockMetrics = useCanvasStore((s) => s.setSimulationBlockMetrics)
+  const setSimulationEdgeMetrics = useCanvasStore((s) => s.setSimulationEdgeMetrics)
+  const setSimulationAlerts = useCanvasStore((s) => s.setSimulationAlerts)
+  const setSelectedNode = useCanvasStore((s) => s.setSelectedNode)
+  const setSelectedNodes = useCanvasStore((s) => s.setSelectedNodes)
+  const setSelectedEdge = useCanvasStore((s) => s.setSelectedEdge)
+  const setActiveTab = useCanvasStore((s) => s.setActiveTab)
+  const addNode = useCanvasStore((s) => s.addNode)
+  const updateNodePosition = useCanvasStore((s) => s.updateNodePosition)
+  const removeNode = useCanvasStore((s) => s.removeNode)
+  const removeEdge = useCanvasStore((s) => s.removeEdge)
+  const startSimulation = useCanvasStore((s) => s.startSimulation)
+  const stopSimulation = useCanvasStore((s) => s.stopSimulation)
+  const setSimulationMetrics = useCanvasStore((s) => s.setSimulationMetrics)
+  const loadCanvasDesign = useCanvasStore((s) => s.loadDesign)
+  const clearCanvas = useCanvasStore((s) => s.clearCanvas)
+  const getAllConnectionTypes = useCanvasStore((s) => s.getAllConnectionTypes)
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes)
-  const [edges, setEdges, onEdgesChange] = useEdgesState(storeEdges)
+  const { nodes, edges, setNodes, setEdges, handleNodesChange, handleEdgesChange } = useCanvasDocument()
   const [showExportModal, setShowExportModal] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
   const [logs, setLogs] = useState([])
-  const [simulationProgress, setSimulationProgress] = useState(0)
   const [simulationId, setSimulationId] = useState(null)
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false)
   const [showSaveNewModal, setShowSaveNewModal] = useState(false)
   const [newDesignName, setNewDesignName] = useState('')
   const [showEdgeTypeMenu, setShowEdgeTypeMenu] = useState(false)
   const [pendingConnection, setPendingConnection] = useState(null)
+  const [contextMenu, setContextMenu] = useState(null)
   // === BATCH 5: REPORT MODAL STATE (store-driven auto-open) ===
   const [showReportModal, setShowReportModal] = useState(false)
   const [currentReport, setCurrentReport] = useState(null)
@@ -158,7 +132,12 @@ function CanvasEditorInner() {
   const [activePropertyTab, setActivePropertyTab] = useState('appearance')
   // === END RIGHT SIDEBAR STATE ===
 
-  const { screenToFlowPosition, fitView, zoomIn, zoomOut, setCenter } = useReactFlow()
+  const reactFlow = useReactFlow()
+  const { screenToFlowPosition, fitView, zoomIn, zoomOut, setCenter } = reactFlow
+  useEffect(() => {
+    setFlowInstance(reactFlow)
+    return () => setFlowInstance(null)
+  }, [reactFlow])
   const eventSourceRef = useRef(null)
   const simulationIntervalRef = useRef(null)
   const propertyPanelRef = useRef(null)
@@ -168,9 +147,6 @@ function CanvasEditorInner() {
   // === BATCH 5: PREVENT DOUBLE-PROCESSING THE SAME SIMULATION ===
   const simulationHandledRef = useRef(new Set())
   // === END BATCH 5 ===
-
-  const isSyncingFromStore = useRef(false)
-  const isSyncingToStore = useRef(false)
 
   const {
     saveStatus: autoSaveStatus,
@@ -184,21 +160,21 @@ function CanvasEditorInner() {
     currentDesign?.version ?? null
   )
 
-  // Wrapper to mark canvas dirty on user changes
+  // Commit RF changes to the document store, then mark dirty for autosave
   const onNodesChangeWrapper = useCallback(
-    (error, newNodes) => {
-      onNodesChange(error, newNodes)
+    (changes) => {
+      handleNodesChange(changes)
       markDirty()
     },
-    [onNodesChange, markDirty]
+    [handleNodesChange, markDirty]
   )
 
   const onEdgesChangeWrapper = useCallback(
-    (error, newEdges) => {
-      onEdgesChange(error, newEdges)
+    (changes) => {
+      handleEdgesChange(changes)
       markDirty()
     },
-    [onEdgesChange, markDirty]
+    [handleEdgesChange, markDirty]
   )
 
   // === BATCH 5E: LOAD HISTORICAL REPORTS ON DESIGN LOAD ===
@@ -208,6 +184,12 @@ function CanvasEditorInner() {
     }
   }, [id])
   // === END BATCH 5E ===
+
+  // Persist canvas-only objects (groups/notes) per design; blocks/edges
+  // keep flowing through the existing autosave pipeline.
+  useEffect(() => {
+    if (id && id !== 'new' && isInitialized) persistCanvasMeta(id, nodes)
+  }, [id, isInitialized, nodes])
 
   // === P1: AUTO-VALIDATE ON DESIGN CHANGE ===
   useEffect(() => {
@@ -248,6 +230,23 @@ function CanvasEditorInner() {
   }, [validationHighlight, setCenter, nodes, edges])
   // === END BATCH 3 ===
 
+  // Phase 9: risk-badge click focuses the block (TopologyRiskOverlay only dispatches).
+  useEffect(() => {
+    const onBadge = (e) => {
+      const blockId = e.detail?.blockId
+      if (!blockId) return
+      const st = useCanvasStore.getState()
+      const node = st.nodes.find((n) => n.id === blockId)
+      if (!node) return
+      st.selectNode(blockId)
+      const w = node.measured?.width ?? node.width ?? 200
+      const h = node.measured?.height ?? node.height ?? 60
+      setCenter(node.position.x + w / 2, node.position.y + h / 2, { zoom: 1.2, duration: 500 })
+    }
+    window.addEventListener('resonance:highlight-block', onBadge)
+    return () => window.removeEventListener('resonance:highlight-block', onBadge)
+  }, [setCenter])
+
   // Load design
   useEffect(() => {
     let cancelled = false
@@ -271,18 +270,19 @@ function CanvasEditorInner() {
           const loadedEdges = design?.edges || []
 
           /*
-           * Hydrate both React Flow and Zustand from the same server snapshot.
+           * Hydrate the document store from the server snapshot.
+           * useCanvasDocument mirrors it into React Flow (store → flow).
            */
-          isSyncingFromStore.current = true
-
-          setNodes(loadedNodes)
-          setEdges(loadedEdges)
-
-          loadCanvasDesign({
+          loadCanvasDesign(normalizeDocument({
             ...design,
             nodes: loadedNodes,
             edges: loadedEdges,
-          })
+          }))
+
+          // Canvas-only objects (groups/notes) rejoin from local storage,
+          // then the full canvas state becomes the clean baseline.
+          useCanvasStore.getState().loadCanvasMeta(id)
+          const hydrated = useCanvasStore.getState()
 
           /*
            * Establish the loaded server state as the clean persistence
@@ -290,20 +290,14 @@ function CanvasEditorInner() {
            * contains an empty design.
            */
           markHydrated(
-            loadedNodes,
-            loadedEdges,
+            hydrated.nodes,
+            hydrated.edges,
             design?.version ?? null
           )
 
           useCanvasStore.getState().markCanvasClean()
 
           setIsInitialized(true)
-
-          setTimeout(() => {
-            if (!cancelled) {
-              isSyncingFromStore.current = false
-            }
-          }, 50)
         } catch (err) {
           if (cancelled) return
 
@@ -335,8 +329,6 @@ function CanvasEditorInner() {
        */
       if (!cancelled) {
         clearCanvas()
-        setNodes([])
-        setEdges([])
 
         useCanvasStore.getState().markCanvasClean()
 
@@ -350,51 +342,14 @@ function CanvasEditorInner() {
 
     return () => {
       cancelled = true
-
-      /*
-       * Do not allow a previous design load to hydrate a newly selected
-       * design after the component has changed.
-       */
-      isSyncingFromStore.current = false
     }
   }, [
     id,
     loadDesign,
-    setNodes,
-    setEdges,
     loadCanvasDesign,
     clearCanvas,
     markHydrated,
   ])
-
-  // Sync store ↔ local state
-  useEffect(() => {
-    if (isSyncingToStore.current) return
-    isSyncingFromStore.current = true
-    setNodes(storeNodes)
-    setTimeout(() => { isSyncingFromStore.current = false }, 0)
-  }, [storeNodes, setNodes])
-
-  useEffect(() => {
-    if (isSyncingToStore.current) return
-    isSyncingFromStore.current = true
-    setEdges(storeEdges)
-    setTimeout(() => { isSyncingFromStore.current = false }, 0)
-  }, [storeEdges, setEdges])
-
-  useEffect(() => {
-    if (isSyncingFromStore.current) return
-    isSyncingToStore.current = true
-    setStoreNodes(nodes)
-    setTimeout(() => { isSyncingToStore.current = false }, 0)
-  }, [nodes, setStoreNodes])
-
-  useEffect(() => {
-    if (isSyncingFromStore.current) return
-    isSyncingToStore.current = true
-    setStoreEdges(edges)
-    setTimeout(() => { isSyncingToStore.current = false }, 0)
-  }, [edges, setStoreEdges])
 
   // ==========================================================================
   // BATCH 4: FOCUS-AWARE KEYBOARD SHORTCUTS
@@ -415,65 +370,12 @@ function CanvasEditorInner() {
     return ['input', 'textarea', 'select'].includes(tag) || editable || customInput || inCanvasInput
   }
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      // BATCH 4: FOCUS GATE — Ignore all canvas shortcuts when editing text
-      if (isEditingText()) {
-        // Only allow Escape to clear focus when inside inputs
-        if (e.key === 'Escape') {
-          e.preventDefault()
-          e.stopPropagation()
-          // Blur the active element to exit edit mode
-          document.activeElement?.blur()
-          // Return focus to canvas container
-          canvasContainerRef.current?.focus()
-          clearSelection()
-          clearValidationHighlight()
-        }
-        return
-      }
-
-      if (e.metaKey || e.ctrlKey) {
-        switch (e.key.toLowerCase()) {
-          case 's': e.preventDefault(); handleManualSave(); break
-          case 'e': e.preventDefault(); setShowExportModal(true); break
-          case 'k': e.preventDefault(); setShowKeyboardShortcuts(true); break
-          case 'z': e.preventDefault(); e.shiftKey ? redo() : undo(); break
-          case 'y': e.preventDefault(); redo(); break
-          case 'a':
-            if (e.shiftKey) break
-            e.preventDefault()
-            setSelectedNodes(nodes)
-            break
-          // === P1: CMD+SHIFT+V = VALIDATE ===
-          case 'v':
-            if (e.shiftKey) {
-              e.preventDefault()
-              handleRunValidation(true)
-            }
-            break
-          // === END P1 ===
-        }
-      }
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        // BATCH 3: Use canonical IDs from store, not object references
-        if (selectedNodeIds.length > 0 || selectedEdgeIds.length > 0) deleteSelected()
-        else if (selectedNodeId) removeNode(selectedNodeId)
-        else if (selectedEdgeId) removeEdge(selectedEdgeId)
-      }
-      if (e.key === 'Escape') {
-        clearSelection()
-        clearValidationHighlight()
-      }
-      if (e.key === ' ' && !isEditingText()) {
-        e.preventDefault()
-        handleRunSimulation()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedNode, selectedNodes, selectedEdge, selectedNodeId, selectedEdgeId, selectedNodeIds, selectedEdgeIds, nodes, removeNode, removeEdge, deleteSelected, undo, redo, clearSelection, clearValidationHighlight, canvasContainerRef])
+  // Phase 6: contextual inspector opener (panel is editor-local; command covers selection).
+  const openPropertiesFor = useCallback((kind, id) => {
+    if (kind === 'edge') selectEdge(id)
+    else canvasCommands.openInspector(id)
+    setActivePanel('properties')
+  }, [selectEdge])
 
   // Edge connection with type selection
   const onConnect = useCallback((params) => {
@@ -494,13 +396,38 @@ function CanvasEditorInner() {
 
   const onNodeClick = useCallback((_, node) => selectNode(node.id), [selectNode])
   const onEdgeClick = useCallback((_, edge) => selectEdge(edge.id), [selectEdge])
+  const onNodeDoubleClick = useCallback((_, node) => openPropertiesFor('node', node.id), [openPropertiesFor])
+  const onEdgeDoubleClick = useCallback((_, edge) => openPropertiesFor('edge', edge.id), [openPropertiesFor])
+  // Phase 9: finding click selects + pans (existing highlight effect) + opens the relevant inspector.
+  const handleFindingClick = useCallback((finding) => {
+    setValidationHighlight(finding)
+    const elementId = finding.elementId || finding.blockId || finding.edgeId
+    const elementType = finding.elementType || (finding.blockId ? 'node' : finding.edgeId ? 'edge' : null)
+    if (elementId && elementType) openPropertiesFor(elementType, elementId)
+  }, [setValidationHighlight, openPropertiesFor])
+  const onNodeContextMenu = useCallback((e, node) => {
+    e.preventDefault()
+    selectNode(node.id)
+    setContextMenu({ x: e.clientX, y: e.clientY, kind: 'node', id: node.id })
+  }, [selectNode])
+  const onEdgeContextMenu = useCallback((e, edge) => {
+    e.preventDefault()
+    selectEdge(edge.id)
+    setContextMenu({ x: e.clientX, y: e.clientY, kind: 'edge', id: edge.id })
+  }, [selectEdge])
+  const onPaneContextMenu = useCallback((e) => {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY, kind: 'pane' })
+  }, [])
   const onPaneClick = useCallback(() => {
     clearSelection()
     setShowEdgeTypeMenu(false)
     clearValidationHighlight()
+    setContextMenu(null)
+    if (activePanel === 'properties') setActivePanel(null)
     // BATCH 4: Return focus to canvas container so shortcuts work
     canvasContainerRef.current?.focus()
-  }, [clearSelection, clearValidationHighlight])
+  }, [clearSelection, clearValidationHighlight, activePanel])
 
   const onSelectionChange = useCallback(({ nodes: selNodes, edges: selEdges }) => {
     if (selNodes.length === 1 && selEdges.length === 0) {
@@ -539,6 +466,7 @@ function CanvasEditorInner() {
 
   const onNodeDragStop = useCallback((_, node) => {
     updateNodePosition(node.id, node.position)
+    useCanvasStore.getState().refreshGroupBoxes()
     markDirty()
   }, [updateNodePosition, markDirty])
   const onNodesDelete = useCallback((deletedNodes) => deletedNodes.forEach(node => removeNode(node.id)), [removeNode])
@@ -570,7 +498,7 @@ function CanvasEditorInner() {
 
     try {
       // 1. Client-side pre-validation (instant feedback)
-      const clientValidation = preValidateArchitecture(nodes, edges, null)
+      const clientValidation = preValidateArchitecture(nodes.filter(isBlockNode), edges, null)
 
       // 2. Server-side validation (authoritative)
       const serverResult = await api.validateDesign(id)
@@ -602,7 +530,7 @@ function CanvasEditorInner() {
       }])
     } catch (err) {
       // Fallback to client-side only if server is unreachable
-      const clientValidation = preValidateArchitecture(nodes, edges, null)
+      const clientValidation = preValidateArchitecture(nodes.filter(isBlockNode), edges, null)
       setValidationResult(clientValidation)
       setLogs(prev => [...prev, {
         type: 'error',
@@ -901,7 +829,7 @@ function CanvasEditorInner() {
   const handleRunSimulation = async (config = {}) => {
     // === BATCH 4: PRE-FLIGHT VALIDATION ===
     // 1. Fast client-side pre-validation
-    const preflight = preValidateArchitecture(nodes, edges, null)
+    const preflight = preValidateArchitecture(nodes.filter(isBlockNode), edges, null)
     if (!preflight.canSimulate) {
       setActivePanel('validation')
       setValidationResult(preflight)
@@ -932,7 +860,7 @@ function CanvasEditorInner() {
         try { await api.stopSimulation(simulationId) } catch (e) { /* ignore */ }
       }
       stopSimulation()
-      setSimulationProgress(0)
+      useCanvasStore.getState().setSimulationProgress(0)
       setSimulationId(null)
       return
     }
@@ -946,7 +874,7 @@ function CanvasEditorInner() {
     startSimulation()
     useCanvasStore.getState().setSimulationConfig(config)
     setLogs(prev => [...prev, { type: 'info', message: 'Starting simulation...', timestamp: Date.now() }])
-    setSimulationProgress(0)
+    useCanvasStore.getState().setSimulationProgress(0)
 
     try {
       const result = await api.runSimulation(id, {
@@ -997,27 +925,21 @@ function CanvasEditorInner() {
               return
             }
 
-            setSimulationProgress(data.progress || 0)
+            useCanvasStore.getState().setSimulationProgress(data.progress || 0)
 
-            // === BATCH 5B: LIVE BLOCK METRICS (expanded) ===
+            // === BATCH 5B: LIVE BLOCK METRICS (runtime map only) ===
+            // Never written into node data: sim ticks must not churn the
+            // document, dirty the design, or re-render unselected nodes.
             const blockMetricsMap = {}
             if (data.metrics && Object.keys(data.metrics).length > 0) {
               Object.entries(data.metrics).forEach(([blockId, metrics]) => {
-                // Existing visual node update (kept for backward compat)
-                updateNode(blockId, {
-                  metrics: {
-                    rps: metrics.throughputRps || 0,
-                    latency: Math.round(metrics.avgLatencyMs || 0),
-                    errors: metrics.failedRequests || 0,
-                    utilization: metrics.utilization || 0,
-                    p95Latency: Math.round(metrics.p95LatencyMs || 0),
-                    p99Latency: Math.round(metrics.p99LatencyMs || 0),
-                    queueDepth: metrics.queueDepth || 0,
-                  }
-                })
-
-                // Expanded block metrics for overlay
+                // Expanded block metrics for overlay + inspector
                 blockMetricsMap[blockId] = {
+                  rps: metrics.throughputRps || 0,
+                  latency: Math.round(metrics.avgLatencyMs || 0),
+                  errors: metrics.failedRequests || 0,
+                  p95Latency: Math.round(metrics.p95LatencyMs || 0),
+                  p99Latency: Math.round(metrics.p99LatencyMs || 0),
                   utilization: metrics.utilization || 0,
                   queueDepth: metrics.queueDepth || 0,
                   currentReplicas: metrics.currentReplicas || 1,
@@ -1031,7 +953,7 @@ function CanvasEditorInner() {
               setSimulationBlockMetrics(blockMetricsMap)
             }
 
-            // === BATCH 5B: LIVE EDGE METRICS ===
+            // === BATCH 5B: LIVE EDGE METRICS (runtime map only — same rule as blocks) ===
             const edgeMetricsMap = {}
             if (data.edges && Object.keys(data.edges).length > 0) {
               Object.entries(data.edges).forEach(([edgeId, edgeMetrics]) => {
@@ -1041,14 +963,6 @@ function CanvasEditorInner() {
                   retryCount: edgeMetrics.retryCount || 0,
                   latencyMs: edgeMetrics.latencyMs || 0,
                 }
-                // Push visual state into edge data so CustomEdge re-renders
-                updateEdge(edgeId, {
-                  data: {
-                    circuitOpen: edgeMetrics.circuitOpen || false,
-                    retryCount: edgeMetrics.retryCount || 0,
-                    latencyMs: edgeMetrics.latencyMs || 0,
-                  }
-                })
               })
               setSimulationEdgeMetrics(edgeMetricsMap)
             }
@@ -1133,7 +1047,7 @@ function CanvasEditorInner() {
               ctrl.abort()
               eventSourceRef.current = null
               stopSimulation()
-              setSimulationProgress(100)
+              useCanvasStore.getState().setSimulationProgress(100)
               setSimulationId(null)
 
               setLogs(prev => [...prev, {
@@ -1145,6 +1059,9 @@ function CanvasEditorInner() {
               }])
 
               // === BATCH 5E: AUTO-OPEN REPORT MODAL ON COMPLETION ===
+              if (data.status === 'failed') {
+                useCanvasStore.getState().setSimulationFailed(data.errorMessage || 'Unknown error')
+              }
               if (data.status === 'completed' || data.status === 'stopped') {
                 handleSimulationComplete(simId, data.status, globalMetricsSnapshot || data.global)
               }
@@ -1174,7 +1091,7 @@ function CanvasEditorInner() {
             simulationIntervalRef.current = null
             if (eventSourceRef.current) { eventSourceRef.current.abort(); eventSourceRef.current = null }
             stopSimulation()
-            setSimulationProgress(100)
+            useCanvasStore.getState().setSimulationProgress(100)
             setSimulationId(null)
 
             // Map DB fields (P2 names) to UI fields
@@ -1227,6 +1144,9 @@ function CanvasEditorInner() {
             }])
 
             // === BATCH 5E: AUTO-OPEN REPORT MODAL ON POLL COMPLETION ===
+            if (status.status === 'failed') {
+              useCanvasStore.getState().setSimulationFailed(status.errorMessage || 'Unknown error')
+            }
             if (status.status === 'completed' || status.status === 'stopped') {
               handleSimulationComplete(simId, status.status, globalMetricsSnapshot || status.globalMetrics)
             }
@@ -1239,7 +1159,7 @@ function CanvasEditorInner() {
             simulationIntervalRef.current = null
             if (eventSourceRef.current) { eventSourceRef.current.abort(); eventSourceRef.current = null }
             stopSimulation()
-            setSimulationProgress(0)
+            useCanvasStore.getState().setSimulationProgress(0)
             setSimulationId(null)
             setLogs(prev => [...prev, { type: 'error', message: 'Session expired. Please sign in again.', timestamp: Date.now() }])
           }
@@ -1248,10 +1168,84 @@ function CanvasEditorInner() {
 
     } catch (err) {
       stopSimulation()
-      setSimulationProgress(0)
+      useCanvasStore.getState().setSimulationProgress(0)
       setLogs(prev => [...prev, { type: 'error', message: `Simulation failed: ${err.message}`, timestamp: Date.now() }])
     }
   }
+
+  // Keyboard shortcuts — placed after all handlers it calls (deps evaluate at render).
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // BATCH 4: FOCUS GATE — Ignore all canvas shortcuts when editing text
+      if (isEditingText()) {
+        // Only allow Escape to clear focus when inside inputs
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          e.stopPropagation()
+          // Blur the active element to exit edit mode
+          document.activeElement?.blur()
+          // Return focus to canvas container
+          canvasContainerRef.current?.focus()
+          clearSelection()
+          clearValidationHighlight()
+        }
+        return
+      }
+
+      if (e.metaKey || e.ctrlKey) {
+        switch (e.key.toLowerCase()) {
+          case 's': e.preventDefault(); handleManualSave(); break
+          case 'e': e.preventDefault(); setShowExportModal(true); break
+          case 'k': e.preventDefault(); setShowKeyboardShortcuts(true); break
+          case 'z': e.preventDefault(); e.shiftKey ? canvasCommands.redo() : canvasCommands.undo(); break
+          case 'y': e.preventDefault(); canvasCommands.redo(); break
+          case 'a':
+            if (e.shiftKey) break
+            e.preventDefault()
+            canvasCommands.selectAll()
+            break
+          // === P1: CMD+SHIFT+V = VALIDATE ===
+          case 'v':
+            if (e.shiftKey) {
+              e.preventDefault()
+              handleRunValidation(true)
+            }
+            break
+          // === END P1 ===
+        }
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        canvasCommands.deleteSelection()
+      }
+      if (e.key === 'Escape') {
+        clearSelection()
+        clearValidationHighlight()
+        setContextMenu(null)
+      }
+      if (e.key === 'Enter') {
+        if (selectedNodeId) openPropertiesFor('node', selectedNodeId)
+        else if (selectedEdgeId) openPropertiesFor('edge', selectedEdgeId)
+      }
+      if (e.key === 'n' || e.key === 'N') {
+        canvasCommands.openNodePicker()
+      }
+      if (e.key === '1') {
+        canvasCommands.fitArchitecture()
+      }
+      if (e.key === 'f' || e.key === 'F') {
+        canvasCommands.focusSelection()
+      }
+      if (e.key === 'd' || e.key === 'D') {
+        canvasCommands.duplicateSelection()
+      }
+      if (e.key === ' ' && !isEditingText()) {
+        e.preventDefault()
+        handleRunSimulation()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedNodeId, selectedEdgeId, openPropertiesFor, clearSelection, clearValidationHighlight, handleManualSave, handleRunValidation, handleRunSimulation, canvasContainerRef, setShowExportModal, setShowKeyboardShortcuts])
 
   const SaveStatusIndicator = () => {
     const status = autoSaveStatus || saveStatus
@@ -1317,7 +1311,6 @@ function CanvasEditorInner() {
           <SimulationControls
             onRun={handleRunSimulation}
             isRunning={simulationRunning}
-            progress={simulationProgress}
             metrics={null}
             simulationId={simulationId}
           />
@@ -1357,6 +1350,11 @@ function CanvasEditorInner() {
               onConnect={onConnect}
               onNodeClick={onNodeClick}
               onEdgeClick={onEdgeClick}
+              onNodeDoubleClick={onNodeDoubleClick}
+              onEdgeDoubleClick={onEdgeDoubleClick}
+              onNodeContextMenu={onNodeContextMenu}
+              onEdgeContextMenu={onEdgeContextMenu}
+              onPaneContextMenu={onPaneContextMenu}
               onPaneClick={onPaneClick}
               onDragOver={onDragOver}
               onDrop={onDrop}
@@ -1395,7 +1393,22 @@ function CanvasEditorInner() {
             highlightedBlockId={validationHighlight?.elementType === 'node' ? validationHighlight.elementId : null}
           />
 
+          {isInitialized && nodes.length === 0 && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2">
+              <button
+                onClick={() => canvasCommands.openNodePicker()}
+                className="pointer-events-auto flex items-center gap-2 rounded-xl border border-resonance-border bg-resonance-bg-elevated px-4 py-2.5 text-sm font-medium text-resonance-text-secondary shadow-lg transition-all hover:border-resonance-accent hover:text-resonance-text-primary"
+              >
+                <Plus size={16} /> Add component
+              </button>
+              <p className="text-xs text-resonance-text-muted">Start building your architecture</p>
+            </div>
+          )}
+
           <div className="absolute bottom-20 right-4 z-10 flex flex-col gap-1">
+            <button onClick={() => canvasCommands.openNodePicker()} className="w-8 h-8 rounded-xl bg-resonance-accent border border-resonance-accent flex items-center justify-center text-resonance-neutral hover:bg-resonance-accent-hover transition-all shadow-lg" title="Add component (N)">
+              <Plus size={16} />
+            </button>
             <button onClick={() => zoomIn({ duration: 300 })} className="w-8 h-8 rounded-xl bg-resonance-bg-elevated border border-resonance-border flex items-center justify-center text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all shadow-lg" title="Zoom In">
               <ZoomIn size={16} />
             </button>
@@ -1407,7 +1420,12 @@ function CanvasEditorInner() {
             </button>
           </div>
 
-          {simulationRunning && <SimulationOverlay progress={simulationProgress} />}
+          {simulationRunning && <SimulationOverlay />}
+          <SimulationBar
+            onStop={() => handleRunSimulation()}
+            onRetry={() => handleRunSimulation(useCanvasStore.getState().simulationConfig || {})}
+            onViewReport={() => setShowReportModal(true)}
+          />
 
           <div className="absolute bottom-4 left-4 z-10">
             <button
@@ -1454,7 +1472,7 @@ function CanvasEditorInner() {
               <ValidationPanel
                 validation={validationResult}
                 onClose={() => setActivePanel(null)}
-                onHighlightFinding={(finding) => setValidationHighlight(finding)}
+                onHighlightFinding={handleFindingClick}
                 onClearHighlight={() => clearValidationHighlight()}
                 onRunValidation={() => handleRunValidation(true)}
                 isValidating={isValidating}
@@ -1573,7 +1591,9 @@ function CanvasEditorInner() {
       </div>
 
       <BottomPanel logs={logs} />
-      <ExportModal isOpen={showExportModal} onClose={() => setShowExportModal(false)} nodes={nodes} edges={edges} />
+      <NodePicker />
+      <CanvasContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} onConfigure={openPropertiesFor} />
+      <ExportModal isOpen={showExportModal} onClose={() => setShowExportModal(false)} nodes={nodes.filter(isBlockNode)} edges={edges} />
 
       {/* === BATCH 5E: SIMULATION REPORT MODAL === */}
       <SimulationReportModal
@@ -1610,6 +1630,11 @@ function CanvasEditorInner() {
             { keys: ['⌘', 'A'], action: 'Select all' },
             { keys: ['⌘', '⇧', 'V'], action: 'Validate architecture' },
             { keys: ['Del'], action: 'Delete selected' },
+            { keys: ['N'], action: 'Add component' },
+            { keys: ['Enter'], action: 'Configure selected' },
+            { keys: ['1'], action: 'Fit architecture' },
+            { keys: ['F'], action: 'Focus selection' },
+            { keys: ['D'], action: 'Duplicate selection' },
             { keys: ['Esc'], action: 'Clear selection / exit input' },
             { keys: ['Space'], action: 'Run/Stop simulation' },
           ].map((shortcut, i) => (

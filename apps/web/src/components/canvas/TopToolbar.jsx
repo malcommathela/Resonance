@@ -21,7 +21,10 @@ export const TopToolbar = ({
   centerContent,
 }) => {
   const navigate = useNavigate()
-  const { undo, redo, history, historyIndex } = useCanvasStore()
+  const undo = useCanvasStore((s) => s.undo)
+  const redo = useCanvasStore((s) => s.redo)
+  const history = useCanvasStore((s) => s.history)
+  const historyIndex = useCanvasStore((s) => s.historyIndex)
 
   const canUndo = historyIndex > 0
   const canRedo = historyIndex < history.length - 1

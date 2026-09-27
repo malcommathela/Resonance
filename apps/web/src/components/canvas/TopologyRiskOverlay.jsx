@@ -119,9 +119,7 @@ export const TopologyRiskOverlay = ({ findings, highlightedBlockId }) => {
 }
 
 /**
- * NodeRiskStyles — Returns inline styles to apply to a ReactFlow node
- * based on validation findings. Use this in your CustomBlockNode component
- * to apply risk styling directly to nodes.
+ * NodeRiskStyles — Returns inline styles to apply to a ReactFlow node.
  */
 export function getNodeRiskStyle(nodeId, findings) {
   if (!findings || findings.length === 0) return {}

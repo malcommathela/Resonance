@@ -50,7 +50,7 @@ const CurveSparkline = ({ curve, duration }) => {
   )
 }
 
-export const SimulationControls = ({ onRun, isRunning, progress, metrics, simulationId }) => {
+export const SimulationControls = ({ onRun, isRunning, metrics, simulationId }) => {
   const [showSettings, setShowSettings] = useState(false)
   const [trafficPattern, setTrafficPattern] = useState('constant')
   const [scenario, setScenario] = useState('none')
@@ -78,7 +78,11 @@ export const SimulationControls = ({ onRun, isRunning, progress, metrics, simula
   const settingsLoadedRef = useRef(false)
 
   // === P1: VALIDATION INTEGRATION ===
-  const { validationResult, showValidationPanel, setShowValidationPanel, nodes, edges } = useCanvasStore()
+  const validationResult = useCanvasStore((s) => s.validationResult)
+  const showValidationPanel = useCanvasStore((s) => s.showValidationPanel)
+  const setShowValidationPanel = useCanvasStore((s) => s.setShowValidationPanel)
+  const nodes = useCanvasStore((s) => s.nodes)
+  const edges = useCanvasStore((s) => s.edges)
   // === END P1 ===
 
   // === BATCH 5C: LOCALSTORAGE PERSISTENCE ===

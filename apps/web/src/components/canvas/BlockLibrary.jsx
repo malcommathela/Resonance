@@ -18,7 +18,9 @@ export const BlockLibrary = ({ collapsed = false, onToggleCollapse }) => {
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedCategories, setExpandedCategories] = useState(categories.map(c => c.id))
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const { customBlockTypes, addCustomBlockType, getAllBlockTypes } = useCanvasStore()
+  const customBlockTypes = useCanvasStore((s) => s.customBlockTypes)
+  const addCustomBlockType = useCanvasStore((s) => s.addCustomBlockType)
+  const getAllBlockTypes = useCanvasStore((s) => s.getAllBlockTypes)
 
   const allBlockTypes = getAllBlockTypes()
 

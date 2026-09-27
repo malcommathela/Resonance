@@ -102,19 +102,20 @@ export const PropertyPanel = forwardRef(({
   activeTab: controlledActiveTab,
   onTabChange,
 }, ref) => {
-  const {
-    selectedNode,
-    selectedEdge,
-    updateNode,
-    removeNode,
-    setSelectedNode,
-    updateEdgeData,
-    removeEdge,
-    setSelectedEdge,
-    getAllBlockTypes,
-    getAllConnectionTypes,
-    duplicateNode,
-  } = useCanvasStore()
+  const selectedNode = useCanvasStore((s) => s.selectedNode)
+  const selectedEdge = useCanvasStore((s) => s.selectedEdge)
+  const updateNode = useCanvasStore((s) => s.updateNode)
+  const removeNode = useCanvasStore((s) => s.removeNode)
+  const setSelectedNode = useCanvasStore((s) => s.setSelectedNode)
+  const updateEdgeData = useCanvasStore((s) => s.updateEdgeData)
+  const removeEdge = useCanvasStore((s) => s.removeEdge)
+  const setSelectedEdge = useCanvasStore((s) => s.setSelectedEdge)
+  const getAllBlockTypes = useCanvasStore((s) => s.getAllBlockTypes)
+  const getAllConnectionTypes = useCanvasStore((s) => s.getAllConnectionTypes)
+  const duplicateNode = useCanvasStore((s) => s.duplicateNode)
+  // Last-simulation metrics for the selected block (runtime map, Phase 11 —
+  // no longer stored on node data, so sim ticks skip the document).
+  const simBlockMetrics = useCanvasStore((s) => s.simulationBlockMetrics[selectedNode?.id])
 
   const [activeTab, setActiveTab] = useState(controlledActiveTab || 'appearance')
   const [fieldValidation, setFieldValidation] = useState({})
@@ -1108,18 +1109,18 @@ export const PropertyPanel = forwardRef(({
           )}
         </div>
 
-        {/* Simulation Metrics (read-only) */}
-        {data.metrics && (
+        {/* Simulation Metrics (read-only, last run) */}
+        {simBlockMetrics && (
           <div className="p-4 border-t border-resonance-border">
             <h4 className="text-xs font-semibold text-resonance-text-secondary uppercase tracking-wider mb-3">
               Last Simulation Metrics
             </h4>
             <div className="space-y-2">
-              <MetricRow label="Requests/sec" value={data.metrics.rps} />
-              <MetricRow label="Latency" value={`${data.metrics.latency}ms`} />
-              <MetricRow label="Errors" value={data.metrics.errors} color={data.metrics.errors > 10 ? 'text-red-500' : 'text-green-500'} />
-              <MetricRow label="P95" value={`${data.metrics.p95Latency}ms`} />
-              <MetricRow label="P99" value={`${data.metrics.p99Latency}ms`} />
+              <MetricRow label="Requests/sec" value={simBlockMetrics.rps} />
+              <MetricRow label="Latency" value={`${simBlockMetrics.latency}ms`} />
+              <MetricRow label="Errors" value={simBlockMetrics.errors} color={simBlockMetrics.errors > 10 ? 'text-red-500' : 'text-green-500'} />
+              <MetricRow label="P95" value={`${simBlockMetrics.p95Latency}ms`} />
+              <MetricRow label="P99" value={`${simBlockMetrics.p99Latency}ms`} />
             </div>
           </div>
         )}

@@ -230,6 +230,31 @@
   50% { opacity: 0.4; }
 }
 
+/* Canvas V2: simulation flow + node activity (dash/opacity only, no layout) */
+@keyframes arch-edge-flow {
+  to { stroke-dashoffset: -20; }
+}
+
+.arch-edge-flow {
+  animation: arch-edge-flow 0.5s linear infinite;
+}
+
+@keyframes arch-node-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.arch-node-blink {
+  animation: arch-node-blink 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arch-edge-flow,
+  .arch-node-blink {
+    animation: none;
+  }
+}
+
 /* Login page animations */
 @keyframes float {
   0%, 100% { transform: translateY(0px) scale(1); }
