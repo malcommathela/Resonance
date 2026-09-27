@@ -49,6 +49,7 @@ import {
   getBlockBehavioralModel,
   mergeConnectionBehavioralModel,
 } from '@resonance/shared/simulation-models'
+import { CANONICAL_MODEL_VERSION, REPORT_SCHEMA_VERSION } from '@resonance/shared/canonical-model'
 
 // ============================================================================
 // P3 ANALYSIS RUNNER
@@ -160,7 +161,10 @@ function buildSimulationResultForP3(aggregated, design, options = {}) {
     inputSnapshot,
     blockMetrics: aggregated.blockMetrics || { blocks: {} },
     globalMetrics: aggregated.globalMetrics || {},
+    edgeMetrics: aggregated.edgeMetrics || {},
+    growthExperiments: aggregated.growthExperiments || null,
     failureEvents: aggregated.failureEvents || [],
+    failurePropagation: aggregated.failurePropagation || [],
     passCount: aggregated.passCount || 1,
   }
 }
@@ -221,6 +225,47 @@ function computeTopologyAnalysis(design, simulationRecord) {
   }
 }
 
+export const SIMULATION_REPORT_DTO_VERSION = '1.1.0';
+
+/**
+ * Canonical SimulationReportDTO (spec §47 Phase 11): one builder for API
+ * responses and exports so both carry the same authoritative values.
+ * Simulation identity (scenario, traffic, seed, timestamps, versions) lives
+ * here — the frontend must never reconstruct it from partial objects.
+ */
+export function buildSimulationReportDTO(reportData, simulationRecord) {
+  return {
+    dtoVersion: SIMULATION_REPORT_DTO_VERSION,
+    ...reportData,
+    simulation: {
+      id: simulationRecord.id,
+      designId: simulationRecord.designId,
+      scenario: simulationRecord.scenario ?? 'none',
+      trafficPattern: simulationRecord.trafficPattern,
+      rps: simulationRecord.rps,
+      duration: simulationRecord.duration,
+      monteCarloPasses: simulationRecord.monteCarloPasses,
+      deterministicSeed: simulationRecord.deterministicSeed,
+      engineVersion: simulationRecord.engineVersion,
+      reportVersion: simulationRecord.reportVersion,
+      status: simulationRecord.status,
+      createdAt: simulationRecord.createdAt,
+      startedAt: simulationRecord.startedAt ?? null,
+      completedAt: simulationRecord.completedAt ?? null,
+    },
+    metadata: {
+      ...(reportData.metadata || {}),
+      scenario: simulationRecord.scenario ?? 'none',
+      trafficPattern: simulationRecord.trafficPattern,
+      rps: simulationRecord.rps,
+      status: simulationRecord.status,
+      createdAt: simulationRecord.createdAt,
+      startedAt: simulationRecord.startedAt ?? null,
+      completedAt: simulationRecord.completedAt ?? null,
+    },
+  };
+}
+
 export async function buildReportData(simulationRecord, p3Results, aggregated, design = null) {
   // Batch 3: an engine that threw (analysis-pipeline createErrorResult) must
   // surface as "no data", never as a 0 score, $0 cost, or empty findings.
@@ -275,7 +320,9 @@ export async function buildReportData(simulationRecord, p3Results, aggregated, d
     actionPlan: buildActionPlanFromP3(p3, aggregated, simulationRecord),
     metadata: {
       engineVersion: simulationRecord.engineVersion,
+      modelVersion: simulationRecord.assumptions?.modelVersion || CANONICAL_MODEL_VERSION,
       reportVersion: '1.0.0',
+      reportSchemaVersion: REPORT_SCHEMA_VERSION,
       assumptions: simulationRecord.assumptions,
       confidenceScore: p3.confidenceScore,
       monteCarloPasses: simulationRecord.monteCarloPasses,

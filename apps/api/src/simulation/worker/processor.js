@@ -19,8 +19,9 @@ import { Job } from 'bullmq'
 import { prisma } from '../../lib/db.js'
 import { redisConnection } from '../../lib/redis.js'
 import { validateSimulationInput } from '../validation.js'
-import { runP3Analysis, buildReportData } from '../pipeline/report-builder.js'
+import { runP3Analysis, buildReportData, buildSimulationReportDTO } from '../pipeline/report-builder.js'
 import { DeterministicRNG, createSimulationSeed } from '@resonance/shared/deterministic'
+import { derivedSeed, SIMULATION_ENGINE_VERSION } from '@resonance/shared/canonical-model'
 import {
   getBlockBehavioralModel,
   getConnectionBehavioralModel,
@@ -169,7 +170,6 @@ export async function runSimulationProcessor(job) {
       data: { status: 'running', progress: 0 }
     })
 
-    const rng = new DeterministicRNG(seed)
     const results = []
 
     const isLargeArchitecture = blocks.length > LARGE_ARCHITECTURE_THRESHOLD
@@ -199,22 +199,17 @@ export async function runSimulationProcessor(job) {
         : getBlockBehavioralModel(block.type)
 
       const uiOverrides = {}
-      const replicas = rawConfig.replicas !== undefined ? rawConfig.replicas : 1
-      if (replicas > 1 || !hasBehavioralModel) {
-        uiOverrides.capacity = {
-          maxThroughput: (mergedBehavioral.capacity?.maxThroughput || 1000) * replicas,
-          maxConcurrent: (mergedBehavioral.capacity?.maxConcurrent || 100) * replicas,
-        }
-      }
+      // Replicas resolve once in BlockState (per-replica model × UI count).
+      // Never pre-multiply capacity here (spec §11 double-count fix).
 
-      // P6: wire cpu from config into resourceConsumption
+      // Explicit CPU/memory allocation passthrough (100 units = 1 core).
+      // Missing values stay model_default/unknown in the engine, never invented.
       if (rawConfig.cpu) {
         const cpuVal = parseCpu(rawConfig.cpu)
         if (cpuVal) {
-          const baseCpu = mergedBehavioral.resourceConsumption?.cpuPerRequest || 1
-          uiOverrides.resourceConsumption = {
-            ...uiOverrides.resourceConsumption,
-            cpuPerRequest: Math.max(0.1, baseCpu / Math.max(cpuVal, 0.01)),
+          uiOverrides.resourceAllocation = {
+            ...uiOverrides.resourceAllocation,
+            cpuUnitsPerReplica: cpuVal * 100,
           }
         }
       }
@@ -223,9 +218,9 @@ export async function runSimulationProcessor(job) {
       if (rawConfig.memory) {
         const memVal = parseMemory(rawConfig.memory)
         if (memVal) {
-          uiOverrides.resourceConsumption = {
-            ...uiOverrides.resourceConsumption,
-            memoryPerConnection: memVal,
+          uiOverrides.resourceAllocation = {
+            ...uiOverrides.resourceAllocation,
+            memoryBytesPerReplica: memVal,
           }
         }
       }
@@ -399,6 +394,16 @@ export async function runSimulationProcessor(job) {
         uiOverrides.throughput = { ...uiOverrides.throughput, maxPayloadBytes }
       }
 
+      // Payload bytes are explicit; absent = unknown (engine transfer = 0, provenance unknown).
+      const requestBytes = rawConfig.requestBytes ?? rawConfig.payloadBytes ?? edge.requestBytes
+      if (requestBytes != null) {
+        uiOverrides.payload = { ...uiOverrides.payload, requestBytes }
+      }
+      const responseBytes = rawConfig.responseBytes ?? edge.responseBytes
+      if (responseBytes != null) {
+        uiOverrides.payload = { ...uiOverrides.payload, responseBytes }
+      }
+
       return {
         id: edge.id,
         sourceId: edge.sourceId,
@@ -417,18 +422,20 @@ export async function runSimulationProcessor(job) {
     // Run Monte Carlo passes
     for (let pass = 0; pass < monteCarloPasses; pass++) {
       if (checkStopped()) break
-      rng.reset()
+      // Independent deterministic streams: same experiment → same results,
+      // different pass → different stream (spec §2.1).
+      const passRng = new DeterministicRNG(derivedSeed(seed, pass))
 
       // === BATCH 5C: CUSTOM CURVE OR STANDARD TRAFFIC ===
       let arrivalEvents
       if (config.trafficParams?.customCurve) {
-        arrivalEvents = generateCustomArrivalEvents(config.trafficParams.customCurve, duration, rng)
+        arrivalEvents = generateCustomArrivalEvents(config.trafficParams.customCurve, duration, passRng)
       } else {
-        const trafficCurve = generateTrafficCurve(trafficPattern, rps, duration, config.trafficParams || {}, rng)
+        const trafficCurve = generateTrafficCurve(trafficPattern, rps, duration, config.trafficParams || {}, passRng)
         const finalCurve = growthScenario
           ? applyGrowthScenario(trafficCurve, GROWTH_SCENARIOS[growthScenario] || { multiplier: 1 })
           : trafficCurve
-        arrivalEvents = generateArrivalEvents(finalCurve, rng)
+        arrivalEvents = generateArrivalEvents(finalCurve, passRng)
       }
       // === END BATCH 5C ===
 
@@ -441,7 +448,7 @@ export async function runSimulationProcessor(job) {
         simEdges,
         arrivalEvents,
         scenario,
-        rng,
+        passRng,
         duration,
         async (liveSnapshot) => {
           const passProgress = liveSnapshot.progress / 100
@@ -522,6 +529,57 @@ export async function runSimulationProcessor(job) {
     // Aggregate results across passes
     const aggregated = aggregateMonteCarloResults(results, confidenceLevel)
 
+    // Growth experiments: real single-pass simulations per multiplier with the same
+    // architecture/policies/model and a distinct reproducible seed stream (spec §27-28).
+    // The main aggregated result anchors its own multiplier point.
+    const mainMultiplier = (growthScenario && GROWTH_SCENARIOS[growthScenario]?.multiplier) || 1
+    const growthExperiments = {}
+    const summarizeExperiment = (passResult, multiplier) => ({
+      multiplier,
+      rps: rps * multiplier,
+      durationSeconds: duration,
+      scenario,
+      globalMetrics: passResult.globalMetrics,
+      blocks: Object.fromEntries(
+        Object.entries(passResult.blockMetrics?.blocks || {}).map(([id, b]) => [id, {
+          throughputRps: b.throughputRps,
+          avgLatencyMs: b.avgLatencyMs,
+          p95LatencyMs: b.p95LatencyMs,
+          errorRate: b.errorRate,
+          availability: b.availability,
+          utilizationMax: b.utilizationMax,
+          timeSaturated: b.timeSaturated,
+          queueDropRate: b.queueDropRate,
+          maxQueueDepth: b.maxQueueDepth,
+          saturationPoint: b.saturationPoint,
+          currentReplicas: b.currentReplicas,
+          cost: b.cost,
+        }]),
+      ),
+    })
+    growthExperiments[`${mainMultiplier}x`] = summarizeExperiment(
+      { globalMetrics: aggregated.globalMetrics, blockMetrics: aggregated.blockMetrics }, mainMultiplier)
+    for (const m of [1, 2, 5, 10]) {
+      if (checkStopped()) break
+      if (m === mainMultiplier) continue
+      const gRng = new DeterministicRNG(derivedSeed((seed ^ (m * 7919)) >>> 0, 0))
+      let gArrivals
+      if (config.trafficParams?.customCurve) {
+        const scaled = config.trafficParams.customCurve.map(p => ({ ...p, rps: p.rps * m }))
+        gArrivals = generateCustomArrivalEvents(scaled, duration, gRng)
+      } else {
+        const gCurve = generateTrafficCurve(trafficPattern, rps * m, duration, config.trafficParams || {}, gRng)
+        gArrivals = generateArrivalEvents(gCurve, gRng)
+      }
+      const gResult = await runSimulationPass(
+        simBlocks, simEdges, gArrivals, scenario, gRng, duration,
+        null, checkStopped,
+        { targetBlockId: config.targetBlockId, targetEdgeId: config.targetEdgeId },
+      )
+      growthExperiments[`${m}x`] = summarizeExperiment(gResult, m)
+    }
+    aggregated.growthExperiments = growthExperiments
+
     // SANITY CHECK: reject empty/broken simulations
     const sanity = {
       hasBlocks: Object.keys(aggregated.blockMetrics?.blocks || {}).length > 0,
@@ -573,6 +631,7 @@ export async function runSimulationProcessor(job) {
         globalMetrics: aggregated.globalMetrics,
         currentRps: aggregated.avgRps,
         actualDurationMs,
+        completedAt: new Date(),
         confidenceScore: p3Results.confidenceScore,
         // P6: persist cost scalars to DB for list-view filtering
         totalSimulatedCost: aggregated.globalMetrics?.totalSimulatedCost || 0,
@@ -608,34 +667,37 @@ export async function runSimulationProcessor(job) {
       try {
         const simulationRecord = await prisma.simulation.findUnique({ where: { id: simId } })
         const reportData = await buildReportData(simulationRecord, p3Results, aggregated, design)
+        // Canonical DTO: same object the API serves and exports (spec §47).
+        const dto = buildSimulationReportDTO(reportData, simulationRecord)
 
         // Defensive: Prisma schema has non-nullable Json/Int fields.
         // Normalize failureScenarios to an array so frontend .map() always works.
-        const rawFailureScenarios = reportData?.failureScenarios
+        const rawFailureScenarios = dto?.failureScenarios
         const normalizedFailureScenarios = Array.isArray(rawFailureScenarios)
           ? rawFailureScenarios
           : (rawFailureScenarios?.results || [])
 
         const safeReportData = {
-          version: reportData?.version ?? '1.0.0',
-          overallScore: typeof reportData?.overallScore === 'number' ? Math.round(reportData.overallScore) : 0,
-          architectureScore: typeof reportData?.architectureScore === 'number' ? Math.round(reportData.architectureScore) : null,
-          reliabilityScore: typeof reportData?.reliabilityScore === 'number' ? Math.round(reportData.reliabilityScore) : null,
-          performanceScore: typeof reportData?.performanceScore === 'number' ? Math.round(reportData.performanceScore) : null,
-          costScore: typeof reportData?.costScore === 'number' ? Math.round(reportData.costScore) : null,
-          securityScore: typeof reportData?.securityScore === 'number' ? Math.round(reportData.securityScore) : null,
-          confidenceScore: typeof reportData?.confidenceScore === 'number' ? Math.round(reportData.confidenceScore) : null,
-          executiveSummary: reportData?.executiveSummary ?? {},
-          topologyAnalysis: reportData?.topologyAnalysis ?? {},
-          performanceAnalysis: reportData?.performanceAnalysis ?? {},
-          reliabilityAnalysis: reportData?.reliabilityAnalysis ?? {},
-          scalabilityAnalysis: reportData?.scalabilityAnalysis ?? {},
-          costAnalysis: reportData?.costAnalysis ?? null,
-          securityAnalysis: reportData?.securityAnalysis ?? null,
+          version: dto?.version ?? '1.0.0',
+          overallScore: typeof dto?.overallScore === 'number' ? Math.round(dto.overallScore) : 0,
+          architectureScore: typeof dto?.architectureScore === 'number' ? Math.round(dto.architectureScore) : null,
+          reliabilityScore: typeof dto?.reliabilityScore === 'number' ? Math.round(dto.reliabilityScore) : null,
+          performanceScore: typeof dto?.performanceScore === 'number' ? Math.round(dto.performanceScore) : null,
+          scalabilityScore: typeof dto?.scalabilityScore === 'number' ? Math.round(dto.scalabilityScore) : null,
+          costScore: typeof dto?.costScore === 'number' ? Math.round(dto.costScore) : null,
+          securityScore: typeof dto?.securityScore === 'number' ? Math.round(dto.securityScore) : null,
+          confidenceScore: typeof dto?.confidenceScore === 'number' ? Math.round(dto.confidenceScore) : null,
+          executiveSummary: dto?.executiveSummary ?? {},
+          topologyAnalysis: dto?.topologyAnalysis ?? {},
+          performanceAnalysis: dto?.performanceAnalysis ?? {},
+          reliabilityAnalysis: dto?.reliabilityAnalysis ?? {},
+          scalabilityAnalysis: dto?.scalabilityAnalysis ?? {},
+          costAnalysis: dto?.costAnalysis ?? null,
+          securityAnalysis: dto?.securityAnalysis ?? null,
           failureScenarios: normalizedFailureScenarios,
-          aiInsights: reportData?.aiInsights ?? null,
-          actionPlan: reportData?.actionPlan ?? { critical: [], high: [], medium: [], low: [], summary: '' },
-          metadata: reportData?.metadata ?? {},
+          aiInsights: dto?.aiInsights ?? null,
+          actionPlan: dto?.actionPlan ?? { critical: [], high: [], medium: [], low: [], summary: '' },
+          metadata: dto?.metadata ?? {},
         }
 
         await prisma.simulationReport.create({
@@ -679,6 +741,9 @@ export async function runSimulationProcessor(job) {
         reportGenerated: generateReport,
         totalSimulatedCost: aggregated.globalMetrics?.totalSimulatedCost || 0,
         projectedMonthlyCost: aggregated.globalMetrics?.projectedMonthlyCost || 0,
+        errorRate: aggregated.globalMetrics?.errorRate || 0,
+        engineVersion: SIMULATION_ENGINE_VERSION,
+        memoryPeakMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
       },
       clientInfo,
     })

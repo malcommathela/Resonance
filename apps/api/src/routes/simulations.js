@@ -19,6 +19,8 @@ import {
   sseLimiter,
   reportLimiter,
 } from '../middleware/rateLimit.js'
+import { buildSimulationReportDTO } from '../simulation/pipeline/report-builder.js'
+import { SIMULATION_ENGINE_VERSION, CANONICAL_MODEL_VERSION, REPORT_SCHEMA_VERSION } from '@resonance/shared/canonical-model'
 
 const router = Router()
 
@@ -157,10 +159,13 @@ router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
         growthScenario,
         generateReport,
         deterministicSeed: seed,
-        engineVersion: '2.0.0',
-        reportVersion: '1.0.0',
+        engineVersion: SIMULATION_ENGINE_VERSION,
+        reportVersion: REPORT_SCHEMA_VERSION,
         inputSnapshot,
         assumptions: {
+          engineVersion: SIMULATION_ENGINE_VERSION,
+          modelVersion: CANONICAL_MODEL_VERSION,
+          reportSchemaVersion: REPORT_SCHEMA_VERSION,
           queueModel: 'M/M/1 approximation with capacity limits',
           networkModel: 'protocol-specific latency + jitter + packet loss',
           failureModel: 'targeted per-block with cascading propagation',
@@ -434,7 +439,12 @@ router.get('/:id/report', reportLimiter, async (req, res) => {
 
     const simulation = await prisma.simulation.findUnique({
       where: { id },
-      select: { designId: true },
+      select: {
+        id: true, designId: true, scenario: true, trafficPattern: true, rps: true,
+        duration: true, monteCarloPasses: true, deterministicSeed: true,
+        engineVersion: true, reportVersion: true, status: true,
+        createdAt: true, startedAt: true, completedAt: true,
+      },
     })
 
     if (!simulation) return res.status(404).json({ error: 'Not found' })
@@ -442,7 +452,7 @@ router.get('/:id/report', reportLimiter, async (req, res) => {
 
     const cached = await getCachedReport(id, prisma)
     if (cached) {
-      return res.json(cached)
+      return res.json(buildSimulationReportDTO(cached, simulation))
     }
 
     const report = await prisma.simulationReport.findFirst({
@@ -455,7 +465,7 @@ router.get('/:id/report', reportLimiter, async (req, res) => {
 
     await cacheReport(id, report)
 
-    res.json(report)
+    res.json(buildSimulationReportDTO(report, simulation))
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

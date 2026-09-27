@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { useCanvasStore } from './canvasStore'
 import { api } from '@/services/api.js'
+import { toPersistable } from '@/features/canvas/core/document'
 import {
   fetchDesignReports,
   fetchSimulationReport,
@@ -175,9 +176,11 @@ export const useDesignStore = create((set, get) => ({
     set({ isSaving: true, saveStatus: 'saving' })
 
     try {
-      const result = await api.saveCanvas(id, { nodes, edges, version })
+      // Single funnel: groups/notes + sim runtime state never reach the API.
+      const clean = toPersistable(nodes, edges)
+      const result = await api.saveCanvas(id, { nodes: clean.nodes, edges: clean.edges, version })
 
-      const blockCount = nodes?.length || 0
+      const blockCount = clean.nodes.length
 
       set((state) => ({
         isSaving: false,
@@ -213,9 +216,11 @@ export const useDesignStore = create((set, get) => ({
     set({ saveStatus: 'saving' })
 
     try {
-      const result = await api.autoSaveCanvas(id, { nodes, edges, version })
+      // Single funnel: groups/notes + sim runtime state never reach the API.
+      const clean = toPersistable(nodes, edges)
+      const result = await api.autoSaveCanvas(id, { nodes: clean.nodes, edges: clean.edges, version })
 
-      const blockCount = nodes?.length || 0
+      const blockCount = clean.nodes.length
 
       set((state) => ({
         saveStatus: 'saved',

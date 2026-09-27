@@ -9,6 +9,14 @@ import {
   getBlockBehavioralModel,
   getConnectionBehavioralModel,
 } from '@shared/constants'
+import {
+  GROUP_COLORS,
+  COLLAPSED_W,
+  COLLAPSED_H,
+  groupBox,
+  pruneGroupMembers,
+  readCanvasMeta,
+} from '@/features/canvas/groups/meta'
 
 const GRID_SIZE = 20
 
@@ -109,6 +117,7 @@ export const useCanvasStore = create((set, get) => ({
   selectedEdges: [],
   validationHighlight: null,
   panels: loadPanelState(),
+  nodePicker: null, // { sourceId: string | null } while the node picker is open
   simulationStatus: 'idle',
   simulationProgress: 0,
   simulationReportId: null,
@@ -120,7 +129,6 @@ export const useCanvasStore = create((set, get) => ({
   zoom: 1,
   validationResult: null,
   isValidating: false,
-  highlightedBlockId: null,
   showValidationPanel: false,
   simulationBlockMetrics: {},
   simulationEdgeMetrics: {},
@@ -179,13 +187,197 @@ export const useCanvasStore = create((set, get) => ({
     selectedEdges: [],
   }),
 
+  openNodePicker: (sourceId = null) => set({ nodePicker: { sourceId } }),
+
+  closeNodePicker: () => set({ nodePicker: null }),
+
+  // ==========================================================================
+  // GROUPS + NOTES (Phase 8 — canvas-only objects, localStorage persistence)
+  // ==========================================================================
+
+  createGroup: () => {
+    const { selectedNodeIds, nodes } = get()
+    const ids = selectedNodeIds.filter((gid) => nodes.some((n) => n.id === gid && n.type === 'customBlock'))
+    if (ids.length < 2) return null
+    get().saveHistory()
+    const members = nodes.filter((n) => ids.includes(n.id))
+    const box = groupBox(members) || { x: 0, y: 0, width: 400, height: 200 }
+    const existing = nodes.filter((n) => n.type === 'group').length
+    const node = {
+      id: `group-${Date.now()}`,
+      type: 'group',
+      position: { x: box.x, y: box.y },
+      draggable: false,
+      selectable: true,
+      style: { width: box.width, height: box.height },
+      data: {
+        label: `Group ${existing + 1}`,
+        color: GROUP_COLORS[existing % GROUP_COLORS.length],
+        nodeIds: ids,
+        collapsed: false,
+        memberCount: ids.length,
+      },
+    }
+    set({ nodes: [...get().nodes, node], isDirty: true })
+    return node
+  },
+
+  renameGroup: (id, label) => {
+    get().saveHistory()
+    set({
+      nodes: get().nodes.map((n) => n.id === id && n.type === 'group' ? { ...n, data: { ...n.data, label } } : n),
+      isDirty: true,
+    })
+  },
+
+  toggleGroupCollapse: (id) => {
+    const { nodes, edges } = get()
+    const g = nodes.find((n) => n.id === id && n.type === 'group')
+    if (!g) return
+    const collapsed = !g.data?.collapsed
+    const memberIds = new Set(g.data?.nodeIds || [])
+    const collapsedIds = new Set()
+    nodes.forEach((n) => {
+      if (n.type === 'group' && (n.id === id ? collapsed : n.data?.collapsed)) {
+        ;(n.data?.nodeIds || []).forEach((m) => collapsedIds.add(m))
+      }
+    })
+    get().saveHistory()
+    set({
+      nodes: nodes.map((n) => {
+        if (n.id === id) {
+          const box = collapsed ? null : groupBox(nodes.filter((m) => memberIds.has(m.id)))
+          return {
+            ...n,
+            style: collapsed
+              ? { width: COLLAPSED_W, height: COLLAPSED_H }
+              : { ...(n.style || {}), ...(box ? { width: box.width, height: box.height } : {}) },
+            data: { ...n.data, collapsed },
+          }
+        }
+        if (memberIds.has(n.id)) return { ...n, hidden: collapsed }
+        return n
+      }),
+      edges: edges.map((e) => {
+        const src = e.source || e.sourceId
+        const tgt = e.target || e.targetId
+        if (collapsedIds.has(src) || collapsedIds.has(tgt)) return e.hidden ? e : { ...e, hidden: true }
+        return e.hidden ? { ...e, hidden: false } : e
+      }),
+      isDirty: true,
+    })
+  },
+
+  ungroup: (id) => {
+    const { nodes, edges } = get()
+    const g = nodes.find((n) => n.id === id && n.type === 'group')
+    if (!g) return
+    get().saveHistory()
+    const memberIds = new Set(g.data?.nodeIds || [])
+    const collapsedIds = new Set()
+    nodes.forEach((n) => {
+      if (n.type === 'group' && n.id !== id && n.data?.collapsed) {
+        ;(n.data?.nodeIds || []).forEach((m) => collapsedIds.add(m))
+      }
+    })
+    set({
+      nodes: nodes
+        .filter((n) => n.id !== id)
+        .map((n) => (memberIds.has(n.id) && n.hidden ? { ...n, hidden: false } : n)),
+      edges: edges.map((e) => {
+        const src = e.source || e.sourceId
+        const tgt = e.target || e.targetId
+        if (collapsedIds.has(src) || collapsedIds.has(tgt)) return e
+        return e.hidden ? { ...e, hidden: false } : e
+      }),
+      selectedNodeId: null,
+      selectedEdgeId: null,
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+      selectedNode: null,
+      selectedNodes: [],
+      selectedEdge: null,
+      selectedEdges: [],
+      isDirty: true,
+    })
+  },
+
+  refreshGroupBoxes: () => {
+    const { nodes } = get()
+    if (!nodes.some((n) => n.type === 'group')) return
+    const byId = new Map(nodes.map((n) => [n.id, n]))
+    let changed = false
+    const next = nodes.map((n) => {
+      if (n.type !== 'group' || n.data?.collapsed) return n
+      const members = (n.data?.nodeIds || []).map((mid) => byId.get(mid)).filter((m) => m && m.type === 'customBlock')
+      const box = groupBox(members)
+      if (!box) return n
+      if (box.x === n.position.x && box.y === n.position.y
+        && box.width === n.style?.width && box.height === n.style?.height
+        && (n.data?.memberCount || 0) === members.length) return n
+      changed = true
+      return {
+        ...n,
+        position: { x: box.x, y: box.y },
+        style: { ...(n.style || {}), width: box.width, height: box.height },
+        data: { ...n.data, memberCount: members.length },
+      }
+    })
+    if (changed) set({ nodes: next })
+  },
+
+  addNote: (position) => {
+    get().saveHistory()
+    const existing = get().nodes.filter((n) => n.type === 'note').length
+    const colors = ['#f59e0b', '#3b82f6', '#10b981', '#ec4899']
+    const node = {
+      id: `note-${Date.now()}`,
+      type: 'note',
+      position: { x: Math.round(position.x), y: Math.round(position.y) },
+      draggable: true,
+      selectable: true,
+      data: { text: '', color: colors[existing % colors.length] },
+    }
+    set({ nodes: [...get().nodes, node], isDirty: true })
+    return node
+  },
+
+  updateNoteText: (id, text) => {
+    get().saveHistory()
+    set({
+      nodes: get().nodes.map((n) => n.id === id && n.type === 'note' ? { ...n, data: { ...n.data, text } } : n),
+      isDirty: true,
+    })
+  },
+
+  loadCanvasMeta: (designId) => {
+    const meta = readCanvasMeta(designId)
+    if (!meta) return
+    const { nodes, edges } = get()
+    const have = new Set(nodes.map((n) => n.id))
+    const fresh = [...meta.groups, ...meta.notes].filter((n) => n && n.id && !have.has(n.id))
+    if (!fresh.length) return
+    const collapsedIds = new Set()
+    fresh.forEach((n) => {
+      if (n.type === 'group' && n.data?.collapsed) (n.data.nodeIds || []).forEach((m) => collapsedIds.add(m))
+    })
+    set({
+      nodes: [...nodes, ...fresh].map((n) => (collapsedIds.has(n.id) && !n.hidden ? { ...n, hidden: true } : n)),
+      edges: edges.map((e) => {
+        const src = e.source || e.sourceId
+        const tgt = e.target || e.targetId
+        return (collapsedIds.has(src) || collapsedIds.has(tgt)) && !e.hidden ? { ...e, hidden: true } : e
+      }),
+    })
+  },
+
   // ==========================================================================
   // VALIDATION HIGHLIGHT ACTIONS
   // ==========================================================================
 
   setValidationHighlight: (finding) => {
     if (!finding) {
-      set({ validationHighlight: null, highlightedBlockId: null })
+      set({ validationHighlight: null })
       return
     }
     const elementId = finding.elementId || finding.blockId || finding.edgeId
@@ -197,13 +389,11 @@ export const useCanvasStore = create((set, get) => ({
         findingId: finding.id,
         severity: finding.severity,
       },
-      highlightedBlockId: elementType === 'node' ? elementId : null,
     })
   },
 
   clearValidationHighlight: () => set({
     validationHighlight: null,
-    highlightedBlockId: null,
   }),
 
   // ==========================================================================
@@ -437,7 +627,7 @@ export const useCanvasStore = create((set, get) => ({
 
   duplicateNode: (id) => {
     const node = get().nodes.find(n => n.id === id)
-    if (!node) return null
+    if (!node || node.type !== 'customBlock') return null
     get().saveHistory()
     const newNode = {
       ...node,
@@ -506,7 +696,7 @@ export const useCanvasStore = create((set, get) => ({
     const wasSelected = state.selectedNodeId === id
     const wasInMulti = state.selectedNodeIds.includes(id)
     set({
-      nodes: state.nodes.filter(n => n.id !== id),
+      nodes: dropEmptyGroups(state.nodes.filter(n => n.id !== id)),
       edges: state.edges.filter(e => {
         const src = e.source || e.sourceId
         const tgt = e.target || e.targetId
@@ -522,7 +712,6 @@ export const useCanvasStore = create((set, get) => ({
       selectedEdge: null,
       selectedEdges: [],
       validationHighlight: state.validationHighlight?.elementId === id ? null : state.validationHighlight,
-      highlightedBlockId: state.highlightedBlockId === id ? null : state.highlightedBlockId,
     })
   },
 
@@ -647,14 +836,9 @@ export const useCanvasStore = create((set, get) => ({
 
   setValidationResult: (result) => set({ validationResult: result }),
   setIsValidating: (val) => set({ isValidating: val }),
-  setHighlightedBlockId: (id) => set({
-    highlightedBlockId: id,
-    validationHighlight: id ? { elementId: id, elementType: 'node', findingId: 'legacy', severity: 'warning' } : null,
-  }),
   setShowValidationPanel: (show) => set({ showValidationPanel: show }),
   clearValidation: () => set({
     validationResult: null,
-    highlightedBlockId: null,
     validationHighlight: null,
   }),
 
@@ -681,7 +865,7 @@ export const useCanvasStore = create((set, get) => ({
     const nodeIds = new Set(selectedNodeIds)
     get().saveHistory()
     set({
-      nodes: nodes.filter(n => !nodeIds.has(n.id)),
+      nodes: dropEmptyGroups(nodes.filter(n => !nodeIds.has(n.id))),
       edges: edges.filter(e => {
         const src = e.source || e.sourceId
         const tgt = e.target || e.targetId
@@ -786,7 +970,6 @@ export const useCanvasStore = create((set, get) => ({
       selectedEdge: null,
       selectedEdges: [],
       validationHighlight: null,
-      highlightedBlockId: null,
       simulationRunning: false,
       simulationMetrics: null,
       simulationBlockMetrics: {},
@@ -795,6 +978,7 @@ export const useCanvasStore = create((set, get) => ({
       simulationConfig: null,
       validationResult: null,
       showValidationPanel: false,
+      nodePicker: null,
       history: [],
       historyIndex: -1,
       simulationStatus: 'idle',
@@ -819,7 +1003,6 @@ export const useCanvasStore = create((set, get) => ({
       selectedEdge: null,
       selectedEdges: [],
       validationHighlight: null,
-      highlightedBlockId: null,
       simulationRunning: false,
       simulationMetrics: null,
       simulationBlockMetrics: {},
@@ -828,6 +1011,7 @@ export const useCanvasStore = create((set, get) => ({
       simulationConfig: null,
       validationResult: null,
       showValidationPanel: false,
+      nodePicker: null,
       history: [],
       historyIndex: -1,
       simulationStatus: 'idle',
@@ -838,6 +1022,25 @@ export const useCanvasStore = create((set, get) => ({
     })
   },
 }))
+
+// ============================================================================
+// GROUP MEMBERSHIP PRUNING (Phase 8)
+// ============================================================================
+
+// Refresh group membership after deletions; drop groups left with no members.
+function dropEmptyGroups(nodes) {
+  const groups = nodes.filter((n) => n.type === 'group')
+  if (groups.length === 0) return nodes
+  const { kept, dropped } = pruneGroupMembers(groups, nodes.map((n) => n.id))
+  const unchanged = dropped.length === 0 && kept.every((k) => {
+    const orig = nodes.find((n) => n.id === k.id)
+    return orig && (orig.data?.nodeIds || []).length === k.data.nodeIds.length
+  })
+  if (unchanged) return nodes
+  const dropIds = new Set(dropped)
+  const keptById = new Map(kept.map((k) => [k.id, k]))
+  return nodes.filter((n) => !dropIds.has(n.id)).map((n) => keptById.get(n.id) || n)
+}
 
 // ============================================================================
 // DEEP MERGE UTILITY

@@ -20,7 +20,7 @@ export const BottomPanel = ({ logs }) => {
   const panelRef = useRef(null)
   const logsEndRef = useRef(null)
 
-  const { simulationMetrics } = useCanvasStore()
+  const simulationMetrics = useCanvasStore((s) => s.simulationMetrics)
 
   useEffect(() => {
     if (logsEndRef.current && isOpen) {

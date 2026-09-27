@@ -72,37 +72,42 @@ export function analyzeReliability(simulationResult, validationResult, options =
   const adjacency = buildAdjacency(edges)
   const reverseAdjacency = buildReverseAdjacency(edges)
 
-  // Calculate per-block availability from behavioral models + simulation
+  // Calculate per-block availability: simulated (primary) vs model (theoretical).
+  // Never blended — spec §4, §68.
   const blockAvailabilities = calculateBlockAvailabilities(blocks, blockMetrics, config)
 
-  // System-wide availability (series composition)
-  const systemAvailability = calculateSystemAvailability(blockAvailabilities, blocks, adjacency, config)
+  // System availability split: observed series vs theoretical vs target.
+  const availabilityDetail = calculateAvailabilityDetail(blockAvailabilities, blocks, adjacency)
+  const systemAvailability = availabilityDetail.simulatedAvailability
+    ?? availabilityDetail.theoreticalAvailability
 
   // MTTR/MTBF from behavioral models
   const mttrMtbf = calculateMttrMtbf(blocks, config)
 
-  // SPOFs from validation + graph analysis
-  const spofs = identifySPOFs(blocks, edges, adjacency, reverseAdjacency, validationResult, config)
+  // SPOFs: removal must disconnect a workload path (spec §70). Every block is a
+  // candidate — never a type allowlist. Entry/exit come from graph shape.
+  const spofs = identifySPOFs(blocks, edges, adjacency, reverseAdjacency, validationResult, blockAvailabilities, config)
 
-  // Failure chains from simulation events
-  const failureChains = analyzeFailureChains(simulationResult, blocks, adjacency, config)
+  // Failure chains from observed causal links, never graph inference (spec §8).
+  const failureChains = analyzeFailureChains(simulationResult, blocks, config)
 
-  // Blast radius analysis
-  const blastRadiuses = calculateBlastRadiuses(blocks, edges, adjacency, reverseAdjacency, blockMetrics, config)
+  // Blast radius: graph reachability weighted by observed traffic (spec §71).
+  const blastRadiuses = calculateBlastRadiuses(blocks, edges, adjacency, reverseAdjacency, simulationResult, config)
 
-  // Resilience score
+  // Resilience score (scored on observed availability, theoretical fallback)
+  const scoringAvailability = systemAvailability ?? availabilityDetail.theoreticalAvailability
   const resilienceScore = calculateResilienceScore({
-    systemAvailability,
+    systemAvailability: scoringAvailability,
     mttr: mttrMtbf.weightedMttr,
     mtbf: mttrMtbf.weightedMtbf,
     spofCount: spofs.length,
-    redundancyRatio: calculateRedundancyRatio(blocks),
+    redundancyRatio: calculateRedundancyRatio(blockAvailabilities),
     failureIsolation: calculateFailureIsolation(blocks, edges, adjacency, config),
   }, config)
 
   // Reliability score
   const reliabilityScore = calculateReliabilityScore({
-    systemAvailability,
+    systemAvailability: scoringAvailability,
     mttr: mttrMtbf.weightedMttr,
     mtbf: mttrMtbf.weightedMtbf,
     resilienceScore,
@@ -110,6 +115,7 @@ export function analyzeReliability(simulationResult, validationResult, options =
 
   return {
     availability: systemAvailability,
+    availabilityDetail,
     reliabilityScore,
     mttrMinutes: mttrMtbf.weightedMttr,
     mtbfHours: mttrMtbf.weightedMtbf,
@@ -140,88 +146,109 @@ function calculateBlockAvailabilities(blocks, blockMetrics, config) {
     const behavioralModel = block.behavioralModel || {}
     const availability = behavioralModel.availability || {}
     const simMetrics = blockMetrics?.blocks?.[block.id] || {}
+    const rawConfig = typeof block.config === 'string'
+      ? JSON.parse(block.config || '{}')
+      : (block.config || {})
 
-    // Base availability from model
     const slaTarget = availability.slaTarget || 0.999
     const mttr = availability.mttrMinutes || 30
     const mtbf = availability.mtbfHours || 720
 
-    // Adjust based on simulation results
-    const simAvailability = simMetrics.availability !== undefined ? simMetrics.availability / 100 : slaTarget
-    const simErrorRate = simMetrics.errorRate || 0
+    // Simulated availability is primary and only set when traffic was observed.
+    const observedRequests = simMetrics.totalRequests || 0
+    const simulatedAvailability = observedRequests > 0 && simMetrics.availability !== undefined
+      ? simMetrics.availability / 100
+      : null
 
-    // Weighted availability: 70% model, 30% simulation
-    const weightedAvailability = (slaTarget * 0.7) + (simAvailability * 0.3)
-
-    // Penalty for high error rates in simulation
-    const errorPenalty = simErrorRate > 0.01 ? simErrorRate * 0.1 : 0
-    const finalAvailability = Math.max(0, Math.min(1, weightedAvailability - errorPenalty))
+    // Redundancy levels from actual config, not replica-count folklore (spec §5).
+    const replicas = simMetrics.currentReplicas
+      ?? rawConfig.replicas
+      ?? behavioralModel.scalingBehavior?.minReplicas
+      ?? 1
+    const failureDomain = rawConfig.zone || rawConfig.region || rawConfig.failureDomain || null
 
     results.push({
       blockId: block.id,
       type: block.type,
       label: block.label || block.id,
+      simulatedAvailability,
+      simulatedRequests: observedRequests,
       modelAvailability: slaTarget,
-      simulatedAvailability: simAvailability,
-      weightedAvailability: finalAvailability,
+      theoreticalAvailability: slaTarget,
+      targetAvailability: slaTarget,
       mttrMinutes: mttr,
       mtbfHours: mtbf,
-      errorRate: simErrorRate,
+      errorRate: simMetrics.errorRate || 0,
       isSPOF: false, // Set later
-      hasRedundancy: hasRedundancy(block),
+      redundancy: {
+        replicas,
+        failureDomain,
+        failureDomainSeparation: failureDomain ? 'annotated' : 'unknown',
+        hasReplicaRedundancy: replicas >= 2,
+      },
     })
   }
 
   return results
 }
 
-function calculateSystemAvailability(blockAvailabilities, blocks, adjacency, config) {
-  if (blockAvailabilities.length === 0) return 1.0
+// Observed series availability over blocks with observations; theoretical over
+// model SLAs; target as the minimum block SLA. Parallel credit only for true
+// peer groups (identical predecessor AND successor sets), never type groups.
+function calculateAvailabilityDetail(blockAvailabilities, blocks, adjacency) {
+  const groups = groupParallelPeers(blocks, adjacency)
+  let simulated = 1.0
+  let simulatedBasis = true
+  let theoretical = 1.0
 
-  // For series systems: availability = product of all component availabilities
-  // For parallel systems: availability = 1 - product of (1 - availability)
-
-  // Simplified: treat all as series (worst case for reliability)
-  // A more sophisticated approach would identify parallel paths
-  let seriesAvailability = 1.0
-  for (const ba of blockAvailabilities) {
-    seriesAvailability *= ba.weightedAvailability
+  for (const group of groups) {
+    const avail = (ba) => ba.simulatedAvailability ?? ba.modelAvailability
+    if (group.length === 1) {
+      const ba = blockAvailabilities.find(b => b.blockId === group[0])
+      if (!ba) continue
+      if (ba.simulatedAvailability == null) simulatedBasis = false
+      simulated *= avail(ba)
+      theoretical *= ba.modelAvailability
+    } else {
+      const members = group.map(id => blockAvailabilities.find(b => b.blockId === id)).filter(Boolean)
+      if (members.length === 0) continue
+      if (members.some(m => m.simulatedAvailability == null)) simulatedBasis = false
+      const groupUnavailSim = members.reduce((p, m) => p * (1 - avail(m)), 1)
+      const groupUnavailModel = members.reduce((p, m) => p * (1 - m.modelAvailability), 1)
+      simulated *= (1 - groupUnavailSim)
+      theoretical *= (1 - groupUnavailModel)
+    }
   }
 
-  // Identify parallel redundancy from graph
-  const parallelAvailability = calculateParallelAvailability(blocks, blockAvailabilities, adjacency)
+  const target = blockAvailabilities.length > 0
+    ? Math.min(...blockAvailabilities.map(b => b.targetAvailability))
+    : 1.0
 
-  // Weighted: 60% series (worst case), 40% parallel (best case with redundancy)
-  return (seriesAvailability * 0.6) + (parallelAvailability * 0.4)
+  return {
+    simulatedAvailability: simulatedBasis ? simulated : null,
+    theoreticalAvailability: theoretical,
+    targetAvailability: target,
+    peerGroups: groups.filter(g => g.length > 1),
+  }
 }
 
-function calculateParallelAvailability(blocks, blockAvailabilities, adjacency) {
-  // Find blocks with redundant paths (same type, same parent)
-  const redundancyGroups = new Map()
-
+// True redundant peers: same role in the graph (same upstreams + downstreams).
+function groupParallelPeers(blocks, adjacency) {
+  const predsOf = (id) => {
+    const preds = []
+    for (const [src, targets] of adjacency) {
+      if (targets.includes(id)) preds.push(src)
+    }
+    return preds.sort().join(',')
+  }
+  const keyOf = (id) => `${predsOf(id)}|${[...(adjacency.get(id) || [])].sort().join(',')}`
+  const groups = new Map()
   for (const block of blocks) {
-    const parents = adjacency.get(block.id) || [] // Actually children, need reverse
-    // Simplified: group by type
-    const type = block.type
-    if (!redundancyGroups.has(type)) redundancyGroups.set(type, [])
-    redundancyGroups.get(type).push(block.id)
+    const key = keyOf(block.id)
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(block.id)
   }
-
-  let parallelAvailability = 1.0
-  for (const [type, blockIds] of redundancyGroups) {
-    if (blockIds.length <= 1) continue
-
-    const availabilities = blockIds
-      .map(id => blockAvailabilities.find(ba => ba.blockId === id)?.weightedAvailability || 0.999)
-
-    // Parallel availability: 1 - product of (1 - a_i)
-    const groupUnavailability = availabilities.reduce((prod, a) => prod * (1 - a), 1)
-    const groupAvailability = 1 - groupUnavailability
-
-    parallelAvailability *= groupAvailability
-  }
-
-  return parallelAvailability
+  return [...groups.values()]
 }
 
 // ============================================================================
@@ -267,7 +294,7 @@ function calculateFailureProbabilityPerDay(mttr, mtbf) {
 // SPOF IDENTIFICATION
 // ============================================================================
 
-function identifySPOFs(blocks, edges, adjacency, reverseAdjacency, validationResult, config) {
+function identifySPOFs(blocks, edges, adjacency, reverseAdjacency, validationResult, blockAvailabilities, config) {
   const spofs = []
 
   // From validation findings
@@ -284,23 +311,37 @@ function identifySPOFs(blocks, edges, adjacency, reverseAdjacency, validationRes
     }
   }
 
-  // Graph-based SPOF detection
-  const criticalTypes = ['api-gateway', 'load-balancer', 'database']
-  const entryPoints = blocks.filter(b => ['client', 'api-gateway', 'cdn'].includes(b.type)).map(b => b.id)
-  const exitPoints = blocks.filter(b => ['database', 'cache', 'storage'].includes(b.type)).map(b => b.id)
+  // Workload entries = graph sources (plus explicit client/cdn roles); exits = sinks.
+  const incoming = new Set()
+  for (const [, targets] of adjacency) {
+    for (const t of targets) incoming.add(t)
+  }
+  const entryPoints = blocks
+    .filter(b => !incoming.has(b.id) || ['client', 'cdn'].includes(b.type))
+    .map(b => b.id)
+  const exitPoints = blocks
+    .filter(b => (adjacency.get(b.id) || []).length === 0)
+    .map(b => b.id)
+
+  const availabilityById = new Map((blockAvailabilities || []).map(b => [b.blockId, b]))
 
   for (const block of blocks) {
-    if (!criticalTypes.includes(block.type)) continue
     if (spofs.some(s => s.blockId === block.id)) continue
 
     // Check if removing this block disconnects any entry-exit pair
     const isSPOF = checkGraphSPOF(block.id, entryPoints, exitPoints, blocks, edges, adjacency)
     if (isSPOF) {
+      const red = availabilityById.get(block.id)?.redundancy
       spofs.push({
         blockId: block.id,
-        reason: `Removing ${block.label || block.id} disconnects the architecture`,
+        reason: `Removing ${block.label || block.id} disconnects the workload path`,
         source: 'graph_analysis',
         severity: 'critical',
+        replicas: red?.replicas ?? 1,
+        failureDomainSeparation: red?.failureDomainSeparation ?? 'unknown',
+        mitigation: (red?.replicas ?? 1) >= 2
+          ? 'Replica count > 1 without a separate failure domain does not remove this SPOF'
+          : null,
       })
     }
   }
@@ -358,96 +399,47 @@ function hasPath(start, end, adjacency) {
 // FAILURE CHAINS
 // ============================================================================
 
-function analyzeFailureChains(simulationResult, blocks, adjacency, config) {
-  const chains = []
-  const failureEvents = simulationResult.failureEvents || []
+function analyzeFailureChains(simulationResult, blocks, config) {
+  // Observed causal links only. No link is ever inferred from graph shape.
+  const links = simulationResult.failurePropagation || []
+  const totalFailed = simulationResult.failedRequests || 0
+  const labelOf = (id) => blocks.find(b => b.id === id)?.label || id
 
-  if (failureEvents.length === 0) return chains
-
-  // Group by failure mode
-  const byMode = new Map()
-  for (const event of failureEvents) {
-    const mode = event.mode || event.type || 'unknown'
-    if (!byMode.has(mode)) byMode.set(mode, [])
-    byMode.get(mode).push(event)
-  }
-
-  for (const [mode, events] of byMode) {
-    const affectedBlocks = [...new Set(events.map(e => e.blockId).filter(Boolean))]
-    if (affectedBlocks.length <= 1) continue
-
-    // Determine propagation path
-    const propagationPath = determinePropagationPath(affectedBlocks, adjacency, blocks)
-
-    chains.push({
-      id: `chain-${mode}`,
-      mode,
-      blockIds: affectedBlocks,
-      propagationPath,
-      probability: events.length / (simulationResult.passCount || 1),
-      maxImpact: affectedBlocks.length,
-      description: `Failure mode "${mode}" cascaded through ${affectedBlocks.length} blocks: ${propagationPath.join(' → ')}`,
-      evidence: { eventCount: events.length, affectedBlocks },
-    })
-  }
-
-  return chains
-}
-
-function determinePropagationPath(affectedBlocks, adjacency, blocks) {
-  // Simple ordering: try to find a path that visits all affected blocks
-  const path = []
-  const remaining = new Set(affectedBlocks)
-
-  // Start with the block that has no affected predecessors
-  let current = affectedBlocks.find(b => {
-    const predecessors = getPredecessors(b, adjacency)
-    return !predecessors.some(p => affectedBlocks.includes(p))
-  }) || affectedBlocks[0]
-
-  path.push(current)
-  remaining.delete(current)
-
-  while (remaining.size > 0) {
-    const neighbors = adjacency.get(current) || []
-    const next = neighbors.find(n => remaining.has(n))
-    if (!next) break
-    path.push(next)
-    remaining.delete(next)
-    current = next
-  }
-
-  // Add any remaining blocks
-  for (const block of remaining) {
-    path.push(block)
-  }
-
-  return path
-}
-
-function getPredecessors(blockId, adjacency) {
-  const preds = []
-  for (const [source, targets] of adjacency) {
-    if (targets.includes(blockId)) preds.push(source)
-  }
-  return preds
+  return links.map((link, index) => ({
+    id: `chain-observed-${index}`,
+    mode: link.lastReason || 'observed_failure',
+    blockIds: [link.from, link.to],
+    propagationPath: [link.from, link.to],
+    observed: true,
+    failures: link.failures,
+    probability: null,
+    probabilityReason: 'no failure-probability model; count is observed',
+    maxImpact: link.failures,
+    description: `Observed propagation: ${labelOf(link.from)} → ${labelOf(link.to)} (${link.failures} failures)`,
+    evidence: { from: link.from, to: link.to, failures: link.failures, totalFailedRequests: totalFailed },
+  }))
 }
 
 // ============================================================================
 // BLAST RADIUS
 // ============================================================================
 
-function calculateBlastRadiuses(blocks, edges, adjacency, reverseAdjacency, blockMetrics, config) {
+function calculateBlastRadiuses(blocks, edges, adjacency, reverseAdjacency, simulationResult, config) {
   const results = []
   const totalBlocks = blocks.length
+  const metricsMap = simulationResult?.blockMetrics?.blocks || {}
+  const globalTotal = simulationResult?.globalMetrics?.totalRequests || 0
 
   for (const block of blocks) {
     const downstream = getDownstreamBlocks(block.id, adjacency)
     const directDownstream = adjacency.get(block.id) || []
     const indirectDownstream = [...downstream].filter(id => !directDownstream.includes(id))
 
-    const simMetrics = blockMetrics?.blocks?.[block.id] || {}
-    const totalRequests = simMetrics.totalRequests || 0
+    // Traffic-weighted impact from observations, not block counts alone (spec §71).
+    const simMetrics = metricsMap[block.id] || {}
+    const affectedRequests = simMetrics.totalRequests || 0
+    const downstreamTraffic = [...downstream].reduce((s, id) => s + (metricsMap[id]?.totalRequests || 0), 0)
+    const affectedTrafficShare = globalTotal > 0 ? affectedRequests / globalTotal : 0
 
     const affectedRatio = totalBlocks > 0 ? downstream.size / totalBlocks : 0
 
@@ -464,10 +456,13 @@ function calculateBlastRadiuses(blocks, edges, adjacency, reverseAdjacency, bloc
       indirectlyAffectedBlocks: indirectDownstream.length,
       totalAffectedBlocks: downstream.size,
       affectedRatio: Math.round(affectedRatio * 100) / 100,
-      estimatedRequestsAffected: totalRequests,
+      affectedRequests,
+      affectedTrafficShare: Math.round(affectedTrafficShare * 10000) / 10000,
+      downstreamTraffic,
+      estimatedRequestsAffected: affectedRequests,
       estimatedAvailabilityImpact: affectedRatio * 100,
       severity,
-      evidence: { downstreamIds: [...downstream] },
+      evidence: { downstreamIds: [...downstream], affectedRequests, downstreamTraffic, globalTotal },
     })
   }
 
@@ -585,17 +580,10 @@ function calculateReliabilityScore(inputs, config) {
   return Math.round(score)
 }
 
-function calculateRedundancyRatio(blocks) {
-  if (blocks.length === 0) return 0
-  const redundant = blocks.filter(b => hasRedundancy(b)).length
-  return redundant / blocks.length
-}
-
-function hasRedundancy(block) {
-  const behavioralModel = block.behavioralModel || {}
-  const scaling = behavioralModel.scalingBehavior || {}
-  const minReplicas = scaling.minReplicas || 1
-  return minReplicas >= 2
+function calculateRedundancyRatio(blockAvailabilities) {
+  if (!blockAvailabilities || blockAvailabilities.length === 0) return 0
+  const redundant = blockAvailabilities.filter(b => b.redundancy?.hasReplicaRedundancy).length
+  return redundant / blockAvailabilities.length
 }
 
 function calculateFailureIsolation(blocks, edges, adjacency, config) {
@@ -629,19 +617,20 @@ function generateReliabilityRecommendations(inputs, config) {
       priority: 'critical',
       title: `Eliminate ${spofs.length} single point(s) of failure`,
       description: spofs.map(s => s.reason).join('; '),
-      estimatedEffort: spofs.length * 8,
-      estimatedImpact: 20,
+      estimatedEffort: null,
+      estimatedImpact: null,
       supportingEvidence: spofs.map(s => s.blockId),
+      evidence: spofs.map(s => ({ blockId: s.blockId, source: s.source })),
     })
   }
 
-  if (systemAvailability < config.availabilityTargets.acceptable) {
+  if (systemAvailability != null && systemAvailability < config.availabilityTargets.acceptable) {
     recommendations.push({
       priority: 'high',
       title: 'Improve system availability',
-      description: `Current availability: ${(systemAvailability * 100).toFixed(3)}%. Target: ${(config.availabilityTargets.acceptable * 100).toFixed(1)}%.`,
-      estimatedEffort: 12,
-      estimatedImpact: 15,
+      description: `Observed availability: ${systemAvailability != null ? (systemAvailability * 100).toFixed(3) + '%' : 'unobserved'}. Target: ${(config.availabilityTargets.acceptable * 100).toFixed(1)}%.`,
+      estimatedEffort: null,
+      estimatedImpact: null,
       supportingEvidence: ['system_availability'],
     })
   }
@@ -649,11 +638,12 @@ function generateReliabilityRecommendations(inputs, config) {
   if (failureChains.length > 0) {
     recommendations.push({
       priority: 'high',
-      title: `Address ${failureChains.length} failure chain(s)`,
+      title: `Address ${failureChains.length} observed failure chain(s)`,
       description: failureChains.map(c => c.description).join('; '),
-      estimatedEffort: failureChains.length * 6,
-      estimatedImpact: 15,
+      estimatedEffort: null,
+      estimatedImpact: null,
       supportingEvidence: failureChains.map(c => c.id),
+      evidence: failureChains.map(c => ({ from: c.blockIds[0], to: c.blockIds[1], failures: c.failures })),
     })
   }
 
@@ -662,9 +652,9 @@ function generateReliabilityRecommendations(inputs, config) {
     recommendations.push({
       priority: 'medium',
       title: `Reduce blast radius for ${highBlastRadius.length} component(s)`,
-      description: highBlastRadius.map(b => `${b.label}: affects ${b.totalAffectedBlocks} blocks`).join('; '),
-      estimatedEffort: highBlastRadius.length * 4,
-      estimatedImpact: 10,
+      description: highBlastRadius.map(b => `${b.label}: affects ${b.totalAffectedBlocks} blocks, ${b.affectedRequests} observed requests`).join('; '),
+      estimatedEffort: null,
+      estimatedImpact: null,
       supportingEvidence: highBlastRadius.map(b => b.blockId),
     })
   }
@@ -674,8 +664,8 @@ function generateReliabilityRecommendations(inputs, config) {
       priority: 'medium',
       title: 'Improve overall resilience',
       description: `Resilience score: ${resilienceScore}/100. Add redundancy, circuit breakers, and bulkheads.`,
-      estimatedEffort: 16,
-      estimatedImpact: 12,
+      estimatedEffort: null,
+      estimatedImpact: null,
       supportingEvidence: ['resilience_score'],
     })
   }
@@ -703,7 +693,8 @@ function buildReliabilityExplainability(inputs, config) {
       resilienceComponent: resilienceScore,
     },
     finalResult: reliabilityScore,
-    confidence: 0.85,
+    confidence: null,
+    confidenceReason: 'heuristic confidence not available; see evidence inputs',
   }
 }
 
