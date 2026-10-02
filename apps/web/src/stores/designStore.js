@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { useCanvasStore } from './canvasStore'
 import { api } from '@/services/api.js'
 import { toPersistable } from '@/features/canvas/core/document'
 import {
@@ -12,23 +11,13 @@ import {
 // Monotonic id so a slow loadAllReports can't overwrite a newer one.
 let reportRequestId = 0
 
-// Serialize saves per design: without this, rev43 can complete before rev42
-// and 42's late completion would mark newer state clean (or last-write stale
-// content over it). Chained promises preserve call order; the revision check
-// in markCanvasClean handles edits made during flight.
-const saveQueues = new Map()
-function queuedSave(id, fn) {
-  const prev = saveQueues.get(id) || Promise.resolve()
-  const next = prev.catch(() => {}).then(fn)
-  saveQueues.set(id, next)
-  // then(cleanup, cleanup) resolves either way — unlike finally(), it never
-  // forks an unhandled rejection alongside the caller's await.
-  next.then(
-    () => { if (saveQueues.get(id) === next) saveQueues.delete(id) },
-    () => { if (saveQueues.get(id) === next) saveQueues.delete(id) },
-  )
-  return next
-}
+// Shared per-design queue (factory lives in the persistence boundary so tests
+// get isolated instances). Serializes version-dependent writes per design;
+// the version is read INSIDE the queued operation (via getVersion), never
+// captured at enqueue time, so a queued save sees the version established by
+// the save ahead of it. Recording below runs before the next queued op starts.
+import { createSaveQueue } from '@/features/canvas/persistence/canvasPersistence'
+const { enqueue: queuedSave } = createSaveQueue()
 
 // Lineage of server versions observed by THIS tab lives in the persistence
 // boundary (canvasPersistence): 'ours' = committed by our saves,
@@ -198,16 +187,19 @@ export const useDesignStore = create((set, get) => ({
     }
   },
 
-  saveCanvas: async (id, { nodes, edges, version, revision }) => {
+  saveCanvas: async (id, { nodes, edges, version, revision, getVersion }) => {
     set({ isSaving: true, saveStatus: 'saving' })
 
     // Single funnel: groups/notes + sim runtime state never reach the API.
     // Prepared once, outside the queued callback, so clean remains in scope.
     const clean = toPersistable(nodes, edges)
+    // Version read at EXECUTION time (inside the queue), not enqueue time:
+    // falls back to the enqueue-time version for callers without a supplier.
+    const readVersion = typeof getVersion === 'function' ? getVersion : () => version
 
     try {
       const result = await queuedSave(id, async () => {
-        return api.saveCanvas(id, { nodes: clean.nodes, edges: clean.edges, version })
+        return api.saveCanvas(id, { nodes: clean.nodes, edges: clean.edges, version: readVersion() })
       })
 
       const blockCount = clean.nodes.length
@@ -234,8 +226,9 @@ export const useDesignStore = create((set, get) => ({
             : state.currentDesign,
       }))
 
-      useCanvasStore.getState().markCanvasClean(revision)
-
+      // NOTE: no markCanvasClean here — the session-aware caller acknowledges
+      // its own revision after verifying session identity (a stale cross-session
+      // completion must never mark the active design clean).
       setTimeout(() => set({ saveStatus: 'idle' }), 2000)
 
       return result
@@ -245,15 +238,16 @@ export const useDesignStore = create((set, get) => ({
     }
   },
 
-  autoSaveCanvas: async (id, { nodes, edges, version, revision }) => {
+  autoSaveCanvas: async (id, { nodes, edges, version, revision, getVersion }) => {
     set({ saveStatus: 'saving' })
 
     // Keep the persistable snapshot accessible after the queued request.
     const clean = toPersistable(nodes, edges)
+    const readVersion = typeof getVersion === 'function' ? getVersion : () => version
 
     try {
       const result = await queuedSave(id, async () => {
-        return api.autoSaveCanvas(id, { nodes: clean.nodes, edges: clean.edges, version })
+        return api.autoSaveCanvas(id, { nodes: clean.nodes, edges: clean.edges, version: readVersion() })
       })
 
       const blockCount = clean.nodes.length
@@ -281,8 +275,7 @@ export const useDesignStore = create((set, get) => ({
             : state.currentDesign,
       }))
 
-      useCanvasStore.getState().markCanvasClean(revision)
-
+      // NOTE: no markCanvasClean here — see saveCanvas above.
       setTimeout(() => set({ saveStatus: 'idle' }), 2000)
 
       return result

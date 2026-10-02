@@ -44,6 +44,7 @@
 import { runAnalysisPipeline } from './analysis-pipeline.js'
 import { buildDefaultSnapshot } from '../providers/registry.js'
 import { generateAIInsights } from '../ai/ai-analysis.js'
+import { isMeasuredUnsustainable } from '../ai/evidence-builder.js'
 import {
   mergeBlockBehavioralModel,
   getBlockBehavioralModel,
@@ -282,10 +283,12 @@ export async function buildReportData(simulationRecord, p3Results, aggregated, d
 
   const exec = buildExecutiveSummaryFromP3(p3, aggregated, simulationRecord)
 
-  // P4: Generate AI narrative insights
+  // P4: Generate AI narrative insights (versions ride into the evidence packet)
   let aiInsights = null
   try {
-    aiInsights = await generateAIInsights(simulationRecord, p3, aggregated)
+    aiInsights = await generateAIInsights(simulationRecord, p3, aggregated, {
+      versions: { dto: SIMULATION_REPORT_DTO_VERSION },
+    })
   } catch (err) {
     console.error('[REPORT] AI insights generation failed:', err.message)
   }
@@ -346,8 +349,8 @@ export async function buildReportData(simulationRecord, p3Results, aggregated, d
 // INSIGHT MERGER (P3 structured + AI narrative)
 // ============================================================================
 
-function mergeInsights(aiInsights, p3Results, aggregated) {
-  if (!aiInsights) return null
+// Exported for contract tests (no other production callers).
+export function mergeInsights(aiInsights, p3Results, aggregated) {  if (!aiInsights) return null
 
   const reliability = p3Results.reliabilityAnalysis || {}
   const scalability = p3Results.scalabilityAnalysis || {}
@@ -389,7 +392,8 @@ function mergeInsights(aiInsights, p3Results, aggregated) {
   }
 }
 
-function findP3EvidenceForInsight(insight, p3Results, aggregated) {
+// Exported for contract tests (no other production callers).
+export function findP3EvidenceForInsight(insight, p3Results, aggregated) {
   const reliability = p3Results.reliabilityAnalysis || {}
   const scalability = p3Results.scalabilityAnalysis || {}
   const cost = p3Results.costAnalysis || {}
@@ -415,23 +419,32 @@ function findP3EvidenceForInsight(insight, p3Results, aggregated) {
 
       if (spof) {
         const blockId = typeof spof === 'string' ? spof : spof.blockId
-        const before = (reliability.availability || 0.99) * 100
-        // B6: Real availability formula for parallel redundancy: 1 - (1 - a)^2
-        const beforeDecimal = before / 100
-        const afterDecimal = 1 - Math.pow(1 - beforeDecimal, 2)
-        const after = Math.min(Math.round(afterDecimal * 10000) / 100, 99.99)
+        // Unknown availability stays unknown: no 0.99 fabrication, no impact.
+        const availability = typeof reliability.availability === 'number' && Number.isFinite(reliability.availability)
+          ? reliability.availability
+          : null
+        let predictedImpact = null
+        if (availability != null) {
+          const before = availability * 100
+          // B6: Real availability formula for parallel redundancy: 1 - (1 - a)^2
+          const beforeDecimal = before / 100
+          const afterDecimal = 1 - Math.pow(1 - beforeDecimal, 2)
+          const after = Math.min(Math.round(afterDecimal * 10000) / 100, 99.99)
 
-        return {
-          supportingEvidence: [
-            { path: 'reliabilityAnalysis.singlePointsOfFailure', value: blockId },
-            { path: 'reliabilityAnalysis.availability', value: reliability.availability },
-          ],
-          predictedImpact: {
+          predictedImpact = {
             metric: 'availability',
             before: Math.round(before * 100) / 100,
             after,
             unit: '%',
-          },
+          }
+        }
+
+        return {
+          supportingEvidence: [
+            { path: 'reliabilityAnalysis.singlePointsOfFailure', value: blockId },
+            { path: 'reliabilityAnalysis.availability', value: availability },
+          ],
+          predictedImpact,
           confidence: 0.9,
           source: 'reliability_engine',
           engine: 'reliability',
@@ -462,24 +475,32 @@ function findP3EvidenceForInsight(insight, p3Results, aggregated) {
                    insight.title.toLowerCase().includes(b.label?.toLowerCase()))
 
       if (bottleneck) {
-        // B6: Calculate from actual headroom, not fixed 1.2x
-        const currentRps = bottleneck.currentRps || 0
-        const maxRps = bottleneck.maxRps || 1000
-        const headroom = maxRps - currentRps
-        const after = Math.round(currentRps + headroom * 0.8)
+        // B6: Calculate from actual headroom, not fixed 1.2x. Unknown
+        // capacity stays unknown: no 1000-RPS fabrication, no impact.
+        const currentRps = typeof bottleneck.currentRps === 'number' && Number.isFinite(bottleneck.currentRps)
+          ? bottleneck.currentRps : null
+        const maxRps = typeof bottleneck.maxRps === 'number' && Number.isFinite(bottleneck.maxRps) && bottleneck.maxRps > 0
+          ? bottleneck.maxRps : null
+        let predictedImpact = null
+        if (currentRps != null && maxRps != null) {
+          const headroom = maxRps - currentRps
+          const after = Math.round(currentRps + headroom * 0.8)
 
-        return {
-          supportingEvidence: [
-            { path: 'scalabilityAnalysis.bottlenecks', value: bottleneck.blockId },
-            { path: `scalabilityAnalysis.bottlenecks.${bottleneck.blockId}.currentRps`, value: bottleneck.currentRps },
-            { path: `scalabilityAnalysis.bottlenecks.${bottleneck.blockId}.maxRps`, value: bottleneck.maxRps },
-          ],
-          predictedImpact: {
+          predictedImpact = {
             metric: 'throughput',
             before: Math.round(currentRps),
             after,
             unit: 'RPS',
-          },
+          }
+        }
+
+        return {
+          supportingEvidence: [
+            { path: 'scalabilityAnalysis.bottlenecks', value: bottleneck.blockId },
+            { path: `scalabilityAnalysis.bottlenecks.${bottleneck.blockId}.currentRps`, value: currentRps },
+            { path: `scalabilityAnalysis.bottlenecks.${bottleneck.blockId}.maxRps`, value: maxRps },
+          ],
+          predictedImpact,
           confidence: 0.85,
           source: 'scalability_engine',
           engine: 'scalability',
@@ -487,9 +508,13 @@ function findP3EvidenceForInsight(insight, p3Results, aggregated) {
       }
 
       const growth = (scalability.growthProjections || [])
-        .find(p => insight.title.includes(`${p.trafficMultiplier}x`))
+        .find(p => isMeasuredUnsustainable(p) && insight.title.includes(`${p.trafficMultiplier}x`))
 
       if (growth) {
+        const baseLatency = typeof growth.evidence?.baseLatency === 'number' && Number.isFinite(growth.evidence.baseLatency)
+          ? growth.evidence.baseLatency : null
+        const predictedLatency = typeof growth.predictedLatencyMs === 'number' && Number.isFinite(growth.predictedLatencyMs)
+          ? growth.predictedLatencyMs : null
         return {
           supportingEvidence: [
             { path: 'scalabilityAnalysis.growthProjections', value: growth.trafficMultiplier },
@@ -497,8 +522,8 @@ function findP3EvidenceForInsight(insight, p3Results, aggregated) {
           ],
           predictedImpact: {
             metric: 'latency',
-            before: growth.evidence?.baseLatency || 0,
-            after: growth.predictedLatencyMs || 0,
+            before: baseLatency,
+            after: predictedLatency,
             unit: 'ms',
           },
           confidence: 0.8,
@@ -515,14 +540,17 @@ function findP3EvidenceForInsight(insight, p3Results, aggregated) {
         .find(f => insight.title.toLowerCase().includes(f.message.toLowerCase().slice(0, 30)))
 
       if (finding) {
-        const before = security.securityScore || 0
-        // B6: Impact based on actual score gap, not fixed +20
-        const after = Math.min(before + Math.max(5, Math.round(95 - before) * 0.3), 100)
+        // Unknown score stays unknown: no 0 fabrication (0 would read as
+        // "worst possible" instead of "not measured").
+        const before = typeof security.securityScore === 'number' && Number.isFinite(security.securityScore)
+          ? security.securityScore : null
+        // B6: Impact based on actual score gap, not fixed +20.
+        const after = before == null ? null : Math.min(before + Math.max(5, Math.round(95 - before) * 0.3), 100)
 
         return {
           supportingEvidence: [
             { path: 'securityAnalysis.bySeverity.critical', value: finding.id },
-            { path: 'securityAnalysis.securityScore', value: security.securityScore },
+            { path: 'securityAnalysis.securityScore', value: before },
           ],
           predictedImpact: {
             metric: 'securityScore',
@@ -543,18 +571,24 @@ function findP3EvidenceForInsight(insight, p3Results, aggregated) {
         .find(d => insight.title.toLowerCase().includes((d.label || d.componentId).toLowerCase()))
 
       if (driver) {
-        // B6: Driver-specific savings, not fixed 15%
-        const savingsPercent = driver.typicalSavingsPercent || 10
-        const after = Math.round((cost.currentMonthlyCost || 0) * (1 - savingsPercent / 100) * 100) / 100
+        // Savings come from the driver or not at all: cost drivers carry no
+        // typicalSavingsPercent, so a default 10% would be invented.
+        const monthly = typeof cost.currentMonthlyCost === 'number' && Number.isFinite(cost.currentMonthlyCost)
+          ? cost.currentMonthlyCost : null
+        const savingsPercent = typeof driver.typicalSavingsPercent === 'number' && Number.isFinite(driver.typicalSavingsPercent)
+          ? driver.typicalSavingsPercent : null
+        const after = monthly == null || savingsPercent == null
+          ? null
+          : Math.round(monthly * (1 - savingsPercent / 100) * 100) / 100
 
         return {
           supportingEvidence: [
-            { path: 'costAnalysis.currentMonthlyCost', value: cost.currentMonthlyCost },
+            { path: 'costAnalysis.currentMonthlyCost', value: monthly },
             { path: 'costAnalysis.drivers', value: driver.componentId },
           ],
           predictedImpact: {
             metric: 'cost',
-            before: cost.currentMonthlyCost || 0,
+            before: monthly,
             after,
             unit: 'USD',
           },

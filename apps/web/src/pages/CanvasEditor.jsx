@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Plus,
+  X,
 } from 'lucide-react'
 import { useCanvasStore } from '@/stores/canvasStore'
 import { useDesignStore } from '@/stores/designStore'
@@ -94,6 +95,7 @@ function CanvasEditorInner() {
   const {
     isInitialized, designLoading, currentDesign, saveStatus, autoSaveStatus,
     markDirty, handleManualSave,
+    conflict, dismissConflict, reloadDesign,
   } = useCanvasPersistence({
     designId: id,
     onRequireSaveAs: () => setShowSaveNewModal(true),
@@ -366,7 +368,17 @@ function CanvasEditorInner() {
     try {
       const design = await useDesignStore.getState().createDesign({ name: newDesignName })
       const st = useCanvasStore.getState()
-      await useDesignStore.getState().saveCanvas(design.id, { nodes, edges, revision: st.revision })
+      const revisionAtStart = st.revision
+      await useDesignStore.getState().saveCanvas(design.id, {
+        nodes,
+        edges,
+        revision: revisionAtStart,
+        getVersion: () => useDesignStore.getState().currentDesign?.version ?? null,
+      })
+      // New design, no session yet (navigation re-hydrates): revision gate only.
+      if (useCanvasStore.getState().revision === revisionAtStart) {
+        useCanvasStore.getState().markCanvasClean(revisionAtStart)
+      }
       navigate(`/design/${design.id}`, { replace: true })
       setShowSaveNewModal(false)
       setNewDesignName('')
@@ -526,6 +538,39 @@ function CanvasEditorInner() {
             onRetry={() => handleRunSimulation(useCanvasStore.getState().simulationConfig || {})}
             onViewReport={() => setShowReportModal(true)}
           />
+
+          {/* Foreign-writer conflict: autosave paused, explicit user choice required. */}
+          {conflict && conflict.designId === id && (
+            <div className="absolute top-4 left-1/2 z-30 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-xl border border-amber-500/40 bg-resonance-bg-elevated px-3 py-2 shadow-2xl">
+              <AlertCircle size={14} className="shrink-0 text-amber-500" />
+              <p className="text-xs text-resonance-text-secondary">
+                Another writer changed this design
+                {conflict.serverVersion != null ? ` (server v${conflict.serverVersion})` : ''}.
+                Autosave paused — your edits are kept locally.
+              </p>
+              <button
+                onClick={reloadDesign}
+                className="shrink-0 rounded-lg bg-resonance-bg-tertiary px-2 py-1 text-xs font-medium text-resonance-text-primary hover:bg-resonance-bg-hover"
+                title="Discard local edits and reload their version"
+              >
+                Reload theirs
+              </button>
+              <button
+                onClick={() => handleManualSave({ force: true })}
+                className="shrink-0 rounded-lg bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-500 hover:bg-amber-500/25"
+                title="Overwrite their changes with your canvas"
+              >
+                Save mine anyway
+              </button>
+              <button
+                onClick={dismissConflict}
+                aria-label="Dismiss conflict warning"
+                className="shrink-0 rounded-lg px-1.5 py-1 text-xs text-resonance-text-muted hover:text-resonance-text-primary"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
 
           <div className="absolute bottom-4 left-4 z-10">
             <button

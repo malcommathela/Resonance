@@ -16,11 +16,18 @@ export function useCanvasPersistence({ designId, onRequireSaveAs, pushLog } = {}
   const clearCanvas = useCanvasStore((s) => s.clearCanvas)
 
   const [isInitialized, setIsInitialized] = useState(false)
+  // Bumps to re-run the load effect on explicit user reload (conflict banner).
+  const [reloadToken, setReloadToken] = useState(0)
+  const reloadDesign = useCallback(() => setReloadToken((t) => t + 1), [])
 
   const {
     saveStatus: autoSaveStatus,
     markHydrated,
     markDirty,
+    getSession,
+    conflict,
+    reportConflict,
+    dismissConflict,
   } = useAutoSave(
     designId,
     useCanvasStore((s) => s.nodes),
@@ -72,7 +79,7 @@ export function useCanvasPersistence({ designId, onRequireSaveAs, pushLog } = {}
           useCanvasStore.getState().loadCanvasMeta(designId)
           const hydrated = useCanvasStore.getState()
 
-          markHydrated(hydrated.nodes, hydrated.edges, design?.version ?? null)
+          markHydrated(designId, hydrated.nodes, hydrated.edges, design?.version ?? null)
           useCanvasStore.getState().markCanvasClean()
 
           setIsInitialized(true)
@@ -89,7 +96,7 @@ export function useCanvasPersistence({ designId, onRequireSaveAs, pushLog } = {}
       if (!cancelled) {
         clearCanvas()
         useCanvasStore.getState().markCanvasClean()
-        markHydrated([], [], null)
+        markHydrated('new', [], [], null)
         setIsInitialized(true)
       }
     }
@@ -99,18 +106,44 @@ export function useCanvasPersistence({ designId, onRequireSaveAs, pushLog } = {}
     return () => {
       cancelled = true
     }
-  }, [designId, loadDesign, loadCanvasDesign, clearCanvas, markHydrated, pushLog])
+  }, [designId, reloadToken, loadDesign, loadCanvasDesign, clearCanvas, markHydrated, pushLog])
 
-  const handleManualSave = useCallback(async () => {
+  const handleManualSave = useCallback(async ({ force = false } = {}) => {
     if (!designId || designId === 'new') { onRequireSaveAs?.(); return }
+    // Capture session + revision: only this session's unchanged revision may
+    // be marked clean — a navigation mid-save must not clean the new design.
+    // force bypasses the version check (banner's explicit "save mine anyway").
+    const sessionAtStart = getSession()
+    const st = useCanvasStore.getState()
+    const revisionAtStart = st.revision
     try {
-      const st = useCanvasStore.getState()
-      await saveCanvasDocument(designId, { nodes: st.nodes, edges: st.edges, revision: st.revision }, saveCanvas)
+      await saveCanvasDocument(
+        designId,
+        {
+          nodes: st.nodes,
+          edges: st.edges,
+          revision: revisionAtStart,
+          getVersion: force
+            ? () => null
+            : () => useDesignStore.getState().currentDesign?.version ?? null,
+        },
+        saveCanvas,
+      )
+      const now = getSession()
+      if (now.designId === sessionAtStart.designId
+        && now.generation === sessionAtStart.generation
+        && useCanvasStore.getState().revision === revisionAtStart) {
+        useCanvasStore.getState().markCanvasClean(revisionAtStart)
+      }
+      dismissConflict()
       pushLog?.({ type: 'success', message: 'Design saved to cloud' })
     } catch (err) {
+      if (err?.status === 409) {
+        reportConflict({ designId, serverVersion: err?.data?.currentVersion ?? null })
+      }
       pushLog?.({ type: 'error', message: `Save failed: ${err.message}` })
     }
-  }, [designId, saveCanvas, onRequireSaveAs, pushLog])
+  }, [designId, saveCanvas, onRequireSaveAs, pushLog, getSession, dismissConflict, reportConflict])
 
   return {
     isInitialized,
@@ -120,5 +153,8 @@ export function useCanvasPersistence({ designId, onRequireSaveAs, pushLog } = {}
     autoSaveStatus,
     markDirty,
     handleManualSave,
+    conflict,
+    dismissConflict,
+    reloadDesign,
   }
 }
