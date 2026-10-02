@@ -22,19 +22,14 @@ import {
   Activity,
   Clock,
   Pencil,
-  Layout,
   Wrench,
-  PanelRightClose,
-  PanelRightOpen,
-  SlidersHorizontal,
-  ShieldCheck,
-  AlertOctagon,
-  BarChart3,
 } from 'lucide-react'
 import { useCanvasStore } from '@/stores/canvasStore'
 import { blockIconMap } from '@/lib/iconMap'
 import { categories, CONNECTION_TYPE_META, DATABASE_ENGINES, getBlockBehavioralModel, getConnectionBehavioralModel } from '@shared/constants'
 import { DECORATIVE_PROPS } from '@/stores/canvasStore'
+import { canvasCommands } from '@/features/canvas/core/canvasCommands'
+import { setBehavioralValue, setConfigValue } from '@/features/canvas/inspector/propertyResolver'
 import { validateSingleProperty } from '@/lib/validation'
 
 // ============================================================================
@@ -92,10 +87,7 @@ const PROPERTY_TAB_MAP = {
   perGbNetworkCost: 'cost',
 }
 
-export const PropertyPanel = forwardRef(({ 
-  collapsed = false, 
-  onToggleCollapse, 
-  onToggleValidation,
+export const PropertyPanel = forwardRef(({
   validationResult,
   isValidating,
   onRunValidation,
@@ -105,19 +97,19 @@ export const PropertyPanel = forwardRef(({
   const selectedNode = useCanvasStore((s) => s.selectedNode)
   const selectedEdge = useCanvasStore((s) => s.selectedEdge)
   const updateNode = useCanvasStore((s) => s.updateNode)
-  const removeNode = useCanvasStore((s) => s.removeNode)
   const setSelectedNode = useCanvasStore((s) => s.setSelectedNode)
   const updateEdgeData = useCanvasStore((s) => s.updateEdgeData)
-  const removeEdge = useCanvasStore((s) => s.removeEdge)
   const setSelectedEdge = useCanvasStore((s) => s.setSelectedEdge)
   const getAllBlockTypes = useCanvasStore((s) => s.getAllBlockTypes)
   const getAllConnectionTypes = useCanvasStore((s) => s.getAllConnectionTypes)
-  const duplicateNode = useCanvasStore((s) => s.duplicateNode)
   // Last-simulation metrics for the selected block (runtime map, Phase 11 —
   // no longer stored on node data, so sim ticks skip the document).
   const simBlockMetrics = useCanvasStore((s) => s.simulationBlockMetrics[selectedNode?.id])
 
-  const [activeTab, setActiveTab] = useState(controlledActiveTab || 'appearance')
+  // Overview-first navigation (Phase 7): 'overview' lists categories, otherwise a category id.
+  const [propertyView, setPropertyView] = useState(
+    controlledActiveTab && controlledActiveTab !== 'appearance' ? controlledActiveTab : 'overview'
+  )
   const [fieldValidation, setFieldValidation] = useState({})
   const [showAddConfig, setShowAddConfig] = useState(false)
   const [newConfigKey, setNewConfigKey] = useState('')
@@ -125,14 +117,14 @@ export const PropertyPanel = forwardRef(({
 
   // Sync external tab control
   useEffect(() => {
-    if (controlledActiveTab !== undefined) {
-      setActiveTab(controlledActiveTab)
+    if (controlledActiveTab !== undefined && controlledActiveTab !== 'appearance') {
+      setPropertyView(controlledActiveTab)
     }
   }, [controlledActiveTab])
 
-  // Reset tab & validation when switching blocks
+  // Reset view & validation when switching blocks
   useEffect(() => {
-    setActiveTab('appearance')
+    setPropertyView('overview')
     setFieldValidation({})
   }, [selectedNode?.id])
 
@@ -140,7 +132,7 @@ export const PropertyPanel = forwardRef(({
   useImperativeHandle(ref, () => ({
     scrollToProperty: (propertyName) => {
       const tabId = PROPERTY_TAB_MAP[propertyName] || 'custom'
-      setActiveTab(tabId)
+      setPropertyView(tabId)
       onTabChange?.(tabId)
       // Wait for tab render then scroll + flash
       requestAnimationFrame(() => {
@@ -179,108 +171,6 @@ export const PropertyPanel = forwardRef(({
     })
   }
 
-  // === COLLAPSED STATE ===
-  if (collapsed) {
-    const hasCritical = validationResult?.findings?.some(f => f.severity === 'critical')
-    const hasWarning = validationResult?.findings?.some(f => f.severity === 'warning')
-    const findingCount = validationResult?.findings?.length || 0
-
-    return (
-      <div
-        className="shrink-0 bg-resonance-bg-panel border-l border-resonance-border flex flex-col items-center py-3 gap-2 overflow-hidden"
-        style={{ width: 48, transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)' }}
-      >
-        <button
-          onClick={onToggleCollapse}
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-colors"
-          title="Expand Properties Panel"
-        >
-          <PanelRightOpen size={16} />
-        </button>
-
-        <div className="w-6 h-px bg-resonance-border my-1" />
-
-        {/* Validation toggle icon — at top, separated by divider */}
-        <button
-          onClick={onToggleValidation}
-          className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors group relative ${
-            hasCritical
-              ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20'
-              : hasWarning
-              ? 'bg-amber-500/10 text-amber-500 hover:bg-amber-500/20'
-              : findingCount > 0
-              ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20'
-              : 'bg-resonance-bg-hover text-resonance-text-muted hover:text-resonance-text-primary'
-          }`}
-          title={validationResult ? `Validation: ${findingCount} findings` : 'Open Validation Panel'}
-        >
-          {hasCritical ? (
-            <AlertOctagon size={16} />
-          ) : hasWarning ? (
-            <AlertTriangle size={16} />
-          ) : findingCount > 0 ? (
-            <ShieldCheck size={16} />
-          ) : (
-            <BarChart3 size={16} />
-          )}
-          {/* Tooltip */}
-          <span className="absolute right-full mr-2 px-2 py-1 bg-resonance-bg-elevated border border-resonance-border rounded-lg text-xs text-resonance-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
-            {validationResult ? `${findingCount} finding${findingCount !== 1 ? 's' : ''}` : 'Validation'}
-          </span>
-        </button>
-
-        {/* Re-run validation from collapsed state */}
-        <button
-          onClick={onRunValidation}
-          disabled={isValidating}
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-resonance-text-muted hover:text-resonance-accent hover:bg-resonance-bg-hover transition-colors disabled:opacity-40 group relative"
-          title="Run Validation"
-        >
-          {isValidating ? (
-            <div className="w-4 h-4 border-2 border-resonance-text-muted border-t-resonance-accent rounded-full animate-spin" />
-          ) : (
-            <Zap size={14} />
-          )}
-          <span className="absolute right-full mr-2 px-2 py-1 bg-resonance-bg-elevated border border-resonance-border rounded-lg text-xs text-resonance-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
-            {isValidating ? 'Validating...' : 'Run Validation'}
-          </span>
-        </button>
-
-        <div className="w-6 h-px bg-resonance-border my-1" />
-
-        {/* Tab quick-access icons */}
-        {TABS.map(tab => {
-          const Icon = tab.icon
-          return (
-            <button
-              key={tab.id}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-colors group relative"
-              title={tab.label}
-            >
-              <Icon size={16} />
-              <span className="absolute right-full mr-2 px-2 py-1 bg-resonance-bg-elevated border border-resonance-border rounded-lg text-xs text-resonance-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
-                {tab.label}
-              </span>
-            </button>
-          )
-        })}
-
-        <div className="w-6 h-px bg-resonance-border my-1" />
-
-        {/* Selected block indicator */}
-        {selectedNode && (
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-resonance-accent/10 text-resonance-accent">
-            <SlidersHorizontal size={14} />
-          </div>
-        )}
-        {selectedEdge && (
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-resonance-accent/10 text-resonance-accent">
-            <GitBranch size={14} />
-          </div>
-        )}
-      </div>
-    )
-  }
 
   // --------------------------------------------------------------------------
   // EDGE PANEL
@@ -288,8 +178,7 @@ export const PropertyPanel = forwardRef(({
   if (selectedEdge) {
     return (
       <div
-        className="shrink-0 bg-resonance-bg-panel border-l border-resonance-border flex flex-col overflow-hidden"
-        style={{ width: 320, transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)' }}
+        className="flex min-h-0 w-full flex-col overflow-hidden"
       >
         <div className="flex items-center justify-between p-3 border-b border-resonance-border shrink-0">
           <h3 className="text-sm font-semibold text-resonance-text-primary flex items-center gap-1.5">
@@ -297,14 +186,7 @@ export const PropertyPanel = forwardRef(({
             Edge Properties
           </h3>
           <div className="flex items-center gap-1">
-            <button
-              onClick={onToggleCollapse}
-              className="p-1 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted hover:text-resonance-text-primary transition-colors"
-              title="Collapse Properties Panel"
-            >
-              <PanelRightClose size={14} />
-            </button>
-            <button onClick={() => setSelectedEdge(null)} className="p-1 rounded-lg hover:bg-resonance-bg-hover transition-colors">
+            <button onClick={() => setSelectedEdge(null)} aria-label="Close edge properties" className="p-1 rounded-lg hover:bg-resonance-bg-hover transition-colors">
               <X size={14} className="text-resonance-text-muted" />
             </button>
           </div>
@@ -312,7 +194,7 @@ export const PropertyPanel = forwardRef(({
         <EdgePropertyPanel
           edge={selectedEdge}
           onUpdate={updateEdgeData}
-          onRemove={removeEdge}
+          onRemove={(id) => canvasCommands.deleteEdges([id])}
           onClose={() => setSelectedEdge(null)}
           allTypes={getAllConnectionTypes()}
         />
@@ -326,20 +208,10 @@ export const PropertyPanel = forwardRef(({
   if (!selectedNode) {
     return (
       <div
-        className="shrink-0 bg-resonance-bg-panel border-l border-resonance-border flex flex-col overflow-hidden"
-        style={{ width: 320, transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)' }}
+        className="flex min-h-0 w-full flex-col overflow-hidden"
       >
         <div className="flex items-center justify-between p-4 border-b border-resonance-border">
           <h3 className="text-sm font-semibold text-resonance-text-primary">Properties</h3>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={onToggleCollapse}
-              className="p-1 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted hover:text-resonance-text-primary transition-colors"
-              title="Collapse Properties Panel"
-            >
-              <PanelRightClose size={14} />
-            </button>
-          </div>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
           <Settings size={32} className="text-resonance-text-muted mb-3" />
@@ -359,25 +231,13 @@ export const PropertyPanel = forwardRef(({
   const behavioralModel = data.config?.behavioralModel || getBlockBehavioralModel(data.type) || {}
 
   const handleConfigChange = (key, value) => {
-    updateNode(selectedNode.id, {
-      config: { ...data.config, [key]: value }
-    })
+    const node = useCanvasStore.getState().nodes.find(n => n.id === selectedNode.id)
+    updateNode(selectedNode.id, setConfigValue(node || selectedNode, key, value))
   }
 
   const handleBehavioralChange = (section, key, value) => {
-    const currentModel = data.config?.behavioralModel || {}
-    updateNode(selectedNode.id, {
-      config: {
-        ...data.config,
-        behavioralModel: {
-          ...currentModel,
-          [section]: {
-            ...currentModel[section],
-            [key]: value,
-          },
-        },
-      },
-    })
+    const node = useCanvasStore.getState().nodes.find(n => n.id === selectedNode.id)
+    updateNode(selectedNode.id, setBehavioralValue(node || selectedNode, section, key, value))
   }
 
   const handleLabelChange = (value) => {
@@ -450,30 +310,27 @@ export const PropertyPanel = forwardRef(({
   // --------------------------------------------------------------------------
   // RENDER
   // --------------------------------------------------------------------------
+  const activeCategory = TABS.find(t => t.id === propertyView)
   return (
-    <div
-      className="shrink-0 bg-resonance-bg-panel border-l border-resonance-border flex flex-col overflow-hidden"
-      style={{ width: 320, transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)' }}
-    >
+    <div className="flex min-h-0 w-full flex-col overflow-hidden">
       {/* Title bar */}
       <div className="flex items-center justify-between p-3 border-b border-resonance-border shrink-0">
-        <h3 className="text-sm font-semibold text-resonance-text-primary">Properties</h3>
+        <h3 className="text-sm font-semibold text-resonance-text-primary">
+          {propertyView === 'overview' ? (data.label || 'Service') : activeCategory?.label}
+        </h3>
         <div className="flex items-center gap-1">
           <button
-            onClick={onToggleCollapse}
-            className="p-1 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted hover:text-resonance-text-primary transition-colors"
-            title="Collapse Properties Panel"
-          >
-            <PanelRightClose size={14} />
-          </button>
-          <button
             onClick={() => setSelectedNode(null)}
+            aria-label="Close properties"
             className="p-1 rounded-lg hover:bg-resonance-bg-hover transition-colors"
           >
             <X size={14} className="text-resonance-text-muted" />
           </button>
         </div>
       </div>
+      {propertyView === 'overview' && (
+        <p className="px-3 pt-2 text-xs text-resonance-text-muted shrink-0">{data.type || 'service-node'}</p>
+      )}
 
       {/* Block header */}
       <div className="p-4 border-b border-resonance-border shrink-0">
@@ -502,14 +359,14 @@ export const PropertyPanel = forwardRef(({
 
         <div className="flex gap-2">
           <button
-            onClick={() => removeNode(selectedNode.id)}
+            onClick={() => canvasCommands.deleteNodes([selectedNode.id])}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-500/10 text-red-500 text-xs font-medium hover:bg-red-500/20 transition-colors"
           >
             <Trash2 size={12} />
             Delete
           </button>
           <button
-            onClick={() => duplicateNode(selectedNode.id)}
+            onClick={() => canvasCommands.duplicateNode(selectedNode.id)}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-resonance-bg-tertiary text-resonance-text-secondary text-xs font-medium hover:bg-resonance-bg-hover transition-colors"
           >
             <Copy size={12} />
@@ -518,36 +375,46 @@ export const PropertyPanel = forwardRef(({
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex overflow-x-auto border-b border-resonance-border shrink-0 scrollbar-none">
-        {TABS.map(tab => {
-          const Icon = tab.icon
-          const isActive = activeTab === tab.id
-          return (
-            <button
-              key={tab.id}
-              onClick={() => {
-                setActiveTab(tab.id)
-                onTabChange?.(tab.id)
-              }}
-              className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium whitespace-nowrap transition-colors border-b-2 ${
-                isActive
-                  ? 'text-resonance-accent border-resonance-accent bg-resonance-accent/5'
-                  : 'text-resonance-text-muted border-transparent hover:text-resonance-text-secondary hover:bg-resonance-bg-hover'
-              }`}
-            >
-              <Icon size={13} />
-              {tab.label}
-            </button>
-          )
-        })}
+      {/* Overview: category navigation, not tabs */}
+      {propertyView === 'overview' ? (
+        <div className="flex-1 overflow-y-auto min-h-0 p-2">
+          {TABS.map(tab => {
+            const Icon = tab.icon
+            return (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  setPropertyView(tab.id)
+                  onTabChange?.(tab.id)
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-resonance-text-secondary transition-colors hover:bg-resonance-bg-hover hover:text-resonance-text-primary"
+              >
+                <Icon size={15} className="text-resonance-text-muted" />
+                <span className="font-medium">{tab.label}</span>
+                <span aria-hidden="true" className="ml-auto text-resonance-text-muted">›</span>
+              </button>
+            )
+          })}
+        </div>
+      ) : (
+      <>
+      {/* Category: back header */}
+      <div className="flex items-center gap-1 border-b border-resonance-border px-2 py-1.5 shrink-0">
+        <button
+          onClick={() => setPropertyView('overview')}
+          aria-label="Back to overview"
+          className="rounded-lg px-2 py-1 text-sm text-resonance-text-muted transition-colors hover:bg-resonance-bg-hover hover:text-resonance-text-primary"
+        >
+          ←
+        </button>
+        <span className="text-sm font-medium text-resonance-text-primary">{activeCategory?.label}</span>
       </div>
 
-      {/* Tab content */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Category content */}
+      <div className="flex-1 overflow-y-auto min-h-0">
         <div className="p-4 space-y-4">
           {/* ── APPEARANCE ── */}
-          {activeTab === 'appearance' && (
+          {propertyView === 'appearance' && (
             <div className="space-y-4">
               <div className="space-y-2">
                 <label className="text-xs text-resonance-text-muted">Block Type</label>
@@ -628,7 +495,7 @@ export const PropertyPanel = forwardRef(({
           )}
 
           {/* ── PERFORMANCE ── */}
-          {activeTab === 'performance' && (
+          {propertyView === 'performance' && (
             <div className="space-y-5">
               <div>
                 <h5 className="text-[10px] font-semibold text-resonance-text-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
@@ -763,7 +630,7 @@ export const PropertyPanel = forwardRef(({
           )}
 
           {/* ── RELIABILITY ── */}
-          {activeTab === 'reliability' && (
+          {propertyView === 'reliability' && (
             <div className="space-y-5">
               <div>
                 <h5 className="text-[10px] font-semibold text-resonance-text-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
@@ -848,7 +715,7 @@ export const PropertyPanel = forwardRef(({
           )}
 
           {/* ── RESOURCES ── */}
-          {activeTab === 'resources' && (
+          {propertyView === 'resources' && (
             <div className="space-y-3">
               <NumberField
                 label="CPU per Request (ms)"
@@ -895,7 +762,7 @@ export const PropertyPanel = forwardRef(({
           )}
 
           {/* ── SCALING ── */}
-          {activeTab === 'scaling' && (
+          {propertyView === 'scaling' && (
             <div className="space-y-3">
               <SelectField
                 label="Scaling Type"
@@ -954,7 +821,7 @@ export const PropertyPanel = forwardRef(({
           )}
 
           {/* ── COST ── */}
-          {activeTab === 'cost' && (
+          {propertyView === 'cost' && (
             <div className="space-y-3">
               <NumberField
                 label="Hourly Compute Cost ($)"
@@ -993,7 +860,7 @@ export const PropertyPanel = forwardRef(({
           )}
 
           {/* ── CUSTOM ── */}
-          {activeTab === 'custom' && (
+          {propertyView === 'custom' && (
             <div className="space-y-3">
               {isDatabase && (
                 <div className="space-y-2">
@@ -1125,6 +992,8 @@ export const PropertyPanel = forwardRef(({
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   )
 })
@@ -1146,9 +1015,23 @@ const EdgePropertyPanel = ({ edge, onUpdate, onRemove, onClose, allTypes }) => {
     reliability: false,
     throughput: false,
   })
+  // Overview-first navigation (Phase 8), mirrors node inspector
+  const [edgeView, setEdgeView] = useState('overview')
+  useEffect(() => { setEdgeView('overview') }, [edge?.id])
 
   const toggleEdgeSection = (section) => {
     setEdgeExpandedSections(prev => ({ ...prev, [section]: !prev[section] }))
+  }
+
+  const openEdgeCategory = (id) => {
+    const expand = {
+      general: {},
+      performance: { throughput: true },
+      reliability: { reliability: true },
+      network: { transport: true, network: true },
+    }[id] || {}
+    setEdgeExpandedSections(prev => ({ ...prev, ...expand }))
+    setEdgeView(id)
   }
 
   const handleTypeChange = (typeId) => {
@@ -1175,8 +1058,45 @@ const EdgePropertyPanel = ({ edge, onUpdate, onRemove, onClose, allTypes }) => {
     onUpdate(edge.id, { label })
   }
 
+  const EDGE_CATEGORIES = [
+    { id: 'general', label: 'General' },
+    { id: 'performance', label: 'Performance' },
+    { id: 'reliability', label: 'Reliability' },
+    { id: 'network', label: 'Network' },
+  ]
+  const activeEdgeCategory = EDGE_CATEGORIES.find(c => c.id === edgeView)
+
+  if (edgeView === 'overview') {
+    return (
+      <div className="flex-1 overflow-y-auto min-h-0 p-2">
+        <p className="px-3 pt-1 pb-1 text-xs text-resonance-text-muted">{meta.label} Connection</p>
+        {EDGE_CATEGORIES.map(cat => (
+          <button
+            key={cat.id}
+            onClick={() => openEdgeCategory(cat.id)}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-resonance-text-secondary transition-colors hover:bg-resonance-bg-hover hover:text-resonance-text-primary"
+          >
+            <span className="font-medium">{cat.label}</span>
+            <span aria-hidden="true" className="ml-auto text-resonance-text-muted">›</span>
+          </button>
+        ))}
+      </div>
+    )
+  }
+
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+    <div className="flex min-h-0 w-full flex-col overflow-hidden">
+      <div className="flex items-center gap-1 border-b border-resonance-border px-2 py-1.5 shrink-0">
+        <button
+          onClick={() => setEdgeView('overview')}
+          aria-label="Back to edge overview"
+          className="rounded-lg px-2 py-1 text-sm text-resonance-text-muted transition-colors hover:bg-resonance-bg-hover hover:text-resonance-text-primary"
+        >
+          ←
+        </button>
+        <span className="text-sm font-medium text-resonance-text-primary">{activeEdgeCategory?.label}</span>
+      </div>
+    <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4">
       {/* Connection Type */}
       <div>
         <label className="text-xs text-resonance-text-muted mb-1.5 block">Connection Type</label>
@@ -1348,6 +1268,7 @@ const EdgePropertyPanel = ({ edge, onUpdate, onRemove, onClose, allTypes }) => {
         <Trash2 size={12} />
         Delete Edge
       </button>
+    </div>
     </div>
   )
 }
@@ -1551,7 +1472,7 @@ const EdgeBehavioralSection = ({ title, icon: Icon, expanded, onToggle, children
         {expanded ? <span className="text-xs text-resonance-text-muted">−</span> : <span className="text-xs text-resonance-text-muted">+</span>}
       </button>
       {expanded && (
-        <div className="p-3 space-y-3 bg-resonance-bg-panel">
+        <div className="p-3 space-y-3 bg-resonance-panel-bg">
           {children}
         </div>
       )}

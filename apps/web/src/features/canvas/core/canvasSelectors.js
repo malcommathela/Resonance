@@ -1,7 +1,9 @@
-// Canonical canvas selectors (Phase 1). Derive only — no new state.
-// Splits the store into V2 boundaries: document / UI / validation /
-// simulation / persistence, so components subscribe narrowly.
-export const selectDocument = (s) => ({ nodes: s.nodes, edges: s.edges })
+// Canonical canvas selectors (Phase 1/11). Derive only — no new state.
+// Splits the single store into conceptual boundaries: document / UI /
+// validation / simulation / persistence, so components subscribe narrowly.
+// (One Zustand store retained deliberately: domains are separated by
+// selectors, not stores — no cross-store sync bugs for the same canvas.)
+export const selectDocument = (s) => ({ nodes: s.nodes, edges: s.edges, revision: s.revision, viewport: s.viewport })
 
 export const selectUi = (s) => ({
   selection: { nodeIds: s.selectedNodeIds, edgeIds: s.selectedEdgeIds },
@@ -15,6 +17,7 @@ export const selectUi = (s) => ({
 
 export const selectValidation = (s) => ({
   result: s.validationResult,
+  revision: s.validationRevision,
   loading: s.isValidating,
 })
 
@@ -31,4 +34,4 @@ export const selectSimulation = (s) => ({
   error: s.simulationErrorMessage,
 })
 
-export const selectPersistence = (s) => ({ dirty: s.isDirty })
+export const selectPersistence = (s) => ({ dirty: s.isDirty, revision: s.revision, persistedRevision: s.persistedRevision })

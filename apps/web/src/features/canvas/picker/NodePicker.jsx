@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Search } from 'lucide-react'
+import { Search, Group as GroupIcon } from 'lucide-react'
 import { categories } from '@shared/constants'
 import { libraryIconMap } from '@/lib/iconMap'
 import { useCanvasStore } from '@/stores/canvasStore'
@@ -157,6 +157,21 @@ export function NodePicker() {
             ))}
           </div>
         </div>
+        {(!query.trim() || 'group'.includes(query.trim().toLowerCase())) && (
+          <button
+            onClick={() => { canvasCommands.createEmptyGroup(); canvasCommands.closeNodePicker() }}
+            className="mx-1.5 mb-1 flex w-[calc(100%-12px)] items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-resonance-bg-hover"
+            title="Create an empty background group"
+          >
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md" style={{ backgroundColor: '#8b5cf615' }}>
+              <GroupIcon size={14} style={{ color: '#8b5cf6' }} aria-hidden="true" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-resonance-text-primary">Group</span>
+              <span className="block text-[11px] capitalize text-resonance-text-muted">background container</span>
+            </span>
+          </button>
+        )}
         <div ref={listRef} className="max-h-72 overflow-y-auto p-1.5" role="listbox" aria-label="Block types">
           {pickable.length === 0 && (
             <p className="px-3 py-6 text-center text-sm text-resonance-text-muted">No blocks match.</p>

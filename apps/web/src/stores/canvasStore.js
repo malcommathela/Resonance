@@ -10,13 +10,25 @@ import {
   getConnectionBehavioralModel,
 } from '@shared/constants'
 import {
-  GROUP_COLORS,
   COLLAPSED_W,
   COLLAPSED_H,
+  GROUP_Z_INDEX,
+  NODE_Z_INDEX,
+  GROUP_DRAG_HANDLE,
+  EMPTY_GROUP_W,
+  EMPTY_GROUP_H,
   groupBox,
+  expandGroupBox,
   pruneGroupMembers,
   readCanvasMeta,
 } from '@/features/canvas/groups/meta'
+import { pruneFindings } from '@/features/canvas/validation/validationAdapter'
+
+// Drop findings whose elements are gone after a delete; canvas-level findings stay.
+function dropDeletedFindings(validationResult, nodes, edges) {
+  if (!validationResult?.findings) return validationResult
+  return { ...validationResult, findings: pruneFindings(validationResult.findings, nodes, edges) }
+}
 
 const GRID_SIZE = 20
 
@@ -102,11 +114,33 @@ function getDefaultEdgeConfig(connectionType) {
 }
 
 export const useCanvasStore = create((set, get) => ({
+  // ==========================================================================
+  // DOMAIN MAP (Phase 11). One store, explicit sections — split into separate
+  // stores only if a domain measurably needs isolation. Selectors in
+  // features/canvas/core/canvasSelectors.js are the subscription boundary.
+  //   Document ......... nodes, edges, revision, viewport, history
+  //   Selection ........ selected*, groupDropTarget (transient)
+  //   Validation ....... validationResult/Revision, isValidating, highlight
+  //   Simulation runtime simulation* (maps only — never node.data; sim ticks
+  //                      must not re-render architecture or dirty the document)
+  //   UI ............... panels, activeTab, zoom, nodePicker
+  //   Persistence ...... isDirty, persistedRevision
+  // ==========================================================================
+
+  // --- Document ---
   nodes: [],
   edges: [],
 
+  // Phase 1: monotonic document revision — bumped alongside every isDirty set
+  // (saveHistory covers history mutations; non-history mutators bump inline).
+  // Basis for validation/autosave freshness and future undo/collab.
+  revision: 0,
+  viewport: { x: 0, y: 0, zoom: 1 },
+  persistedRevision: 0,
+
   isDirty: false,
 
+  // --- Selection (+ transient validation emphasis; distinct from selection) ---
   selectedNodeId: null,
   selectedEdgeId: null,
   selectedNodeIds: [],
@@ -128,6 +162,7 @@ export const useCanvasStore = create((set, get) => ({
   activeTab: 'editor',
   zoom: 1,
   validationResult: null,
+  validationRevision: null, // document revision the result was computed for
   isValidating: false,
   showValidationPanel: false,
   simulationBlockMetrics: {},
@@ -139,6 +174,7 @@ export const useCanvasStore = create((set, get) => ({
   history: [],
   historyIndex: -1,
   maxHistorySize: 50,
+  groupDropTarget: null, // transient drag highlight id — never persisted, never in history
 
   // ==========================================================================
   // SELECTION ACTIONS
@@ -192,8 +228,72 @@ export const useCanvasStore = create((set, get) => ({
   closeNodePicker: () => set({ nodePicker: null }),
 
   // ==========================================================================
-  // GROUPS + NOTES (Phase 8 — canvas-only objects, localStorage persistence)
+  // GROUPS (Phase 8 — canvas-only objects, localStorage persistence)
   // ==========================================================================
+
+  createEmptyGroup: (position) => {
+    get().saveHistory()
+    const { nodes } = get()
+    const existing = nodes.filter((n) => n.type === 'group').length
+    const at = position || { x: 0, y: 0 }
+    const node = {
+      id: `group-${Date.now()}`,
+      type: 'group',
+      position: { x: Math.round(at.x), y: Math.round(at.y) },
+      draggable: true,
+      selectable: true,
+      zIndex: GROUP_Z_INDEX,
+      dragHandle: `.${GROUP_DRAG_HANDLE}`,
+      style: { width: EMPTY_GROUP_W, height: EMPTY_GROUP_H },
+      data: {
+        label: 'New Group',
+        nodeIds: [],
+        collapsed: false,
+        memberCount: 0,
+        justCreated: true,
+      },
+    }
+    set({ nodes: [...get().nodes, node], isDirty: true })
+    return node
+  },
+
+  addGroupMember: (groupId, nodeId) => {
+    const { nodes } = get()
+    const g = nodes.find((n) => n.id === groupId && n.type === 'group')
+    const n = nodes.find((x) => x.id === nodeId)
+    if (!g || !n || n.type !== 'customBlock' || g.data?.collapsed) return false
+    if ((g.data?.nodeIds || []).includes(nodeId)) return false
+    get().saveHistory()
+    set({
+      nodes: get().nodes.map((x) => {
+        if (x.type !== 'group') return x
+        const ids = (x.data?.nodeIds || []).filter((id) => id !== nodeId)
+        if (x.id === groupId) ids.push(nodeId)
+        if (ids.length === (x.data?.nodeIds || []).length && x.id !== groupId) return x
+        return { ...x, data: { ...x.data, nodeIds: ids, memberCount: ids.length } }
+      }),
+      isDirty: true,
+    })
+    return true
+  },
+
+  removeGroupMember: (groupId, nodeId) => {
+    const g = get().nodes.find((n) => n.id === groupId && n.type === 'group')
+    if (!g || !(g.data?.nodeIds || []).includes(nodeId)) return false
+    get().saveHistory()
+    const ids = g.data.nodeIds.filter((id) => id !== nodeId)
+    set({
+      nodes: get().nodes.map((x) => x.id === groupId && x.type === 'group'
+        ? { ...x, data: { ...x.data, nodeIds: ids, memberCount: ids.length } }
+        : x),
+      isDirty: true,
+    })
+    return true
+  },
+
+  setGroupDropTarget: (id) => {
+    if (get().groupDropTarget !== id) set({ groupDropTarget: id })
+  },
 
   createGroup: () => {
     const { selectedNodeIds, nodes } = get()
@@ -201,21 +301,24 @@ export const useCanvasStore = create((set, get) => ({
     if (ids.length < 2) return null
     get().saveHistory()
     const members = nodes.filter((n) => ids.includes(n.id))
-    const box = groupBox(members) || { x: 0, y: 0, width: 400, height: 200 }
+    const box = groupBox(members) || { x: 0, y: 0, width: EMPTY_GROUP_W, height: EMPTY_GROUP_H }
     const existing = nodes.filter((n) => n.type === 'group').length
     const node = {
       id: `group-${Date.now()}`,
       type: 'group',
       position: { x: box.x, y: box.y },
-      draggable: false,
+      draggable: true,
       selectable: true,
+      // Explicit backdrop layer (never negative); drag restricted to the header.
+      zIndex: GROUP_Z_INDEX,
+      dragHandle: `.${GROUP_DRAG_HANDLE}`,
       style: { width: box.width, height: box.height },
       data: {
         label: `Group ${existing + 1}`,
-        color: GROUP_COLORS[existing % GROUP_COLORS.length],
         nodeIds: ids,
         collapsed: false,
         memberCount: ids.length,
+        justCreated: true,
       },
     }
     set({ nodes: [...get().nodes, node], isDirty: true })
@@ -223,11 +326,77 @@ export const useCanvasStore = create((set, get) => ({
   },
 
   renameGroup: (id, label) => {
-    get().saveHistory()
+    const next = (label || '').trim()
+    if (!next) return
+    const g = get().nodes.find((n) => n.id === id && n.type === 'group')
+    if (!g) return
+    const same = next === (g.data?.label || '')
+    if (same && !g.data?.justCreated) return
+    // Clearing justCreated after a cancelled first rename is not a content
+    // change — no history entry for it.
+    if (!same) get().saveHistory()
     set({
-      nodes: get().nodes.map((n) => n.id === id && n.type === 'group' ? { ...n, data: { ...n.data, label } } : n),
+      nodes: get().nodes.map((n) => n.id === id && n.type === 'group' ? { ...n, data: { ...n.data, label: next, justCreated: false } } : n),
       isDirty: true,
     })
+  },
+
+  // Dedicated group movement (§7-8): rigid delta applied to group + members
+  // in ONE history entry. React Flow already moved the group in the store
+  // via onNodesChange, so the pre-drag state is reconstructed from `start`
+  // and pushed explicitly — saving history here would capture a half-moved
+  // canvas (group moved, members not). Edges follow: they reference node
+  // ids, and RF re-renders them from member positions.
+  moveGroup: (id, position, start) => {
+    const { nodes, edges, history, historyIndex, maxHistorySize } = get()
+    const g = nodes.find((n) => n.id === id && n.type === 'group')
+    if (!g || !start) return
+    const nx = snapToGrid(position.x)
+    const ny = snapToGrid(position.y)
+    const dx = nx - start.group.x
+    const dy = ny - start.group.y
+    if (dx === 0 && dy === 0) return
+    const memberIds = new Set(g.data?.nodeIds || [])
+    // Reconstruct the true pre-drag state (RF streamed the group live).
+    const preNodes = nodes.map((n) => {
+      if (n.id === id) return { ...g, position: { ...start.group } }
+      if (memberIds.has(n.id) && start.members[n.id]) return { ...n, position: { ...start.members[n.id] } }
+      return n
+    })
+    const clone = (o) => JSON.parse(JSON.stringify(o))
+    // Forward application IS the tested pure helper (snapped per position).
+    const { nodes: next } = shiftGroupNodes(preNodes, id, dx, dy, snapToGrid)
+    const newHistory = history.slice(0, historyIndex + 1)
+    newHistory.push({ nodes: clone(preNodes), edges: clone(edges) })
+    if (newHistory.length > maxHistorySize) newHistory.shift()
+    set({ nodes: next, history: newHistory, historyIndex: newHistory.length - 1, isDirty: true, revision: get().revision + 1 })
+  },
+
+  // Single-undo resize commit: keep the user's size, only grow to fit members.
+  // RF streams the new size into the store during the gesture, so the true
+  // pre-resize size comes from `start` (captured in onResizeStart) — the same
+  // half-mutated-history problem moveGroup solves. Unchanged size = no entry.
+  commitGroupResize: (id, start) => {
+    const { nodes, edges, history, historyIndex, maxHistorySize } = get()
+    const g = nodes.find((n) => n.id === id && n.type === 'group')
+    if (!g || g.data?.collapsed) return
+    const startStyle = start && typeof start.width === 'number' ? start : null
+    if (startStyle && startStyle.width === g.style?.width && startStyle.height === g.style?.height) return
+    const byId = new Map(nodes.map((n) => [n.id, n]))
+    const members = (g.data?.nodeIds || []).map((mid) => byId.get(mid)).filter((m) => m && m.type === 'customBlock')
+    const box = expandGroupBox(g, members)
+    const clone = (o) => JSON.parse(JSON.stringify(o))
+    const preNodes = startStyle
+      ? nodes.map((n) => (n.id === id ? { ...n, style: { ...(n.style || {}), ...startStyle } } : n))
+      : clone(nodes)
+    const next = !box ? nodes : nodes.map((n) => {
+      if (n.id !== id) return n
+      return { ...n, position: { x: box.x, y: box.y }, style: { ...(n.style || {}), width: box.width, height: box.height } }
+    })
+    const newHistory = history.slice(0, historyIndex + 1)
+    newHistory.push({ nodes: clone(preNodes), edges: clone(edges) })
+    if (newHistory.length > maxHistorySize) newHistory.shift()
+    set({ nodes: next, history: newHistory, historyIndex: newHistory.length - 1, isDirty: true, revision: get().revision + 1 })
   },
 
   toggleGroupCollapse: (id) => {
@@ -246,9 +415,11 @@ export const useCanvasStore = create((set, get) => ({
     set({
       nodes: nodes.map((n) => {
         if (n.id === id) {
-          const box = collapsed ? null : groupBox(nodes.filter((m) => memberIds.has(m.id)))
+          // Expand keeps the user's manual size; only grow when members no longer fit.
+          const box = collapsed ? null : expandGroupBox(n, nodes.filter((m) => memberIds.has(m.id) && m.type === 'customBlock'))
           return {
             ...n,
+            ...(box ? { position: { x: box.x, y: box.y } } : {}),
             style: collapsed
               ? { width: COLLAPSED_W, height: COLLAPSED_H }
               : { ...(n.style || {}), ...(box ? { width: box.width, height: box.height } : {}) },
@@ -302,60 +473,17 @@ export const useCanvasStore = create((set, get) => ({
     })
   },
 
-  refreshGroupBoxes: () => {
-    const { nodes } = get()
-    if (!nodes.some((n) => n.type === 'group')) return
-    const byId = new Map(nodes.map((n) => [n.id, n]))
-    let changed = false
-    const next = nodes.map((n) => {
-      if (n.type !== 'group' || n.data?.collapsed) return n
-      const members = (n.data?.nodeIds || []).map((mid) => byId.get(mid)).filter((m) => m && m.type === 'customBlock')
-      const box = groupBox(members)
-      if (!box) return n
-      if (box.x === n.position.x && box.y === n.position.y
-        && box.width === n.style?.width && box.height === n.style?.height
-        && (n.data?.memberCount || 0) === members.length) return n
-      changed = true
-      return {
-        ...n,
-        position: { x: box.x, y: box.y },
-        style: { ...(n.style || {}), width: box.width, height: box.height },
-        data: { ...n.data, memberCount: members.length },
-      }
-    })
-    if (changed) set({ nodes: next })
-  },
-
-  addNote: (position) => {
-    get().saveHistory()
-    const existing = get().nodes.filter((n) => n.type === 'note').length
-    const colors = ['#f59e0b', '#3b82f6', '#10b981', '#ec4899']
-    const node = {
-      id: `note-${Date.now()}`,
-      type: 'note',
-      position: { x: Math.round(position.x), y: Math.round(position.y) },
-      draggable: true,
-      selectable: true,
-      data: { text: '', color: colors[existing % colors.length] },
-    }
-    set({ nodes: [...get().nodes, node], isDirty: true })
-    return node
-  },
-
-  updateNoteText: (id, text) => {
-    get().saveHistory()
-    set({
-      nodes: get().nodes.map((n) => n.id === id && n.type === 'note' ? { ...n, data: { ...n.data, text } } : n),
-      isDirty: true,
-    })
-  },
-
   loadCanvasMeta: (designId) => {
     const meta = readCanvasMeta(designId)
     if (!meta) return
     const { nodes, edges } = get()
     const have = new Set(nodes.map((n) => n.id))
-    const fresh = [...meta.groups, ...meta.notes].filter((n) => n && n.id && !have.has(n.id))
+    // Normalize persisted groups to the movable/backdrop contract:
+    // older metas stored draggable:false and zIndex:-1 or nothing.
+    // Legacy note entries are ignored (never rendered, never written back).
+    const fresh = [...meta.groups]
+      .filter((n) => n && n.id && n.type === 'group' && !have.has(n.id))
+      .map((n) => ({ ...n, draggable: true, zIndex: GROUP_Z_INDEX, dragHandle: `.${GROUP_DRAG_HANDLE}` }))
     if (!fresh.length) return
     const collapsedIds = new Set()
     fresh.forEach((n) => {
@@ -382,6 +510,14 @@ export const useCanvasStore = create((set, get) => ({
     }
     const elementId = finding.elementId || finding.blockId || finding.edgeId
     const elementType = finding.elementType || (finding.blockId ? 'node' : finding.edgeId ? 'edge' : 'node')
+    // Root-cause stale guard: emphasis for a deleted/never-existing element is
+    // ignored here so no caller can pan to a ghost. Canvas-level findings
+    // (no elementId) always apply.
+    if (elementId) {
+      const { nodes, edges } = get()
+      const list = elementType === 'edge' ? edges : nodes
+      if (!list.some((n) => n.id === elementId)) return
+    }
     set({
       validationHighlight: {
         elementId,
@@ -431,7 +567,12 @@ export const useCanvasStore = create((set, get) => ({
 
   markCanvasDirty: () => set({ isDirty: true }),
 
-  markCanvasClean: () => set({ isDirty: false }),
+  // Revision-safe clean: a stale save (older revision finishing after newer
+  // edits) must not clear dirty. Only the save matching the current revision
+  // cleans; no-arg callers (load/reset) clean unconditionally.
+  markCanvasClean: (savedRevision) => set((s) => (savedRevision != null && savedRevision !== s.revision)
+    ? { persistedRevision: Math.max(s.persistedRevision, savedRevision) }
+    : { isDirty: false, persistedRevision: s.revision }),
 
   resetCanvasPersistence: () => set({ isDirty: false }),
 
@@ -531,7 +672,7 @@ export const useCanvasStore = create((set, get) => ({
   // ==========================================================================
 
   saveHistory: () => {
-    const { nodes, edges, history, historyIndex, maxHistorySize } = get()
+    const { nodes, edges, history, historyIndex, maxHistorySize, revision } = get()
     const state = {
       nodes: JSON.parse(JSON.stringify(nodes)),
       edges: JSON.parse(JSON.stringify(edges))
@@ -539,18 +680,42 @@ export const useCanvasStore = create((set, get) => ({
     const newHistory = history.slice(0, historyIndex + 1)
     newHistory.push(state)
     if (newHistory.length > maxHistorySize) newHistory.shift()
-    set({ history: newHistory, historyIndex: newHistory.length - 1 })
+    set({ history: newHistory, historyIndex: newHistory.length - 1, revision: revision + 1, isDirty: true })
   },
 
   undo: () => {
-    const { history, historyIndex } = get()
-    if (historyIndex <= 0) return
-    const newIndex = historyIndex - 1
-    const state = history[newIndex]
+    const { nodes, edges, history, historyIndex } = get()
+    if (historyIndex < 0) return
+    const clone = (o) => JSON.parse(JSON.stringify(o))
+    // ponytail: pre-state history + stash live for redo on first undo
+    if (historyIndex === history.length - 1) {
+      const live = { nodes: clone(nodes), edges: clone(edges) }
+      const state = history[historyIndex]
+      if (!state) return
+      set({
+        nodes: clone(state.nodes),
+        edges: clone(state.edges),
+        history: [...history, live],
+        historyIndex,
+        selectedNodeId: null,
+        selectedEdgeId: null,
+        selectedNodeIds: [],
+        selectedEdgeIds: [],
+        selectedNode: null,
+        selectedNodes: [],
+        selectedEdge: null,
+        selectedEdges: [],
+        validationHighlight: null,
+      })
+      return
+    }
+    if (historyIndex === 0) return
+    const prev = history[historyIndex - 1]
+    if (!prev) return
     set({
-      nodes: JSON.parse(JSON.stringify(state.nodes)),
-      edges: JSON.parse(JSON.stringify(state.edges)),
-      historyIndex: newIndex,
+      nodes: clone(prev.nodes),
+      edges: clone(prev.edges),
+      historyIndex: historyIndex - 1,
       selectedNodeId: null,
       selectedEdgeId: null,
       selectedNodeIds: [],
@@ -606,6 +771,7 @@ export const useCanvasStore = create((set, get) => ({
     const newNode = {
       id: `${type}-${Date.now()}`,
       type: 'customBlock',
+      zIndex: NODE_Z_INDEX,
       position: {
         x: snapToGrid(position.x),
         y: snapToGrid(position.y),
@@ -646,37 +812,45 @@ export const useCanvasStore = create((set, get) => ({
   },
 
   updateNode: (id, updates) => {
-    set({
-      nodes: get().nodes.map(n => {
-        if (n.id !== id) return n
-        const newPosition = updates.position ? {
-          x: snapToGrid(updates.position.x),
-          y: snapToGrid(updates.position.y),
-        } : undefined
+    // ponytail: no per-keystroke history here (would flood undo); revision still
+    // bumps so validation/autosave see the edit. Commit-coalescing if it matters.
+    const { nodes, selectedNodeId } = get()
+    const next = nodes.map(n => {
+      if (n.id !== id) return n
+      const newPosition = updates.position ? {
+        x: snapToGrid(updates.position.x),
+        y: snapToGrid(updates.position.y),
+      } : undefined
 
-        let mergedConfig = n.data.config
-        if (updates.config) {
-          mergedConfig = { ...n.data.config }
-          const cleanUpdates = stripDecorativeProps(updates.config)
-          for (const key of Object.keys(cleanUpdates)) {
-            if (key === 'behavioralModel' && typeof cleanUpdates[key] === 'object') {
-              mergedConfig.behavioralModel = deepMerge(mergedConfig.behavioralModel || {}, cleanUpdates[key])
-            } else {
-              mergedConfig[key] = cleanUpdates[key]
-            }
+      let mergedConfig = n.data.config
+      if (updates.config) {
+        mergedConfig = { ...n.data.config }
+        const cleanUpdates = stripDecorativeProps(updates.config)
+        for (const key of Object.keys(cleanUpdates)) {
+          if (key === 'behavioralModel' && typeof cleanUpdates[key] === 'object') {
+            mergedConfig.behavioralModel = deepMerge(mergedConfig.behavioralModel || {}, cleanUpdates[key])
+          } else {
+            mergedConfig[key] = cleanUpdates[key]
           }
         }
+      }
 
-        return {
-          ...n,
-          data: {
-            ...n.data,
-            ...updates,
-            config: mergedConfig,
-          },
-          ...(newPosition && { position: newPosition }),
-        }
-      })
+      return {
+        ...n,
+        data: {
+          ...n.data,
+          ...updates,
+          config: mergedConfig,
+        },
+        ...(newPosition && { position: newPosition }),
+      }
+    })
+    set({
+      nodes: next,
+      isDirty: true,
+      revision: get().revision + 1,
+      selectedNode: selectedNodeId === id ? next.find((n) => n.id === id) || null : get().selectedNode,
+      selectedNodes: get().selectedNodes.map((n) => (n.id === id ? next.find((m) => m.id === id) || n : n)),
     })
   },
 
@@ -690,38 +864,16 @@ export const useCanvasStore = create((set, get) => ({
     })
   },
 
-  removeNode: (id) => {
-    get().saveHistory()
-    const state = get()
-    const wasSelected = state.selectedNodeId === id
-    const wasInMulti = state.selectedNodeIds.includes(id)
-    set({
-      nodes: dropEmptyGroups(state.nodes.filter(n => n.id !== id)),
-      edges: state.edges.filter(e => {
-        const src = e.source || e.sourceId
-        const tgt = e.target || e.targetId
-        return src !== id && tgt !== id
-      }),
-      isDirty: true,
-      selectedNodeId: wasSelected ? null : state.selectedNodeId,
-      selectedNodeIds: wasInMulti ? state.selectedNodeIds.filter(sid => sid !== id) : state.selectedNodeIds,
-      selectedNode: wasSelected ? null : state.selectedNode,
-      selectedNodes: state.selectedNodes.filter(n => n.id !== id),
-      selectedEdgeId: null,
-      selectedEdgeIds: [],
-      selectedEdge: null,
-      selectedEdges: [],
-      validationHighlight: state.validationHighlight?.elementId === id ? null : state.validationHighlight,
-    })
-  },
+  removeNode: (id) => get().deleteNodes([id]),
 
   addEdge: (edge, type = 'http') => {
-    get().saveHistory()
     const src = edge.source || edge.sourceId
     const tgt = edge.target || edge.targetId
+    if (!src || !tgt || src === tgt) return null
     const exists = get().edges.some(
       e => (e.source || e.sourceId) === src && (e.target || e.targetId) === tgt
     )
+    get().saveHistory()
     if (!exists) {
       const edgeConfig = getDefaultEdgeConfig(type)
       const newEdge = {
@@ -743,58 +895,33 @@ export const useCanvasStore = create((set, get) => ({
     return null
   },
 
-  removeEdge: (id) => {
-    get().saveHistory()
-    const state = get()
-    const wasSelected = state.selectedEdgeId === id
-    const wasInMulti = state.selectedEdgeIds.includes(id)
-    set({
-      edges: state.edges.filter(e => e.id !== id),
-      isDirty: true,
-      selectedEdgeId: wasSelected ? null : state.selectedEdgeId,
-      selectedEdgeIds: wasInMulti ? state.selectedEdgeIds.filter(seid => seid !== id) : state.selectedEdgeIds,
-      selectedEdge: wasSelected ? null : state.selectedEdge,
-      selectedEdges: state.selectedEdges.filter(e => e.id !== id),
-      validationHighlight: state.validationHighlight?.elementId === id ? null : state.validationHighlight,
-    })
-  },
+  removeEdge: (id) => get().deleteEdges([id]),
 
-  updateEdge: (id, updates) => {
-    set({
-      edges: get().edges.map(e => {
-        if (e.id !== id) return e
-        let mergedData = { ...e.data }
-        if (updates.data) {
-          mergedData = { ...mergedData, ...updates.data }
-          if (updates.data.connectionType && updates.data.connectionType !== e.data?.connectionType) {
-            const newConfig = getDefaultEdgeConfig(updates.data.connectionType)
-            mergedData = { ...newConfig, ...mergedData }
-          }
-          if (updates.data.behavioralModel && typeof updates.data.behavioralModel === 'object') {
-            mergedData.behavioralModel = deepMerge(mergedData.behavioralModel || {}, updates.data.behavioralModel)
-          }
-        }
-        return { ...e, data: mergedData }
-      })
-    })
-  },
+  updateEdge: (id, updates) => get().updateEdgeData(id, updates?.data || updates),
 
   updateEdgeData: (id, dataUpdates) => {
+    const { edges, selectedEdgeId } = get()
+    const next = edges.map(e => {
+      if (e.id !== id) return e
+      let mergedData = { ...e.data, ...dataUpdates }
+      if (dataUpdates.connectionType && dataUpdates.connectionType !== e.data?.connectionType) {
+        mergedData = { ...getDefaultEdgeConfig(dataUpdates.connectionType), ...mergedData }
+      }
+      if (dataUpdates.behavioralModel && typeof dataUpdates.behavioralModel === 'object') {
+        mergedData.behavioralModel = deepMerge(mergedData.behavioralModel || {}, dataUpdates.behavioralModel)
+      }
+      return { ...e, data: mergedData }
+    })
     set({
-      edges: get().edges.map(e => {
-        if (e.id !== id) return e
-        let mergedData = { ...e.data, ...dataUpdates }
-        if (dataUpdates.behavioralModel && typeof dataUpdates.behavioralModel === 'object') {
-          mergedData.behavioralModel = deepMerge(e.data?.behavioralModel || {}, dataUpdates.behavioralModel)
-        }
-        return { ...e, data: mergedData }
-      }),
-      isDirty: true
+      edges: next,
+      isDirty: true,
+      revision: get().revision + 1,
+      selectedEdge: selectedEdgeId === id ? next.find((e) => e.id === id) || null : get().selectedEdge,
     })
   },
 
-  setNodes: (nodes) => set({ nodes }),
-  setEdges: (edges) => set({ edges }),
+  setNodes: (nodes) => set((s) => ({ nodes, revision: s.revision + 1 })),
+  setEdges: (edges) => set((s) => ({ edges, revision: s.revision + 1 })),
 
   setSelectedNode: (node) => {
     if (node) get().selectNode(node.id)
@@ -834,11 +961,17 @@ export const useCanvasStore = create((set, get) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
   setZoom: (zoom) => set({ zoom }),
 
-  setValidationResult: (result) => set({ validationResult: result }),
+  // Revision-safe: a response computed for an older revision is stale and
+  // discarded, never displayed as if it described the current canvas.
+  setValidationResult: (result, validatedRevision) => {
+    if (validatedRevision != null && validatedRevision !== get().revision) return
+    set({ validationResult: result, validationRevision: validatedRevision ?? get().revision })
+  },
   setIsValidating: (val) => set({ isValidating: val }),
   setShowValidationPanel: (show) => set({ showValidationPanel: show }),
   clearValidation: () => set({
     validationResult: null,
+    validationRevision: null,
     validationHighlight: null,
   }),
 
@@ -860,17 +993,70 @@ export const useCanvasStore = create((set, get) => ({
     simulationErrorMessage: null,
   }),
 
+  deleteNodes: (ids) => {
+    const list = Array.isArray(ids) ? ids : [ids]
+    if (!list.length) return
+    const { nodes, edges, validationResult } = get()
+    const idSet = new Set(list)
+    if (!nodes.some((n) => idSet.has(n.id))) return
+    get().saveHistory()
+    const nextNodes = dropEmptyGroups(nodes.filter((n) => !idSet.has(n.id)))
+    const nextEdges = edges.filter((e) => {
+      const src = e.source || e.sourceId
+      const tgt = e.target || e.targetId
+      return !idSet.has(src) && !idSet.has(tgt)
+    })
+    set({
+      nodes: nextNodes,
+      edges: nextEdges,
+      validationResult: dropDeletedFindings(validationResult, nextNodes, nextEdges),
+      isDirty: true,
+      selectedNodeId: null,
+      selectedEdgeId: null,
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+      selectedNode: null,
+      selectedNodes: [],
+      selectedEdge: null,
+      selectedEdges: [],
+      validationHighlight: null,
+    })
+  },
+
+  deleteEdges: (ids) => {
+    const list = Array.isArray(ids) ? ids : [ids]
+    if (!list.length) return
+    const { nodes, edges, validationResult } = get()
+    const idSet = new Set(list)
+    if (!edges.some((e) => idSet.has(e.id))) return
+    get().saveHistory()
+    const nextEdges = edges.filter((e) => !idSet.has(e.id))
+    set({
+      edges: nextEdges,
+      validationResult: dropDeletedFindings(validationResult, nodes, nextEdges),
+      isDirty: true,
+      selectedEdgeId: null,
+      selectedEdgeIds: [],
+      selectedEdge: null,
+      selectedEdges: [],
+    })
+  },
+
   deleteSelected: () => {
-    const { selectedNodeIds, selectedEdgeIds, nodes, edges } = get()
+    const { selectedNodeIds, selectedEdgeIds, nodes, edges, validationResult } = get()
+    if (!selectedNodeIds.length && !selectedEdgeIds.length) return
     const nodeIds = new Set(selectedNodeIds)
     get().saveHistory()
+    const nextNodes = dropEmptyGroups(nodes.filter(n => !nodeIds.has(n.id)))
+    const nextEdges = edges.filter(e => {
+      const src = e.source || e.sourceId
+      const tgt = e.target || e.targetId
+      return !nodeIds.has(src) && !nodeIds.has(tgt) && !selectedEdgeIds.some(seid => seid === e.id)
+    })
     set({
-      nodes: dropEmptyGroups(nodes.filter(n => !nodeIds.has(n.id))),
-      edges: edges.filter(e => {
-        const src = e.source || e.sourceId
-        const tgt = e.target || e.targetId
-        return !nodeIds.has(src) && !nodeIds.has(tgt) && !selectedEdgeIds.some(seid => seid === e.id)
-      }),
+      nodes: nextNodes,
+      edges: nextEdges,
+      validationResult: dropDeletedFindings(validationResult, nextNodes, nextEdges),
       selectedNodeId: null,
       selectedEdgeId: null,
       selectedNodeIds: [],
@@ -920,15 +1106,19 @@ export const useCanvasStore = create((set, get) => ({
   // FIX: loadDesign now restores edge.config into edge.data
   // ==========================================================================
   loadDesign: (design) => {
-    // Migrate nodes: sanitize config + inject missing behavioralModel
-    const migratedNodes = (design.nodes || []).map(node => {
+    // Migrate nodes: sanitize config + inject missing behavioralModel.
+    // Legacy `note` nodes are dropped (ignored, never rendered/written back).
+    const migratedNodes = (design.nodes || []).filter((node) => node?.type !== 'note').map(node => {
       const config = stripDecorativeProps(node.data?.config || {})
       if (!config.behavioralModel) {
         const blockType = node.data?.type || 'service'
         config.behavioralModel = getBlockBehavioralModel(blockType)
       }
+      // Normalize explicit canvas layers (older designs stored no zIndex).
       return {
         ...node,
+        ...(node.zIndex == null ? { zIndex: node.type === 'group' ? GROUP_Z_INDEX : NODE_Z_INDEX } : {}),
+        ...(node.type === 'group' ? { draggable: true, dragHandle: `.${GROUP_DRAG_HANDLE}` } : {}),
         data: {
           ...node.data,
           config,
@@ -961,6 +1151,9 @@ export const useCanvasStore = create((set, get) => ({
     set({
       nodes: migratedNodes,
       edges: migratedEdges,
+      revision: 0,
+      persistedRevision: 0,
+      isDirty: false,
       selectedNodeId: null,
       selectedEdgeId: null,
       selectedNodeIds: [],
@@ -977,6 +1170,7 @@ export const useCanvasStore = create((set, get) => ({
       simulationAlerts: [],
       simulationConfig: null,
       validationResult: null,
+      validationRevision: null,
       showValidationPanel: false,
       nodePicker: null,
       history: [],
@@ -1010,6 +1204,7 @@ export const useCanvasStore = create((set, get) => ({
       simulationAlerts: [],
       simulationConfig: null,
       validationResult: null,
+      validationRevision: null,
       showValidationPanel: false,
       nodePicker: null,
       history: [],
@@ -1027,19 +1222,19 @@ export const useCanvasStore = create((set, get) => ({
 // GROUP MEMBERSHIP PRUNING (Phase 8)
 // ============================================================================
 
-// Refresh group membership after deletions; drop groups left with no members.
+// Refresh group membership after deletions; groups are always kept (possibly
+// empty) — only explicit Delete/Ungroup removes a group.
 function dropEmptyGroups(nodes) {
   const groups = nodes.filter((n) => n.type === 'group')
   if (groups.length === 0) return nodes
-  const { kept, dropped } = pruneGroupMembers(groups, nodes.map((n) => n.id))
-  const unchanged = dropped.length === 0 && kept.every((k) => {
+  const { kept } = pruneGroupMembers(groups, nodes.map((n) => n.id))
+  const unchanged = kept.every((k) => {
     const orig = nodes.find((n) => n.id === k.id)
     return orig && (orig.data?.nodeIds || []).length === k.data.nodeIds.length
   })
   if (unchanged) return nodes
-  const dropIds = new Set(dropped)
   const keptById = new Map(kept.map((k) => [k.id, k]))
-  return nodes.filter((n) => !dropIds.has(n.id)).map((n) => keptById.get(n.id) || n)
+  return nodes.map((n) => keptById.get(n.id) || n)
 }
 
 // ============================================================================

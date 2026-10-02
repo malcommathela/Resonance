@@ -15,7 +15,7 @@ function collapseHistory(beforeLen, pushes) {
   const h = s().history
   if (h.length - beforeLen !== pushes) return
   const kept = h.slice(0, beforeLen).concat(h[beforeLen])
-  useCanvasStore.setState({ history: kept, historyIndex: kept.length })
+  useCanvasStore.setState({ history: kept, historyIndex: kept.length - 1 })
 }
 
 let memoryClipboard = null // in-memory copy; navigator.clipboard sync is best-effort
@@ -24,6 +24,8 @@ export const hasClipboard = () => !!memoryClipboard
 
 export const canvasCommands = {
   addNode: (type, position, overrides) => s().addNode(type, position, overrides),
+  updateNode: (id, updates) => s().updateNode(id, updates),
+  moveNode: (id, position) => s().updateNodePosition(id, position),
   addConnectedNode: (type, position, sourceId, connectionType = 'http', overrides) => {
     const before = s().history.length
     const node = s().addNode(type, position, overrides)
@@ -33,12 +35,31 @@ export const canvasCommands = {
     return { node, edge }
   },
   deleteSelection: () => s().deleteSelected(),
+  deleteNodes: (ids) => s().deleteNodes(ids),
+  deleteEdges: (ids) => s().deleteEdges(ids),
   duplicateSelection: () => s().selectedNodeIds.map((id) => s().duplicateNode(id)).filter(Boolean),
   duplicateNode: (id) => s().duplicateNode(id),
   renameNode: (id, label) => s().updateNode(id, { label }),
   connectNodes: (sourceId, targetId, connectionType = 'http') =>
     s().addEdge({ source: sourceId, target: targetId }, connectionType),
-  deleteEdge: (id) => s().removeEdge(id),
+  updateEdge: (id, updates) => s().updateEdge(id, updates),
+  deleteEdge: (id) => s().deleteEdges([id]),
+  selectNode: (id) => s().selectNode(id),
+  selectEdge: (id) => s().selectEdge(id),
+  // Semantic entry: validation/overlays/menus request selection, never own it.
+  selectElement: ({ type, id } = {}) => {
+    if (type === 'edge') s().selectEdge(id)
+    else if (type === 'node') s().selectNode(id)
+    else if (id) s().selectNode(id)
+    else s().clearSelection()
+  },
+  // Transient validation emphasis — deliberately NOT selection.
+  emphasizeFinding: (finding) => s().setValidationHighlight(finding),
+  clearEmphasis: () => s().clearValidationHighlight(),
+  selectNodes: (ids) => s().setSelectedNodes((ids || []).map((id) => s().nodes.find((n) => n.id === id)).filter(Boolean)),
+  selectEdges: (ids) => s().setSelectedEdges((ids || []).map((id) => s().edges.find((e) => e.id === id)).filter(Boolean)),
+  clearSelection: () => s().clearSelection(),
+  getRevision: () => s().revision,
   select: (id) => { if (id) s().selectNode(id); else s().clearSelection() },
   selectAll: () => s().setSelectedNodes([...s().nodes]),
   copySelection: async () => {
@@ -117,13 +138,21 @@ export const canvasCommands = {
     if (g) s().selectNode(g.id)
     return g
   },
+  createEmptyGroup: (position) => {
+    const inst = getFlowInstance()
+    const at = position
+      || (inst ? inst.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 }) : { x: 0, y: 0 })
+    const g = s().createEmptyGroup(at)
+    if (g) s().selectNode(g.id)
+    return g
+  },
+  addGroupMember: (groupId, nodeId) => s().addGroupMember(groupId, nodeId),
+  removeGroupMember: (groupId, nodeId) => s().removeGroupMember(groupId, nodeId),
   renameGroup: (id, label) => s().renameGroup(id, label),
   toggleGroupCollapse: (id) => s().toggleGroupCollapse(id),
+  deleteGroup: (id) => s().deleteNodes([id]),
+  resizeGroup: (id, start) => s().commitGroupResize(id, start),
   ungroup: (id) => s().ungroup(id),
-  addNote: (position) => {
-    const n = s().addNote(position)
-    if (n) s().selectNode(n.id)
-    return n
-  },
-  updateNoteText: (id, text) => s().updateNoteText(id, text),
+  moveGroup: (id, position, start) => s().moveGroup(id, position, start),
+  commitGroupResize: (id, start) => s().commitGroupResize(id, start),
 }

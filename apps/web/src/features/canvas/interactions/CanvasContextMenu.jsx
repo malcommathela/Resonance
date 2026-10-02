@@ -10,6 +10,9 @@ export function CanvasContextMenu({ menu, onClose, onConfigure }) {
   const ref = useRef(null)
   // ponytail: no Ctrl+G shortcut — it collides with browser find-next; menu only
   const selectedCount = useCanvasStore((s) => s.selectedNodeIds.length)
+  const memberOfGroupId = useCanvasStore((s) => menu?.kind === 'node'
+    ? (s.nodes.find((n) => n.type === 'group' && (n.data?.nodeIds || []).includes(menu.id))?.id || null)
+    : null)
 
   useEffect(() => {
     if (!menu) return undefined
@@ -27,9 +30,16 @@ export function CanvasContextMenu({ menu, onClose, onConfigure }) {
       { label: 'Add connected node', run: () => canvasCommands.openNodePicker(menu.id) },
       { label: 'Configure', run: () => onConfigure('node', menu.id) },
       { label: 'Duplicate', run: () => canvasCommands.duplicateNode(menu.id) },
+      ...(memberOfGroupId ? [{ label: 'Remove from group', run: () => canvasCommands.removeGroupMember(memberOfGroupId, menu.id) }] : []),
       { label: 'Copy', run: () => { void canvasCommands.copySelection() } },
       { label: 'Focus', run: () => canvasCommands.focusSelection() },
       { label: 'Delete', danger: true, run: () => canvasCommands.deleteSelection() },
+    )
+  } else if (menu.kind === 'group') {
+    items.push(
+      { label: 'Focus', run: () => canvasCommands.focusSelection() },
+      { label: 'Ungroup', run: () => canvasCommands.ungroup(menu.id) },
+      { label: 'Delete group', danger: true, run: () => canvasCommands.deleteSelection() },
     )
   } else if (menu.kind === 'edge') {
     items.push(
@@ -39,10 +49,12 @@ export function CanvasContextMenu({ menu, onClose, onConfigure }) {
   } else {
     items.push(
       { label: 'Add component', run: () => canvasCommands.openNodePicker() },
-      { label: 'Add note', run: () => {
-        const inst = getFlowInstance()
-        canvasCommands.addNote(inst ? inst.screenToFlowPosition({ x: menu.x, y: menu.y }) : { x: 0, y: 0 })
-      } },
+      {
+        label: 'Add group', run: () => {
+          const inst = getFlowInstance()
+          canvasCommands.createEmptyGroup(inst ? inst.screenToFlowPosition({ x: menu.x, y: menu.y }) : { x: 0, y: 0 })
+        },
+      },
       ...(selectedCount >= 2 ? [{ label: `Create group (${selectedCount})`, run: () => canvasCommands.createGroup() }] : []),
       ...(hasClipboard() ? [{ label: 'Paste', run: () => {
         const inst = getFlowInstance()
