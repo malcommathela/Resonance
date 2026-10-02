@@ -17,8 +17,6 @@ import {
   Filter,
   Server,
   Wifi,
-  PanelRightClose,
-  PanelRightOpen,
   ShieldCheck,
 } from 'lucide-react'
 import {
@@ -65,8 +63,6 @@ export const ValidationPanel = ({
   onRunValidation,
   onJumpToProperty,
   isValidating,
-  collapsed = false,
-  onToggleCollapse,
 }) => {
   const [expandedSections, setExpandedSections] = useState({
     [SEVERITY.CRITICAL]: true,
@@ -77,100 +73,19 @@ export const ValidationPanel = ({
   const [activeFilter, setActiveFilter] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
 
-  // === COLLAPSED STATE ===
-  if (collapsed) {
-    const hasCritical = validation?.findings?.some(f => f.severity === SEVERITY.CRITICAL)
-    const hasWarning = validation?.findings?.some(f => f.severity === SEVERITY.WARNING)
-    const findingCount = validation?.findings?.length || 0
-
-    return (
-      <div
-        className="shrink-0 bg-resonance-bg-panel border-l border-resonance-border flex flex-col items-center py-3 gap-2 overflow-hidden"
-        style={{ width: 48, transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)' }}
-      >
-        <button
-          onClick={onToggleCollapse}
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-colors"
-          title="Expand Validation Panel"
-        >
-          <PanelRightOpen size={16} />
-        </button>
-
-        <div className="w-6 h-px bg-resonance-border my-1" />
-
-        {/* Validation status indicator */}
-        <button
-          onClick={onToggleCollapse}
-          className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors group relative ${
-            hasCritical
-              ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20'
-              : hasWarning
-              ? 'bg-amber-500/10 text-amber-500 hover:bg-amber-500/20'
-              : findingCount > 0
-              ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20'
-              : 'bg-resonance-bg-hover text-resonance-text-muted hover:text-resonance-text-primary'
-          }`}
-          title={validation ? `${findingCount} findings` : 'No validation run yet'}
-        >
-          {hasCritical ? (
-            <AlertOctagon size={16} />
-          ) : hasWarning ? (
-            <AlertTriangle size={16} />
-          ) : findingCount > 0 ? (
-            <CheckCircle2 size={16} />
-          ) : (
-            <ShieldCheck size={16} />
-          )}
-          {/* Tooltip */}
-          <span className="absolute right-full mr-2 px-2 py-1 bg-resonance-bg-elevated border border-resonance-border rounded-lg text-xs text-resonance-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
-            {validation ? `${findingCount} finding${findingCount !== 1 ? 's' : ''}` : 'Validation'}
-          </span>
-        </button>
-
-        {/* Re-run button */}
-        <button
-          onClick={onRunValidation}
-          disabled={isValidating}
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-resonance-text-muted hover:text-resonance-accent hover:bg-resonance-bg-hover transition-colors disabled:opacity-40 group relative"
-          title="Re-run validation"
-        >
-          {isValidating ? (
-            <div className="w-4 h-4 border-2 border-resonance-text-muted border-t-resonance-accent rounded-full animate-spin" />
-          ) : (
-            <Zap size={14} />
-          )}
-          <span className="absolute right-full mr-2 px-2 py-1 bg-resonance-bg-elevated border border-resonance-border rounded-lg text-xs text-resonance-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
-            {isValidating ? 'Validating...' : 'Run Validation'}
-          </span>
-        </button>
-      </div>
-    )
-  }
 
   // === EMPTY STATE (no validation run yet) ===
   if (!validation) {
     return (
-      <div
-        className="shrink-0 bg-resonance-bg-panel border-l border-resonance-border flex flex-col h-full"
-        style={{ width: 280, transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)' }}
-      >
+      <div className="flex max-h-[500px] w-full flex-col">
         <div className="flex items-center justify-between p-4 border-b border-resonance-border">
           <div className="flex items-center gap-2">
             <ShieldCheck size={16} className="text-resonance-accent" />
             <h3 className="text-sm font-semibold text-resonance-text-primary">Validation</h3>
           </div>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={onToggleCollapse}
-              className="p-1 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted hover:text-resonance-text-primary transition-colors"
-              title="Collapse Validation Panel"
-            >
-              <PanelRightClose size={14} />
-            </button>
-            <button onClick={onClose} className="text-resonance-text-muted hover:text-resonance-text-primary transition-colors">
-              <X size={16} />
-            </button>
-          </div>
+          <button onClick={onClose} aria-label="Close validation" className="text-resonance-text-muted hover:text-resonance-text-primary transition-colors">
+            <X size={16} />
+          </button>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
           <Activity size={32} className="text-resonance-text-muted mb-3" />
@@ -251,10 +166,7 @@ export const ValidationPanel = ({
   const severities = [SEVERITY.CRITICAL, SEVERITY.WARNING, SEVERITY.RISK, SEVERITY.INFO]
 
   return (
-    <div
-      className="shrink-0 bg-resonance-bg-panel border-l border-resonance-border flex flex-col h-full"
-      style={{ width: 280, transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)' }}
-    >
+    <div className="flex max-h-[500px] w-full flex-col">
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-resonance-border">
         <div className="flex items-center gap-2">
@@ -274,14 +186,7 @@ export const ValidationPanel = ({
               <Zap size={14} />
             )}
           </button>
-          <button
-            onClick={onToggleCollapse}
-            className="p-1 rounded-lg hover:bg-resonance-bg-hover text-resonance-text-muted hover:text-resonance-text-primary transition-colors"
-            title="Collapse Validation Panel"
-          >
-            <PanelRightClose size={14} />
-          </button>
-          <button onClick={onClose} className="text-resonance-text-muted hover:text-resonance-text-primary transition-colors">
+          <button onClick={onClose} aria-label="Close validation" className="text-resonance-text-muted hover:text-resonance-text-primary transition-colors">
             <X size={16} />
           </button>
         </div>

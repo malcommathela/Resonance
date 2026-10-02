@@ -5,7 +5,6 @@ import {
   Background,
   Controls,
   MiniMap,
-  addEdge,
   useReactFlow,
   ReactFlowProvider,
   SelectionMode,
@@ -20,12 +19,6 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
-  ShieldCheck,
-  AlertOctagon,
-  AlertTriangle,
-  BarChart3,
-  Zap,
-  Settings,
   Plus,
 } from 'lucide-react'
 import { useCanvasStore } from '@/stores/canvasStore'
@@ -33,7 +26,7 @@ import { useDesignStore } from '@/stores/designStore'
 import { useAutoSave } from '@/hooks/useAutoSave'
 import { blockIconMap } from '@/lib/iconMap'
 import { BlockLibrary } from '@/components/canvas/BlockLibrary'
-import { PropertyPanel, TABS } from '@/components/canvas/PropertyPanel'
+import { PropertyPanel } from '@/components/canvas/PropertyPanel'
 import { TopToolbar } from '@/components/canvas/TopToolbar'
 import { BottomPanel } from '@/components/canvas/BottomPanel'
 import { SimulationOverlay } from '@/components/canvas/SimulationOverlay'
@@ -56,6 +49,7 @@ import { nodeTypes, edgeTypes } from '@/features/canvas/core/canvasTypes'
 import { canvasCommands } from '@/features/canvas/core/canvasCommands'
 import { setFlowInstance } from '@/features/canvas/core/flowInstance'
 import { NodePicker } from '@/features/canvas/picker/NodePicker'
+import { InspectorShell } from '@/features/canvas/inspector/InspectorShell'
 import { CanvasContextMenu } from '@/features/canvas/interactions/CanvasContextMenu'
 import { SimulationBar } from '@/features/canvas/overlays/SimulationBar'
 
@@ -101,8 +95,6 @@ function CanvasEditorInner() {
   const setActiveTab = useCanvasStore((s) => s.setActiveTab)
   const addNode = useCanvasStore((s) => s.addNode)
   const updateNodePosition = useCanvasStore((s) => s.updateNodePosition)
-  const removeNode = useCanvasStore((s) => s.removeNode)
-  const removeEdge = useCanvasStore((s) => s.removeEdge)
   const startSimulation = useCanvasStore((s) => s.startSimulation)
   const stopSimulation = useCanvasStore((s) => s.stopSimulation)
   const setSimulationMetrics = useCanvasStore((s) => s.setSimulationMetrics)
@@ -110,7 +102,7 @@ function CanvasEditorInner() {
   const clearCanvas = useCanvasStore((s) => s.clearCanvas)
   const getAllConnectionTypes = useCanvasStore((s) => s.getAllConnectionTypes)
 
-  const { nodes, edges, setNodes, setEdges, handleNodesChange, handleEdgesChange } = useCanvasDocument()
+  const { nodes, edges, handleNodesChange, handleEdgesChange } = useCanvasDocument()
   const [showExportModal, setShowExportModal] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
   const [logs, setLogs] = useState([])
@@ -127,10 +119,17 @@ function CanvasEditorInner() {
   const [reportLoading, setReportLoading] = useState(false)
   // === END BATCH 5 ===
 
-  // === RIGHT SIDEBAR STATE ===
+  // Shared floating slot (Phase 9): one overlay — 'properties' OR 'validation', never both.
   const [activePanel, setActivePanel] = useState(null)
-  const [activePropertyTab, setActivePropertyTab] = useState('appearance')
-  // === END RIGHT SIDEBAR STATE ===
+  const showValidationPanel = useCanvasStore((s) => s.showValidationPanel)
+  const setShowValidationPanel = useCanvasStore((s) => s.setShowValidationPanel)
+  // Bridge legacy store flag (SimulationControls badge) into the shared slot.
+  useEffect(() => {
+    setActivePanel((prev) => {
+      if (showValidationPanel) return 'validation'
+      return prev === 'validation' ? null : prev
+    })
+  }, [showValidationPanel])
 
   const reactFlow = useReactFlow()
   const { screenToFlowPosition, fitView, zoomIn, zoomOut, setCenter } = reactFlow
@@ -159,6 +158,13 @@ function CanvasEditorInner() {
     Boolean(id && id !== 'new' && isInitialized),
     currentDesign?.version ?? null
   )
+
+  // Inspector/store edits (updateNode/updateEdge/…) set store isDirty without
+  // touching RF — bridge that into autosave so config edits persist.
+  const storeDirty = useCanvasStore((s) => s.isDirty)
+  useEffect(() => {
+    if (storeDirty) markDirty()
+  }, [storeDirty, markDirty])
 
   // Commit RF changes to the document store, then mark dirty for autosave
   const onNodesChangeWrapper = useCallback(
@@ -208,12 +214,16 @@ function CanvasEditorInner() {
 
     const { elementId, elementType } = validationHighlight
 
+    const centerOf = (n) => {
+      const w = n.measured?.width ?? n.width ?? 200
+      const h = n.measured?.height ?? n.height ?? 60
+      return { x: n.position.x + w / 2, y: n.position.y + h / 2 }
+    }
     if (elementType === 'node') {
       const node = nodes.find(n => n.id === elementId)
       if (node) {
-        const x = node.position.x + (node.width || 180) / 2
-        const y = node.position.y + (node.height || 80) / 2
-        setCenter(x, y, { zoom: 1.2, duration: 800 })
+        const c = centerOf(node)
+        setCenter(c.x, c.y, { zoom: 1.2, duration: 800 })
       }
     } else if (elementType === 'edge') {
       const edge = edges.find(e => e.id === elementId)
@@ -221,27 +231,45 @@ function CanvasEditorInner() {
         const sourceNode = nodes.find(n => n.id === (edge.source || edge.sourceId))
         const targetNode = nodes.find(n => n.id === (edge.target || edge.targetId))
         if (sourceNode && targetNode) {
-          const x = (sourceNode.position.x + targetNode.position.x) / 2
-          const y = (sourceNode.position.y + targetNode.position.y) / 2
-          setCenter(x, y, { zoom: 1.2, duration: 800 })
+          const a = centerOf(sourceNode)
+          const b = centerOf(targetNode)
+          setCenter((a.x + b.x) / 2, (a.y + b.y) / 2, { zoom: 1.2, duration: 800 })
         }
       }
     }
   }, [validationHighlight, setCenter, nodes, edges])
   // === END BATCH 3 ===
 
-  // Phase 9: risk-badge click focuses the block (TopologyRiskOverlay only dispatches).
+  // Marker click focuses the element (overlay only dispatches; selection stays the authority).
   useEffect(() => {
     const onBadge = (e) => {
-      const blockId = e.detail?.blockId
-      if (!blockId) return
       const st = useCanvasStore.getState()
-      const node = st.nodes.find((n) => n.id === blockId)
-      if (!node) return
-      st.selectNode(blockId)
-      const w = node.measured?.width ?? node.width ?? 200
-      const h = node.measured?.height ?? node.height ?? 60
-      setCenter(node.position.x + w / 2, node.position.y + h / 2, { zoom: 1.2, duration: 500 })
+      const centerOf = (n) => {
+        const w = n.measured?.width ?? n.width ?? 200
+        const h = n.measured?.height ?? n.height ?? 60
+        return { x: n.position.x + w / 2, y: n.position.y + h / 2 }
+      }
+      const blockId = e.detail?.blockId
+      if (blockId) {
+        const node = st.nodes.find((n) => n.id === blockId)
+        if (!node) return
+        st.selectNode(blockId)
+        const c = centerOf(node)
+        setCenter(c.x, c.y, { zoom: 1.2, duration: 500 })
+        return
+      }
+      const edgeId = e.detail?.edgeId
+      if (edgeId) {
+        const edge = st.edges.find((x) => x.id === edgeId)
+        if (!edge) return
+        const a = st.nodes.find((n) => n.id === (edge.source || edge.sourceId))
+        const b = st.nodes.find((n) => n.id === (edge.target || edge.targetId))
+        if (!a || !b) return
+        st.selectEdge(edgeId)
+        const ca = centerOf(a)
+        const cb = centerOf(b)
+        setCenter((ca.x + cb.x) / 2, (ca.y + cb.y) / 2, { zoom: 1.2, duration: 500 })
+      }
     }
     window.addEventListener('resonance:highlight-block', onBadge)
     return () => window.removeEventListener('resonance:highlight-block', onBadge)
@@ -384,18 +412,23 @@ function CanvasEditorInner() {
     markDirty()
   }, [])
 
-  // FIX: removed redundant addStoreEdge call. The sync effect copies React Flow edges to store automatically.
+  // Single edge-creation path: store owns the document, RF mirrors it.
   const handleCreateEdge = useCallback((type) => {
     if (!pendingConnection) return
-    const newEdge = { ...pendingConnection, ...edgeOptions, id: `e-${Date.now()}`, data: { connectionType: type } }
-    setEdges((eds) => addEdge(newEdge, eds))
-    // addStoreEdge(pendingConnection, type) // REMOVED: causes duplicate edge creation
+    canvasCommands.connectNodes(pendingConnection.source, pendingConnection.target, type)
+    markDirty()
     setPendingConnection(null)
     setShowEdgeTypeMenu(false)
-  }, [pendingConnection, setEdges])
+  }, [pendingConnection, markDirty])
 
-  const onNodeClick = useCallback((_, node) => selectNode(node.id), [selectNode])
-  const onEdgeClick = useCallback((_, edge) => selectEdge(edge.id), [selectEdge])
+  const onNodeClick = useCallback((_, node) => {
+    selectNode(node.id)
+    setActivePanel('properties')
+  }, [selectNode])
+  const onEdgeClick = useCallback((_, edge) => {
+    selectEdge(edge.id)
+    setActivePanel('properties')
+  }, [selectEdge])
   const onNodeDoubleClick = useCallback((_, node) => openPropertiesFor('node', node.id), [openPropertiesFor])
   const onEdgeDoubleClick = useCallback((_, edge) => openPropertiesFor('edge', edge.id), [openPropertiesFor])
   // Phase 9: finding click selects + pans (existing highlight effect) + opens the relevant inspector.
@@ -422,6 +455,7 @@ function CanvasEditorInner() {
   const onPaneClick = useCallback(() => {
     clearSelection()
     setShowEdgeTypeMenu(false)
+    setPendingConnection(null)
     clearValidationHighlight()
     setContextMenu(null)
     if (activePanel === 'properties') setActivePanel(null)
@@ -469,8 +503,8 @@ function CanvasEditorInner() {
     useCanvasStore.getState().refreshGroupBoxes()
     markDirty()
   }, [updateNodePosition, markDirty])
-  const onNodesDelete = useCallback((deletedNodes) => deletedNodes.forEach(node => removeNode(node.id)), [removeNode])
-  const onEdgesDelete = useCallback((deletedEdges) => deletedEdges.forEach(edge => removeEdge(edge.id)), [removeEdge])
+  const onNodesDelete = useCallback((deletedNodes) => canvasCommands.deleteNodes(deletedNodes.map((n) => n.id)), [])
+  const onEdgesDelete = useCallback((deletedEdges) => canvasCommands.deleteEdges(deletedEdges.map((e) => e.id)), [])
 
   const handleManualSave = async () => {
     if (!id || id === 'new') { setShowSaveNewModal(true); return }
@@ -494,7 +528,10 @@ function CanvasEditorInner() {
   const handleRunValidation = async (showPanel = true) => {
     if (!id || id === 'new') return
     setIsValidating(true)
-    if (showPanel) setActivePanel('validation')
+    if (showPanel) {
+      setActivePanel('validation')
+      setShowValidationPanel(true)
+    }
 
     try {
       // 1. Client-side pre-validation (instant feedback)
@@ -1209,9 +1246,22 @@ function CanvasEditorInner() {
             if (e.shiftKey) {
               e.preventDefault()
               handleRunValidation(true)
+            } else {
+              e.preventDefault()
+              canvasCommands.pasteClipboard()
             }
             break
           // === END P1 ===
+          case 'c':
+            if (e.shiftKey) break
+            e.preventDefault()
+            void canvasCommands.copySelection()
+            break
+          case 'd':
+            if (e.shiftKey) break
+            e.preventDefault()
+            canvasCommands.duplicateSelection()
+            break
         }
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -1221,6 +1271,9 @@ function CanvasEditorInner() {
         clearSelection()
         clearValidationHighlight()
         setContextMenu(null)
+        setActivePanel(null)
+        setShowEdgeTypeMenu(false)
+        setPendingConnection(null)
       }
       if (e.key === 'Enter') {
         if (selectedNodeId) openPropertiesFor('node', selectedNodeId)
@@ -1317,15 +1370,13 @@ function CanvasEditorInner() {
         }
       />
 
-      {/* === COLLAPSIBLE SIDEBAR LAYOUT === */}
+      {/* Canvas + floating overlays: panels never reserve grid width (Phase 9) */}
       <div
         className="flex-1 grid overflow-hidden"
         style={{
           gridTemplateColumns: `
             ${panels.blockLibrary.collapsed ? 48 : panels.blockLibrary.width}px
             1fr
-            ${activePanel ? 320 : 0}px
-            48px
           `,
         }}
       >
@@ -1371,7 +1422,7 @@ function CanvasEditorInner() {
               maxZoom={2}
               proOptions={{ hideAttribution: true }}
               className="bg-resonance-canvas-bg"
-              deleteKeyCode={['Delete', 'Backspace']}
+              deleteKeyCode={null}
               selectionOnDrag={true}
               multiSelectionKeyCode={['Meta', 'Ctrl']}
               selectionMode={SelectionMode.Partial}
@@ -1460,133 +1511,34 @@ function CanvasEditorInner() {
               </button>
             </div>
           )}
-        </div>
 
-        {/* === SHARED PANEL === */}
-        {activePanel && (
-          <div
-            className="shrink-0 bg-resonance-bg-panel flex flex-col h-full"
-            style={{ width: 320 }}
-          >
-            {activePanel === 'validation' && (
+          {/* Shared floating slot: properties OR validation, canvas never resizes */}
+          {activePanel === 'properties' && (selectedNodeId || selectedEdgeId) && (
+            <InspectorShell label="Properties" onClose={() => setActivePanel(null)}>
+              <PropertyPanel
+                ref={propertyPanelRef}
+                validationResult={validationResult}
+                isValidating={isValidating}
+                onRunValidation={() => handleRunValidation(true)}
+              />
+            </InspectorShell>
+          )}
+          {activePanel === 'validation' && (
+            <InspectorShell
+              label="Validation"
+              onClose={() => { setActivePanel(null); setShowValidationPanel(false) }}
+            >
               <ValidationPanel
                 validation={validationResult}
-                onClose={() => setActivePanel(null)}
+                onClose={() => { setActivePanel(null); setShowValidationPanel(false) }}
                 onHighlightFinding={handleFindingClick}
                 onClearHighlight={() => clearValidationHighlight()}
                 onRunValidation={() => handleRunValidation(true)}
                 isValidating={isValidating}
                 onJumpToProperty={handleJumpToProperty}
-                collapsed={false}
-                onToggleCollapse={() => setActivePanel(null)}
               />
-            )}
-            {activePanel === 'properties' && (
-              <PropertyPanel
-                ref={propertyPanelRef}
-                collapsed={false}
-                onToggleCollapse={() => setActivePanel(null)}
-                onToggleValidation={() => setActivePanel('validation')}
-                validationResult={validationResult}
-                isValidating={isValidating}
-                onRunValidation={() => handleRunValidation(true)}
-                activeTab={activePropertyTab}
-                onTabChange={setActivePropertyTab}
-              />
-            )}
-          </div>
-        )}
-
-        {/* === RIGHT SIDEBAR === */}
-        <div className="shrink-0 w-12 bg-resonance-bg-panel border-l border-resonance-border flex flex-col items-center py-3 gap-2 overflow-hidden z-10">
-          {/* Validation Section */}
-          <button
-            onClick={() => setActivePanel(activePanel === 'validation' ? null : 'validation')}
-            className={`relative w-8 h-8 rounded-lg flex items-center justify-center transition-colors group ${
-              activePanel === 'validation'
-                ? 'bg-resonance-accent/20 text-resonance-accent'
-                : validationResult?.findings?.some(f => f.severity === 'critical')
-                  ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20'
-                  : validationResult?.findings?.some(f => f.severity === 'warning')
-                    ? 'bg-amber-500/10 text-amber-500 hover:bg-amber-500/20'
-                    : validationResult?.findings?.length > 0
-                      ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20'
-                      : 'text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-hover'
-            }`}
-            title="Validation Results"
-          >
-            {validationResult?.findings?.some(f => f.severity === 'critical') ? (
-              <AlertOctagon size={16} />
-            ) : validationResult?.findings?.some(f => f.severity === 'warning') ? (
-              <AlertTriangle size={16} />
-            ) : validationResult?.findings?.length > 0 ? (
-              <ShieldCheck size={16} />
-            ) : (
-              <BarChart3 size={16} />
-            )}
-            <span className="absolute right-full mr-2 px-2 py-1 bg-resonance-bg-elevated border border-resonance-border rounded-lg text-xs text-resonance-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
-              Validation Results
-            </span>
-          </button>
-
-          <button
-            onClick={() => handleRunValidation(false)}
-            disabled={isValidating}
-            className="relative w-8 h-8 rounded-lg flex items-center justify-center text-resonance-text-muted hover:text-resonance-accent hover:bg-resonance-bg-hover transition-colors disabled:opacity-40 group"
-            title="Run Validation"
-          >
-            {isValidating ? (
-              <div className="w-4 h-4 border-2 border-resonance-text-muted border-t-resonance-accent rounded-full animate-spin" />
-            ) : (
-              <Zap size={14} />
-            )}
-            <span className="absolute right-full mr-2 px-2 py-1 bg-resonance-bg-elevated border border-resonance-border rounded-lg text-xs text-resonance-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
-              {isValidating ? 'Validating...' : 'Run Validation'}
-            </span>
-          </button>
-
-          <div className="w-6 h-px bg-resonance-border my-1" />
-
-          {/* Properties Section */}
-          <button
-            onClick={() => setActivePanel(activePanel === 'properties' ? null : 'properties')}
-            className={`relative w-8 h-8 rounded-lg flex items-center justify-center transition-colors group ${
-              activePanel === 'properties'
-                ? 'bg-resonance-accent/20 text-resonance-accent'
-                : 'text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-hover'
-            }`}
-            title="Properties"
-          >
-            <Settings size={16} />
-            <span className="absolute right-full mr-2 px-2 py-1 bg-resonance-bg-elevated border border-resonance-border rounded-lg text-xs text-resonance-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
-              Properties
-            </span>
-          </button>
-
-          {TABS.map(tab => {
-            const Icon = tab.icon
-            const isActive = activePanel === 'properties' && activePropertyTab === tab.id
-            return (
-              <button
-                key={tab.id}
-                onClick={() => {
-                  setActivePanel('properties')
-                  setActivePropertyTab(tab.id)
-                }}
-                className={`relative w-8 h-8 rounded-lg flex items-center justify-center transition-colors group ${
-                  isActive
-                    ? 'bg-resonance-accent/20 text-resonance-accent'
-                    : 'text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-hover'
-                }`}
-                title={tab.label}
-              >
-                <Icon size={16} />
-                <span className="absolute right-full mr-2 px-2 py-1 bg-resonance-bg-elevated border border-resonance-border rounded-lg text-xs text-resonance-text-primary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
-                  {tab.label}
-                </span>
-              </button>
-            )
-          })}
+            </InspectorShell>
+          )}
         </div>
       </div>
 
@@ -1628,6 +1580,9 @@ function CanvasEditorInner() {
             { keys: ['⌘', 'Z'], action: 'Undo' },
             { keys: ['⌘', '⇧', 'Z'], action: 'Redo' },
             { keys: ['⌘', 'A'], action: 'Select all' },
+            { keys: ['⌘', 'C'], action: 'Copy selection' },
+            { keys: ['⌘', 'V'], action: 'Paste' },
+            { keys: ['⌘', 'D'], action: 'Duplicate selection' },
             { keys: ['⌘', '⇧', 'V'], action: 'Validate architecture' },
             { keys: ['Del'], action: 'Delete selected' },
             { keys: ['N'], action: 'Add component' },

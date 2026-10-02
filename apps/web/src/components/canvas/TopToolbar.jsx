@@ -26,7 +26,7 @@ export const TopToolbar = ({
   const history = useCanvasStore((s) => s.history)
   const historyIndex = useCanvasStore((s) => s.historyIndex)
 
-  const canUndo = historyIndex > 0
+  const canUndo = historyIndex >= 0
   const canRedo = historyIndex < history.length - 1
 
   return (

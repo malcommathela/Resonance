@@ -357,102 +357,95 @@ async function syncCanvasData(
     })
 
     /*
-     * Batch upsert blocks.
-     */
-    const blockOps = safeNodes.map((node) =>
-      tx.block.upsert({
-        where: { id: node.id },
-
-        update: {
-          label: node.data?.label,
-          type: node.data?.type,
-          x: node.position?.x || 0,
-          y: node.position?.y || 0,
-          color: node.data?.color,
-          config: node.data?.config
-            ? JSON.stringify(node.data.config)
-            : '{}',
-          metrics: node.data?.metrics
-            ? JSON.stringify(node.data.metrics)
-            : null,
-          updatedAt: new Date(),
-        },
-
-        create: {
-          id: node.id,
-          designId,
-          label: node.data?.label || 'Block',
-          type: node.data?.type || 'service',
-          x: node.position?.x || 0,
-          y: node.position?.y || 0,
-          color: node.data?.color || '#3b82f6',
-          config: node.data?.config
-            ? JSON.stringify(node.data.config)
-            : '{}',
-          metrics: node.data?.metrics
-            ? JSON.stringify(node.data.metrics)
-            : null,
-        },
-      })
-    )
-
-    /*
-     * Batch upsert edges.
-     */
-    const edgeOps = safeEdges.map((edge) =>
-      tx.edge.upsert({
-        where: { id: edge.id },
-
-        update: {
-          sourceId: edge.source,
-          targetId: edge.target,
-          connectionType:
-            edge.data?.connectionType || 'http',
-          animated:
-            edge.animated ?? true,
-          label:
-            edge.data?.label || null,
-          config:
-            edge.data
-              ? JSON.stringify(edge.data)
-              : '{}',
-        },
-
-        create: {
-          id: edge.id,
-          designId,
-          sourceId: edge.source,
-          targetId: edge.target,
-          connectionType:
-            edge.data?.connectionType || 'http',
-          animated:
-            edge.animated ?? true,
-          label:
-            edge.data?.label || null,
-          config:
-            edge.data
-              ? JSON.stringify(edge.data)
-              : '{}',
-        },
-      })
-    )
-
-    /*
-     * Prisma transactions can execute the operations together.
-     * Keep the existing chunking behavior if your current file already
-     * has very large designs.
+     * Batch upsert blocks/edges in chunks.
+     *
+     * Queries are built AND awaited inside the loop: pre-building the
+     * whole promise array fires every query at once and the interactive
+     * transaction dies under the concurrency ("Transaction not found"
+     * on the later design.update).
      */
     const CHUNK_SIZE = 50
 
-    for (let i = 0; i < blockOps.length; i += CHUNK_SIZE) {
+    for (let i = 0; i < safeNodes.length; i += CHUNK_SIZE) {
       await Promise.all(
-        blockOps.slice(i, i + CHUNK_SIZE)
+        safeNodes.slice(i, i + CHUNK_SIZE).map((node) =>
+          tx.block.upsert({
+            where: { id: node.id },
+
+            update: {
+              label: node.data?.label,
+              type: node.data?.type,
+              x: node.position?.x || 0,
+              y: node.position?.y || 0,
+              color: node.data?.color,
+              config: node.data?.config
+                ? JSON.stringify(node.data.config)
+                : '{}',
+              metrics: node.data?.metrics
+                ? JSON.stringify(node.data.metrics)
+                : null,
+              updatedAt: new Date(),
+            },
+
+            create: {
+              id: node.id,
+              designId,
+              label: node.data?.label || 'Block',
+              type: node.data?.type || 'service',
+              x: node.position?.x || 0,
+              y: node.position?.y || 0,
+              color: node.data?.color || '#3b82f6',
+              config: node.data?.config
+                ? JSON.stringify(node.data.config)
+                : '{}',
+              metrics: node.data?.metrics
+                ? JSON.stringify(node.data.metrics)
+                : null,
+            },
+          })
+        )
       )
     }
 
-    for (let i = 0; i < edgeOps.length; i += CHUNK_SIZE) {
+    for (let i = 0; i < safeEdges.length; i += CHUNK_SIZE) {
       await Promise.all(
-        edgeOps.slice(i, i + CHUNK_SIZE)
+        safeEdges.slice(i, i + CHUNK_SIZE).map((edge) =>
+          tx.edge.upsert({
+            where: { id: edge.id },
+
+            update: {
+              sourceId: edge.source,
+              targetId: edge.target,
+              connectionType:
+                edge.data?.connectionType || 'http',
+              animated:
+                edge.animated ?? true,
+              label:
+                edge.data?.label || null,
+              config:
+                edge.data
+                  ? JSON.stringify(edge.data)
+                  : '{}',
+            },
+
+            create: {
+              id: edge.id,
+              designId,
+              sourceId: edge.source,
+              targetId: edge.target,
+              connectionType:
+                edge.data?.connectionType || 'http',
+              animated:
+                edge.animated ?? true,
+              label:
+                edge.data?.label || null,
+              config:
+                edge.data
+                  ? JSON.stringify(edge.data)
+                  : '{}',
+            },
+          })
+        )
       )
     }
 
@@ -479,7 +472,7 @@ async function syncCanvasData(
     })
 
     return updatedDesign
-  })
+  }, { maxWait: 10000, timeout: 20000 })
 
   return result
 }

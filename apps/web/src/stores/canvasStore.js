@@ -543,14 +543,38 @@ export const useCanvasStore = create((set, get) => ({
   },
 
   undo: () => {
-    const { history, historyIndex } = get()
-    if (historyIndex <= 0) return
-    const newIndex = historyIndex - 1
-    const state = history[newIndex]
+    const { nodes, edges, history, historyIndex } = get()
+    if (historyIndex < 0) return
+    const clone = (o) => JSON.parse(JSON.stringify(o))
+    // ponytail: pre-state history + stash live for redo on first undo
+    if (historyIndex === history.length - 1) {
+      const live = { nodes: clone(nodes), edges: clone(edges) }
+      const state = history[historyIndex]
+      if (!state) return
+      set({
+        nodes: clone(state.nodes),
+        edges: clone(state.edges),
+        history: [...history, live],
+        historyIndex,
+        selectedNodeId: null,
+        selectedEdgeId: null,
+        selectedNodeIds: [],
+        selectedEdgeIds: [],
+        selectedNode: null,
+        selectedNodes: [],
+        selectedEdge: null,
+        selectedEdges: [],
+        validationHighlight: null,
+      })
+      return
+    }
+    if (historyIndex === 0) return
+    const prev = history[historyIndex - 1]
+    if (!prev) return
     set({
-      nodes: JSON.parse(JSON.stringify(state.nodes)),
-      edges: JSON.parse(JSON.stringify(state.edges)),
-      historyIndex: newIndex,
+      nodes: clone(prev.nodes),
+      edges: clone(prev.edges),
+      historyIndex: historyIndex - 1,
       selectedNodeId: null,
       selectedEdgeId: null,
       selectedNodeIds: [],
@@ -646,37 +670,43 @@ export const useCanvasStore = create((set, get) => ({
   },
 
   updateNode: (id, updates) => {
-    set({
-      nodes: get().nodes.map(n => {
-        if (n.id !== id) return n
-        const newPosition = updates.position ? {
-          x: snapToGrid(updates.position.x),
-          y: snapToGrid(updates.position.y),
-        } : undefined
+    // ponytail: no per-keystroke history here (would flood undo); commit-coalescing if it matters
+    const { nodes, selectedNodeId } = get()
+    const next = nodes.map(n => {
+      if (n.id !== id) return n
+      const newPosition = updates.position ? {
+        x: snapToGrid(updates.position.x),
+        y: snapToGrid(updates.position.y),
+      } : undefined
 
-        let mergedConfig = n.data.config
-        if (updates.config) {
-          mergedConfig = { ...n.data.config }
-          const cleanUpdates = stripDecorativeProps(updates.config)
-          for (const key of Object.keys(cleanUpdates)) {
-            if (key === 'behavioralModel' && typeof cleanUpdates[key] === 'object') {
-              mergedConfig.behavioralModel = deepMerge(mergedConfig.behavioralModel || {}, cleanUpdates[key])
-            } else {
-              mergedConfig[key] = cleanUpdates[key]
-            }
+      let mergedConfig = n.data.config
+      if (updates.config) {
+        mergedConfig = { ...n.data.config }
+        const cleanUpdates = stripDecorativeProps(updates.config)
+        for (const key of Object.keys(cleanUpdates)) {
+          if (key === 'behavioralModel' && typeof cleanUpdates[key] === 'object') {
+            mergedConfig.behavioralModel = deepMerge(mergedConfig.behavioralModel || {}, cleanUpdates[key])
+          } else {
+            mergedConfig[key] = cleanUpdates[key]
           }
         }
+      }
 
-        return {
-          ...n,
-          data: {
-            ...n.data,
-            ...updates,
-            config: mergedConfig,
-          },
-          ...(newPosition && { position: newPosition }),
-        }
-      })
+      return {
+        ...n,
+        data: {
+          ...n.data,
+          ...updates,
+          config: mergedConfig,
+        },
+        ...(newPosition && { position: newPosition }),
+      }
+    })
+    set({
+      nodes: next,
+      isDirty: true,
+      selectedNode: selectedNodeId === id ? next.find((n) => n.id === id) || null : get().selectedNode,
+      selectedNodes: get().selectedNodes.map((n) => (n.id === id ? next.find((m) => m.id === id) || n : n)),
     })
   },
 
@@ -690,38 +720,16 @@ export const useCanvasStore = create((set, get) => ({
     })
   },
 
-  removeNode: (id) => {
-    get().saveHistory()
-    const state = get()
-    const wasSelected = state.selectedNodeId === id
-    const wasInMulti = state.selectedNodeIds.includes(id)
-    set({
-      nodes: dropEmptyGroups(state.nodes.filter(n => n.id !== id)),
-      edges: state.edges.filter(e => {
-        const src = e.source || e.sourceId
-        const tgt = e.target || e.targetId
-        return src !== id && tgt !== id
-      }),
-      isDirty: true,
-      selectedNodeId: wasSelected ? null : state.selectedNodeId,
-      selectedNodeIds: wasInMulti ? state.selectedNodeIds.filter(sid => sid !== id) : state.selectedNodeIds,
-      selectedNode: wasSelected ? null : state.selectedNode,
-      selectedNodes: state.selectedNodes.filter(n => n.id !== id),
-      selectedEdgeId: null,
-      selectedEdgeIds: [],
-      selectedEdge: null,
-      selectedEdges: [],
-      validationHighlight: state.validationHighlight?.elementId === id ? null : state.validationHighlight,
-    })
-  },
+  removeNode: (id) => get().deleteNodes([id]),
 
   addEdge: (edge, type = 'http') => {
-    get().saveHistory()
     const src = edge.source || edge.sourceId
     const tgt = edge.target || edge.targetId
+    if (!src || !tgt || src === tgt) return null
     const exists = get().edges.some(
       e => (e.source || e.sourceId) === src && (e.target || e.targetId) === tgt
     )
+    get().saveHistory()
     if (!exists) {
       const edgeConfig = getDefaultEdgeConfig(type)
       const newEdge = {
@@ -743,53 +751,27 @@ export const useCanvasStore = create((set, get) => ({
     return null
   },
 
-  removeEdge: (id) => {
-    get().saveHistory()
-    const state = get()
-    const wasSelected = state.selectedEdgeId === id
-    const wasInMulti = state.selectedEdgeIds.includes(id)
-    set({
-      edges: state.edges.filter(e => e.id !== id),
-      isDirty: true,
-      selectedEdgeId: wasSelected ? null : state.selectedEdgeId,
-      selectedEdgeIds: wasInMulti ? state.selectedEdgeIds.filter(seid => seid !== id) : state.selectedEdgeIds,
-      selectedEdge: wasSelected ? null : state.selectedEdge,
-      selectedEdges: state.selectedEdges.filter(e => e.id !== id),
-      validationHighlight: state.validationHighlight?.elementId === id ? null : state.validationHighlight,
-    })
-  },
+  removeEdge: (id) => get().deleteEdges([id]),
 
-  updateEdge: (id, updates) => {
-    set({
-      edges: get().edges.map(e => {
-        if (e.id !== id) return e
-        let mergedData = { ...e.data }
-        if (updates.data) {
-          mergedData = { ...mergedData, ...updates.data }
-          if (updates.data.connectionType && updates.data.connectionType !== e.data?.connectionType) {
-            const newConfig = getDefaultEdgeConfig(updates.data.connectionType)
-            mergedData = { ...newConfig, ...mergedData }
-          }
-          if (updates.data.behavioralModel && typeof updates.data.behavioralModel === 'object') {
-            mergedData.behavioralModel = deepMerge(mergedData.behavioralModel || {}, updates.data.behavioralModel)
-          }
-        }
-        return { ...e, data: mergedData }
-      })
-    })
-  },
+  updateEdge: (id, updates) => get().updateEdgeData(id, updates?.data || updates),
 
   updateEdgeData: (id, dataUpdates) => {
+    const { edges, selectedEdgeId } = get()
+    const next = edges.map(e => {
+      if (e.id !== id) return e
+      let mergedData = { ...e.data, ...dataUpdates }
+      if (dataUpdates.connectionType && dataUpdates.connectionType !== e.data?.connectionType) {
+        mergedData = { ...getDefaultEdgeConfig(dataUpdates.connectionType), ...mergedData }
+      }
+      if (dataUpdates.behavioralModel && typeof dataUpdates.behavioralModel === 'object') {
+        mergedData.behavioralModel = deepMerge(mergedData.behavioralModel || {}, dataUpdates.behavioralModel)
+      }
+      return { ...e, data: mergedData }
+    })
     set({
-      edges: get().edges.map(e => {
-        if (e.id !== id) return e
-        let mergedData = { ...e.data, ...dataUpdates }
-        if (dataUpdates.behavioralModel && typeof dataUpdates.behavioralModel === 'object') {
-          mergedData.behavioralModel = deepMerge(e.data?.behavioralModel || {}, dataUpdates.behavioralModel)
-        }
-        return { ...e, data: mergedData }
-      }),
-      isDirty: true
+      edges: next,
+      isDirty: true,
+      selectedEdge: selectedEdgeId === id ? next.find((e) => e.id === id) || null : get().selectedEdge,
     })
   },
 
@@ -860,8 +842,53 @@ export const useCanvasStore = create((set, get) => ({
     simulationErrorMessage: null,
   }),
 
+  deleteNodes: (ids) => {
+    const list = Array.isArray(ids) ? ids : [ids]
+    if (!list.length) return
+    const { nodes, edges } = get()
+    const idSet = new Set(list)
+    if (!nodes.some((n) => idSet.has(n.id))) return
+    get().saveHistory()
+    set({
+      nodes: dropEmptyGroups(nodes.filter((n) => !idSet.has(n.id))),
+      edges: edges.filter((e) => {
+        const src = e.source || e.sourceId
+        const tgt = e.target || e.targetId
+        return !idSet.has(src) && !idSet.has(tgt)
+      }),
+      isDirty: true,
+      selectedNodeId: null,
+      selectedEdgeId: null,
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+      selectedNode: null,
+      selectedNodes: [],
+      selectedEdge: null,
+      selectedEdges: [],
+      validationHighlight: null,
+    })
+  },
+
+  deleteEdges: (ids) => {
+    const list = Array.isArray(ids) ? ids : [ids]
+    if (!list.length) return
+    const { edges } = get()
+    const idSet = new Set(list)
+    if (!edges.some((e) => idSet.has(e.id))) return
+    get().saveHistory()
+    set({
+      edges: edges.filter((e) => !idSet.has(e.id)),
+      isDirty: true,
+      selectedEdgeId: null,
+      selectedEdgeIds: [],
+      selectedEdge: null,
+      selectedEdges: [],
+    })
+  },
+
   deleteSelected: () => {
     const { selectedNodeIds, selectedEdgeIds, nodes, edges } = get()
+    if (!selectedNodeIds.length && !selectedEdgeIds.length) return
     const nodeIds = new Set(selectedNodeIds)
     get().saveHistory()
     set({

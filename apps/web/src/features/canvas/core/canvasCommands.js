@@ -15,7 +15,7 @@ function collapseHistory(beforeLen, pushes) {
   const h = s().history
   if (h.length - beforeLen !== pushes) return
   const kept = h.slice(0, beforeLen).concat(h[beforeLen])
-  useCanvasStore.setState({ history: kept, historyIndex: kept.length })
+  useCanvasStore.setState({ history: kept, historyIndex: kept.length - 1 })
 }
 
 let memoryClipboard = null // in-memory copy; navigator.clipboard sync is best-effort
@@ -33,12 +33,14 @@ export const canvasCommands = {
     return { node, edge }
   },
   deleteSelection: () => s().deleteSelected(),
+  deleteNodes: (ids) => s().deleteNodes(ids),
+  deleteEdges: (ids) => s().deleteEdges(ids),
   duplicateSelection: () => s().selectedNodeIds.map((id) => s().duplicateNode(id)).filter(Boolean),
   duplicateNode: (id) => s().duplicateNode(id),
   renameNode: (id, label) => s().updateNode(id, { label }),
   connectNodes: (sourceId, targetId, connectionType = 'http') =>
     s().addEdge({ source: sourceId, target: targetId }, connectionType),
-  deleteEdge: (id) => s().removeEdge(id),
+  deleteEdge: (id) => s().deleteEdges([id]),
   select: (id) => { if (id) s().selectNode(id); else s().clearSelection() },
   selectAll: () => s().setSelectedNodes([...s().nodes]),
   copySelection: async () => {
