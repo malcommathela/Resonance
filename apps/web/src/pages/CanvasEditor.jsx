@@ -431,13 +431,11 @@ function CanvasEditorInner() {
   }, [selectEdge])
   const onNodeDoubleClick = useCallback((_, node) => openPropertiesFor('node', node.id), [openPropertiesFor])
   const onEdgeDoubleClick = useCallback((_, edge) => openPropertiesFor('edge', edge.id), [openPropertiesFor])
-  // Phase 9: finding click selects + pans (existing highlight effect) + opens the relevant inspector.
+  // Finding click highlights + pans only — validation stays open.
+  // Properties open explicitly via Jump to Property / node click.
   const handleFindingClick = useCallback((finding) => {
     setValidationHighlight(finding)
-    const elementId = finding.elementId || finding.blockId || finding.edgeId
-    const elementType = finding.elementType || (finding.blockId ? 'node' : finding.edgeId ? 'edge' : null)
-    if (elementId && elementType) openPropertiesFor(elementType, elementId)
-  }, [setValidationHighlight, openPropertiesFor])
+  }, [setValidationHighlight])
   const onNodeContextMenu = useCallback((e, node) => {
     e.preventDefault()
     selectNode(node.id)
@@ -1514,7 +1512,7 @@ function CanvasEditorInner() {
 
           {/* Shared floating slot: properties OR validation, canvas never resizes */}
           {activePanel === 'properties' && (selectedNodeId || selectedEdgeId) && (
-            <InspectorShell label="Properties" onClose={() => setActivePanel(null)}>
+            <InspectorShell label="Properties" size="lg" onClose={() => setActivePanel(null)}>
               <PropertyPanel
                 ref={propertyPanelRef}
                 validationResult={validationResult}
@@ -1526,6 +1524,7 @@ function CanvasEditorInner() {
           {activePanel === 'validation' && (
             <InspectorShell
               label="Validation"
+              size="lg"
               onClose={() => { setActivePanel(null); setShowValidationPanel(false) }}
             >
               <ValidationPanel

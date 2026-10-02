@@ -46,7 +46,7 @@ export const BlockLibrary = ({ collapsed = false, onToggleCollapse }) => {
   if (collapsed) {
     return (
       <div
-        className="shrink-0 bg-resonance-bg-sidebar border-r border-resonance-border flex flex-col items-center py-3 gap-2 overflow-hidden"
+        className="shrink-0 bg-resonance-sidebar-bg border-r border-resonance-border flex flex-col items-center py-3 gap-2 overflow-hidden"
         style={{ width: 48, transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)' }}
       >
         <button
@@ -107,7 +107,7 @@ export const BlockLibrary = ({ collapsed = false, onToggleCollapse }) => {
   // === EXPANDED STATE ===
   return (
     <div
-      className="shrink-0 bg-resonance-bg-sidebar border-r border-resonance-border flex flex-col overflow-hidden"
+      className="shrink-0 bg-resonance-sidebar-bg border-r border-resonance-border flex flex-col overflow-hidden"
       style={{ width: 280, transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)' }}
     >
       <div className="p-3 border-b border-resonance-border">

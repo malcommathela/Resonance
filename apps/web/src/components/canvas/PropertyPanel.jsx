@@ -177,7 +177,7 @@ export const PropertyPanel = forwardRef(({
   if (selectedEdge) {
     return (
       <div
-        className="flex w-full flex-col overflow-hidden"
+        className="flex min-h-0 w-full flex-col overflow-hidden"
       >
         <div className="flex items-center justify-between p-3 border-b border-resonance-border shrink-0">
           <h3 className="text-sm font-semibold text-resonance-text-primary flex items-center gap-1.5">
@@ -207,7 +207,7 @@ export const PropertyPanel = forwardRef(({
   if (!selectedNode) {
     return (
       <div
-        className="flex w-full flex-col overflow-hidden"
+        className="flex min-h-0 w-full flex-col overflow-hidden"
       >
         <div className="flex items-center justify-between p-4 border-b border-resonance-border">
           <h3 className="text-sm font-semibold text-resonance-text-primary">Properties</h3>
@@ -323,7 +323,7 @@ export const PropertyPanel = forwardRef(({
   // --------------------------------------------------------------------------
   const activeCategory = TABS.find(t => t.id === propertyView)
   return (
-    <div className="flex max-h-[600px] w-full flex-col overflow-hidden">
+    <div className="flex min-h-0 w-full flex-col overflow-hidden">
       {/* Title bar */}
       <div className="flex items-center justify-between p-3 border-b border-resonance-border shrink-0">
         <h3 className="text-sm font-semibold text-resonance-text-primary">
@@ -388,7 +388,7 @@ export const PropertyPanel = forwardRef(({
 
       {/* Overview: category navigation, not tabs */}
       {propertyView === 'overview' ? (
-        <div className="flex-1 overflow-y-auto p-2">
+        <div className="flex-1 overflow-y-auto min-h-0 p-2">
           {TABS.map(tab => {
             const Icon = tab.icon
             return (
@@ -422,7 +422,7 @@ export const PropertyPanel = forwardRef(({
       </div>
 
       {/* Category content */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto min-h-0">
         <div className="p-4 space-y-4">
           {/* ── APPEARANCE ── */}
           {propertyView === 'appearance' && (
@@ -1079,7 +1079,7 @@ const EdgePropertyPanel = ({ edge, onUpdate, onRemove, onClose, allTypes }) => {
 
   if (edgeView === 'overview') {
     return (
-      <div className="flex-1 overflow-y-auto p-2">
+      <div className="flex-1 overflow-y-auto min-h-0 p-2">
         <p className="px-3 pt-1 pb-1 text-xs text-resonance-text-muted">{meta.label} Connection</p>
         {EDGE_CATEGORIES.map(cat => (
           <button
@@ -1096,7 +1096,7 @@ const EdgePropertyPanel = ({ edge, onUpdate, onRemove, onClose, allTypes }) => {
   }
 
   return (
-    <div className="flex max-h-[600px] w-full flex-col overflow-hidden">
+    <div className="flex min-h-0 w-full flex-col overflow-hidden">
       <div className="flex items-center gap-1 border-b border-resonance-border px-2 py-1.5 shrink-0">
         <button
           onClick={() => setEdgeView('overview')}
@@ -1107,7 +1107,7 @@ const EdgePropertyPanel = ({ edge, onUpdate, onRemove, onClose, allTypes }) => {
         </button>
         <span className="text-sm font-medium text-resonance-text-primary">{activeEdgeCategory?.label}</span>
       </div>
-    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+    <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4">
       {/* Connection Type */}
       <div>
         <label className="text-xs text-resonance-text-muted mb-1.5 block">Connection Type</label>
@@ -1483,7 +1483,7 @@ const EdgeBehavioralSection = ({ title, icon: Icon, expanded, onToggle, children
         {expanded ? <span className="text-xs text-resonance-text-muted">−</span> : <span className="text-xs text-resonance-text-muted">+</span>}
       </button>
       {expanded && (
-        <div className="p-3 space-y-3 bg-resonance-bg-panel">
+        <div className="p-3 space-y-3 bg-resonance-panel-bg">
           {children}
         </div>
       )}

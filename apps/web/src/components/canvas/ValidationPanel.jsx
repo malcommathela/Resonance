@@ -77,7 +77,7 @@ export const ValidationPanel = ({
   // === EMPTY STATE (no validation run yet) ===
   if (!validation) {
     return (
-      <div className="flex max-h-[500px] w-full flex-col">
+      <div className="flex min-h-0 w-full flex-col">
         <div className="flex items-center justify-between p-4 border-b border-resonance-border">
           <div className="flex items-center gap-2">
             <ShieldCheck size={16} className="text-resonance-accent" />
@@ -166,7 +166,7 @@ export const ValidationPanel = ({
   const severities = [SEVERITY.CRITICAL, SEVERITY.WARNING, SEVERITY.RISK, SEVERITY.INFO]
 
   return (
-    <div className="flex max-h-[500px] w-full flex-col">
+    <div className="flex min-h-0 w-full flex-col">
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-resonance-border">
         <div className="flex items-center gap-2">
@@ -352,11 +352,11 @@ export const ValidationPanel = ({
     <div className="flex items-start gap-2">
       <Target size={12} className="text-resonance-text-muted mt-0.5 shrink-0 group-hover:text-resonance-accent transition-colors" />
       <div className="min-w-0 flex-1">
-        <p className="text-xs text-resonance-text-primary leading-relaxed">
+        <p className="text-xs text-resonance-text-primary leading-relaxed break-words">
           {finding.message}
         </p>
         {finding.recommendation && (
-          <p className="text-[11px] text-resonance-text-muted mt-1 leading-relaxed">
+          <p className="text-[11px] text-resonance-text-muted mt-1 leading-relaxed break-words">
             {finding.recommendation}
           </p>
         )}
