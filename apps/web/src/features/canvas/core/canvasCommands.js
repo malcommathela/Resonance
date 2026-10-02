@@ -122,6 +122,8 @@ export const canvasCommands = {
   renameGroup: (id, label) => s().renameGroup(id, label),
   toggleGroupCollapse: (id) => s().toggleGroupCollapse(id),
   ungroup: (id) => s().ungroup(id),
+  moveGroup: (id, position, start) => s().moveGroup(id, position, start),
+  commitGroupResize: (id, start) => s().commitGroupResize(id, start),
   addNote: (position) => {
     const n = s().addNote(position)
     if (n) s().selectNode(n.id)

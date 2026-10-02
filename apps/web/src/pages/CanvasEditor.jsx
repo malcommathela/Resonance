@@ -421,15 +421,19 @@ function CanvasEditorInner() {
     setShowEdgeTypeMenu(false)
   }, [pendingConnection, markDirty])
 
+  // Groups/notes select only — the service Property Panel never opens for them (§18).
   const onNodeClick = useCallback((_, node) => {
     selectNode(node.id)
-    setActivePanel('properties')
+    if (node.type === 'customBlock') setActivePanel('properties')
   }, [selectNode])
   const onEdgeClick = useCallback((_, edge) => {
     selectEdge(edge.id)
     setActivePanel('properties')
   }, [selectEdge])
-  const onNodeDoubleClick = useCallback((_, node) => openPropertiesFor('node', node.id), [openPropertiesFor])
+  const onNodeDoubleClick = useCallback((_, node) => {
+    if (node.type !== 'customBlock') return // group rename is handled in the header
+    openPropertiesFor('node', node.id)
+  }, [openPropertiesFor])
   const onEdgeDoubleClick = useCallback((_, edge) => openPropertiesFor('edge', edge.id), [openPropertiesFor])
   // Finding click highlights + pans only — validation stays open.
   // Properties open explicitly via Jump to Property / node click.
@@ -439,7 +443,7 @@ function CanvasEditorInner() {
   const onNodeContextMenu = useCallback((e, node) => {
     e.preventDefault()
     selectNode(node.id)
-    setContextMenu({ x: e.clientX, y: e.clientY, kind: 'node', id: node.id })
+    setContextMenu({ x: e.clientX, y: e.clientY, kind: node.type === 'group' ? 'group' : 'node', id: node.id })
   }, [selectNode])
   const onEdgeContextMenu = useCallback((e, edge) => {
     e.preventDefault()
@@ -496,11 +500,46 @@ function CanvasEditorInner() {
     })
   }, [screenToFlowPosition, addNode])
 
+  // Pre-drag snapshot for groups: RF streams the group position into the store
+  // during the drag, so the atomic pre-drag state must come from here.
+  const groupDragRef = useRef(null)
+  const onNodeDragStart = useCallback((_, node) => {
+    if (node?.type !== 'group') {
+      groupDragRef.current = null
+      return
+    }
+    const st = useCanvasStore.getState()
+    const g = st.nodes.find((n) => n.id === node.id)
+    const members = {}
+    ;(g?.data?.nodeIds || []).forEach((mid) => {
+      const m = st.nodes.find((n) => n.id === mid)
+      if (m) members[mid] = { ...m.position }
+    })
+    groupDragRef.current = { group: { ...node.position }, members }
+  }, [])
+
   const onNodeDragStop = useCallback((_, node) => {
+    if (node.type === 'group') {
+      // Rigid move: group + members by identical delta, ONE history entry.
+      canvasCommands.moveGroup(node.id, node.position, groupDragRef.current)
+      groupDragRef.current = null
+      markDirty()
+      return
+    }
     updateNodePosition(node.id, node.position)
     useCanvasStore.getState().refreshGroupBoxes()
     markDirty()
   }, [updateNodePosition, markDirty])
+  const groupResizeRef = useRef(null)
+  const onResizeStart = useCallback((_, node) => {
+    groupResizeRef.current = node?.type === 'group' ? { ...(node.style || {}) } : null
+  }, [])
+  const onResizeEnd = useCallback((_, node) => {
+    if (node?.type !== 'group') return
+    canvasCommands.commitGroupResize(node.id, groupResizeRef.current)
+    groupResizeRef.current = null
+    markDirty()
+  }, [markDirty])
   const onNodesDelete = useCallback((deletedNodes) => canvasCommands.deleteNodes(deletedNodes.map((n) => n.id)), [])
   const onEdgesDelete = useCallback((deletedEdges) => canvasCommands.deleteEdges(deletedEdges.map((e) => e.id)), [])
 
@@ -1274,7 +1313,10 @@ function CanvasEditorInner() {
         setPendingConnection(null)
       }
       if (e.key === 'Enter') {
-        if (selectedNodeId) openPropertiesFor('node', selectedNodeId)
+        if (selectedNodeId) {
+          const n = useCanvasStore.getState().nodes.find((x) => x.id === selectedNodeId)
+          if (n?.type === 'customBlock') openPropertiesFor('node', selectedNodeId)
+        }
         else if (selectedEdgeId) openPropertiesFor('edge', selectedEdgeId)
       }
       if (e.key === 'n' || e.key === 'N') {
@@ -1407,7 +1449,11 @@ function CanvasEditorInner() {
               onPaneClick={onPaneClick}
               onDragOver={onDragOver}
               onDrop={onDrop}
+              onNodeDragStart={onNodeDragStart}
               onNodeDragStop={onNodeDragStop}
+              onResizeStart={onResizeStart}
+              onResizeEnd={onResizeEnd}
+              elevateNodesOnSelect={false}
               onNodesDelete={onNodesDelete}
               onEdgesDelete={onEdgesDelete}
               onSelectionChange={onSelectionChange}

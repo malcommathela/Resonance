@@ -27,9 +27,25 @@ export const CanvasGroup = memo(function CanvasGroup({ id, data, selected }) {
 
   const commit = () => {
     const label = draft.trim()
-    if (label && label !== (data?.label || '')) canvasCommands.renameGroup(id, label)
+    if (label) canvasCommands.renameGroup(id, label)
+    else canvasCommands.renameGroup(id, data?.label || 'Group')
     setEditing(false)
   }
+
+  const cancel = () => {
+    // Clears a pending justCreated without a history entry (same-label path).
+    canvasCommands.renameGroup(id, data?.label || 'Group')
+    setDraft(data?.label || '')
+    setEditing(false)
+  }
+
+  // Focus the name immediately after creation (n8n-style); Esc cancels.
+  useEffect(() => {
+    if (data?.justCreated && !editing) {
+      setDraft(data?.label || '')
+      setEditing(true)
+    }
+  }, [data?.justCreated]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -41,15 +57,17 @@ export const CanvasGroup = memo(function CanvasGroup({ id, data, selected }) {
         handleClassName="!w-2 !h-2 !bg-resonance-bg-elevated !border !border-resonance-accent !rounded-sm"
       />
       <div
-        className={`h-full w-full rounded-xl border bg-resonance-bg-elevated/40 ${selected ? 'border-resonance-accent' : 'border-resonance-border'}`}
+        className={`pointer-events-none h-full w-full rounded-xl border bg-resonance-bg-elevated/40 ${selected ? 'border-resonance-accent' : 'border-resonance-border'}`}
         style={{ borderTop: `3px solid ${color}` }}
       >
-        <div className="nodrag flex items-center gap-1.5 px-2.5 py-2">
+        {/* Header is the drag handle + interactive strip; the background lets
+            node/edge/pane interactions pass through (§6). */}
+        <div className="pointer-events-auto flex cursor-grab items-center gap-1.5 px-2.5 py-2 active:cursor-grabbing">
           <button
             onClick={(e) => { e.stopPropagation(); canvasCommands.toggleGroupCollapse(id) }}
             title={collapsed ? 'Expand group' : 'Collapse group'}
             aria-label={collapsed ? `Expand ${data?.label || 'group'}` : `Collapse ${data?.label || 'group'}`}
-            className="rounded p-0.5 text-resonance-text-muted transition-colors hover:bg-resonance-bg-hover hover:text-resonance-text-primary"
+            className="nodrag rounded p-0.5 text-resonance-text-muted transition-colors hover:bg-resonance-bg-hover hover:text-resonance-text-primary"
           >
             {collapsed ? <ChevronRight size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
           </button>
@@ -62,7 +80,7 @@ export const CanvasGroup = memo(function CanvasGroup({ id, data, selected }) {
               onKeyDown={(e) => {
                 e.stopPropagation()
                 if (e.key === 'Enter') commit()
-                else if (e.key === 'Escape') { setDraft(data?.label || ''); setEditing(false) }
+                else if (e.key === 'Escape') cancel()
               }}
               onClick={(e) => e.stopPropagation()}
               aria-label="Group name"
@@ -73,7 +91,7 @@ export const CanvasGroup = memo(function CanvasGroup({ id, data, selected }) {
             <button
               onDoubleClick={(e) => { e.stopPropagation(); setDraft(data?.label || ''); setEditing(true) }}
               title="Double-click to rename"
-              className="truncate text-xs font-semibold text-resonance-text-primary"
+              className="nodrag truncate text-xs font-semibold text-resonance-text-primary"
             >
               {data?.label || 'Group'}
             </button>
@@ -83,7 +101,7 @@ export const CanvasGroup = memo(function CanvasGroup({ id, data, selected }) {
             onClick={(e) => { e.stopPropagation(); canvasCommands.ungroup(id) }}
             title="Ungroup"
             aria-label={`Ungroup ${data?.label || 'group'}`}
-            className="ml-auto rounded p-0.5 text-resonance-text-muted transition-colors hover:bg-resonance-bg-hover hover:text-resonance-error"
+            className="nodrag ml-auto rounded p-0.5 text-resonance-text-muted transition-colors hover:bg-resonance-bg-hover hover:text-resonance-error"
           >
             <X size={12} aria-hidden="true" />
           </button>

@@ -14,6 +14,7 @@ import {
   COLLAPSED_W,
   COLLAPSED_H,
   groupBox,
+  expandGroupBox,
   pruneGroupMembers,
   readCanvasMeta,
 } from '@/features/canvas/groups/meta'
@@ -207,8 +208,11 @@ export const useCanvasStore = create((set, get) => ({
       id: `group-${Date.now()}`,
       type: 'group',
       position: { x: box.x, y: box.y },
-      draggable: false,
+      draggable: true,
       selectable: true,
+      // ponytail: RF elevations on select would yank the backdrop above nodes;
+      // CanvasEditor also sets elevateNodesOnSelect={false}
+      zIndex: -1,
       style: { width: box.width, height: box.height },
       data: {
         label: `Group ${existing + 1}`,
@@ -216,6 +220,7 @@ export const useCanvasStore = create((set, get) => ({
         nodeIds: ids,
         collapsed: false,
         memberCount: ids.length,
+        justCreated: true,
       },
     }
     set({ nodes: [...get().nodes, node], isDirty: true })
@@ -223,11 +228,82 @@ export const useCanvasStore = create((set, get) => ({
   },
 
   renameGroup: (id, label) => {
-    get().saveHistory()
+    const next = (label || '').trim()
+    if (!next) return
+    const g = get().nodes.find((n) => n.id === id && n.type === 'group')
+    if (!g) return
+    const same = next === (g.data?.label || '')
+    if (same && !g.data?.justCreated) return
+    // Clearing justCreated after a cancelled first rename is not a content
+    // change — no history entry for it.
+    if (!same) get().saveHistory()
     set({
-      nodes: get().nodes.map((n) => n.id === id && n.type === 'group' ? { ...n, data: { ...n.data, label } } : n),
+      nodes: get().nodes.map((n) => n.id === id && n.type === 'group' ? { ...n, data: { ...n.data, label: next, justCreated: false } } : n),
       isDirty: true,
     })
+  },
+
+  // Dedicated group movement (§7-8): rigid delta applied to group + members
+  // in ONE history entry. React Flow already moved the group in the store
+  // via onNodesChange, so the pre-drag state is reconstructed from `start`
+  // and pushed explicitly — saving history here would capture a half-moved
+  // canvas (group moved, members not). Edges follow: they reference node
+  // ids, and RF re-renders them from member positions.
+  moveGroup: (id, position, start) => {
+    const { nodes, edges, history, historyIndex, maxHistorySize } = get()
+    const g = nodes.find((n) => n.id === id && n.type === 'group')
+    if (!g || !start) return
+    const nx = snapToGrid(position.x)
+    const ny = snapToGrid(position.y)
+    const dx = nx - start.group.x
+    const dy = ny - start.group.y
+    if (dx === 0 && dy === 0) return
+    const memberIds = new Set(g.data?.nodeIds || [])
+    const preNodes = nodes.map((n) => {
+      if (n.id === id) return { ...g, position: { ...start.group } }
+      if (memberIds.has(n.id) && start.members[n.id]) return { ...n, position: { ...start.members[n.id] } }
+      return n
+    })
+    const clone = (o) => JSON.parse(JSON.stringify(o))
+    const next = nodes.map((n) => {
+      if (n.id === id) return { ...n, position: { x: nx, y: ny } }
+      if (memberIds.has(n.id) && n.type === 'customBlock') {
+        const s = start.members[n.id] || n.position
+        return { ...n, position: { x: snapToGrid(s.x + dx), y: snapToGrid(s.y + dy) } }
+      }
+      return n
+    })
+    const newHistory = history.slice(0, historyIndex + 1)
+    newHistory.push({ nodes: clone(preNodes), edges: clone(edges) })
+    if (newHistory.length > maxHistorySize) newHistory.shift()
+    set({ nodes: next, history: newHistory, historyIndex: newHistory.length - 1, isDirty: true })
+  },
+
+  // Single-undo resize commit: keep the user's size, only grow to fit members.
+  // RF streams the new size into the store during the gesture, so the true
+  // pre-resize size comes from `start` (captured in onResizeStart) — the same
+  // half-mutated-history problem moveGroup solves. Unchanged size = no entry.
+  commitGroupResize: (id, start) => {
+    const { nodes, edges, history, historyIndex, maxHistorySize } = get()
+    const g = nodes.find((n) => n.id === id && n.type === 'group')
+    if (!g || g.data?.collapsed) return
+    const startStyle = start && typeof start.width === 'number' ? start : null
+    if (startStyle && startStyle.width === g.style?.width && startStyle.height === g.style?.height) return
+    const byId = new Map(nodes.map((n) => [n.id, n]))
+    const members = (g.data?.nodeIds || []).map((mid) => byId.get(mid)).filter((m) => m && m.type === 'customBlock')
+    const box = expandGroupBox(g, members)
+    const clone = (o) => JSON.parse(JSON.stringify(o))
+    const preNodes = startStyle
+      ? nodes.map((n) => (n.id === id ? { ...n, style: { ...(n.style || {}), ...startStyle } } : n))
+      : clone(nodes)
+    const next = !box ? nodes : nodes.map((n) => {
+      if (n.id !== id) return n
+      return { ...n, position: { x: box.x, y: box.y }, style: { ...(n.style || {}), width: box.width, height: box.height } }
+    })
+    const newHistory = history.slice(0, historyIndex + 1)
+    newHistory.push({ nodes: clone(preNodes), edges: clone(edges) })
+    if (newHistory.length > maxHistorySize) newHistory.shift()
+    set({ nodes: next, history: newHistory, historyIndex: newHistory.length - 1, isDirty: true })
   },
 
   toggleGroupCollapse: (id) => {
@@ -246,9 +322,11 @@ export const useCanvasStore = create((set, get) => ({
     set({
       nodes: nodes.map((n) => {
         if (n.id === id) {
-          const box = collapsed ? null : groupBox(nodes.filter((m) => memberIds.has(m.id)))
+          // Expand keeps the user's manual size; only grow when members no longer fit.
+          const box = collapsed ? null : expandGroupBox(n, nodes.filter((m) => memberIds.has(m.id) && m.type === 'customBlock'))
           return {
             ...n,
+            ...(box ? { position: { x: box.x, y: box.y } } : {}),
             style: collapsed
               ? { width: COLLAPSED_W, height: COLLAPSED_H }
               : { ...(n.style || {}), ...(box ? { width: box.width, height: box.height } : {}) },
@@ -310,17 +388,15 @@ export const useCanvasStore = create((set, get) => ({
     const next = nodes.map((n) => {
       if (n.type !== 'group' || n.data?.collapsed) return n
       const members = (n.data?.nodeIds || []).map((mid) => byId.get(mid)).filter((m) => m && m.type === 'customBlock')
-      const box = groupBox(members)
-      if (!box) return n
-      if (box.x === n.position.x && box.y === n.position.y
-        && box.width === n.style?.width && box.height === n.style?.height
-        && (n.data?.memberCount || 0) === members.length) return n
+      const count = members.length
+      const box = expandGroupBox(n, members)
+      if (!box && (n.data?.memberCount || 0) === count) return n
       changed = true
       return {
         ...n,
-        position: { x: box.x, y: box.y },
-        style: { ...(n.style || {}), width: box.width, height: box.height },
-        data: { ...n.data, memberCount: members.length },
+        position: box ? { x: box.x, y: box.y } : n.position,
+        style: box ? { ...(n.style || {}), width: box.width, height: box.height } : n.style,
+        data: { ...n.data, memberCount: count },
       }
     })
     if (changed) set({ nodes: next })
@@ -355,7 +431,11 @@ export const useCanvasStore = create((set, get) => ({
     if (!meta) return
     const { nodes, edges } = get()
     const have = new Set(nodes.map((n) => n.id))
-    const fresh = [...meta.groups, ...meta.notes].filter((n) => n && n.id && !have.has(n.id))
+    // Normalize persisted groups to the movable/backdrop contract (§5):
+    // older metas stored draggable:false and no zIndex.
+    const fresh = [...meta.groups, ...meta.notes]
+      .filter((n) => n && n.id && !have.has(n.id))
+      .map((n) => (n.type === 'group' ? { ...n, draggable: true, zIndex: -1 } : n))
     if (!fresh.length) return
     const collapsedIds = new Set()
     fresh.forEach((n) => {

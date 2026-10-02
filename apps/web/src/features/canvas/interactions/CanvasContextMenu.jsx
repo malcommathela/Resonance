@@ -31,6 +31,12 @@ export function CanvasContextMenu({ menu, onClose, onConfigure }) {
       { label: 'Focus', run: () => canvasCommands.focusSelection() },
       { label: 'Delete', danger: true, run: () => canvasCommands.deleteSelection() },
     )
+  } else if (menu.kind === 'group') {
+    items.push(
+      { label: 'Focus', run: () => canvasCommands.focusSelection() },
+      { label: 'Ungroup', run: () => canvasCommands.ungroup(menu.id) },
+      { label: 'Delete group', danger: true, run: () => canvasCommands.deleteSelection() },
+    )
   } else if (menu.kind === 'edge') {
     items.push(
       { label: 'Configure', run: () => onConfigure('edge', menu.id) },

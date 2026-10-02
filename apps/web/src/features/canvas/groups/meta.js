@@ -32,6 +32,27 @@ export function groupBox(members) {
   }
 }
 
+// Expand-only box: grow the current group rect to contain members, never
+// shrink it — manual whitespace survives member movement. Returns the rect
+// to apply ({ x, y, width, height }) or null when the current rect already
+// fits. Collapsed groups are fixed-size and handled by the caller.
+export function expandGroupBox(current, members) {
+  const req = groupBox(members)
+  if (!req) return null
+  const cur = {
+    x: current?.position?.x ?? req.x,
+    y: current?.position?.y ?? req.y,
+    width: current?.style?.width ?? req.width,
+    height: current?.style?.height ?? req.height,
+  }
+  const x = Math.min(cur.x, req.x)
+  const y = Math.min(cur.y, req.y)
+  const width = Math.max(cur.width, req.x + req.width - x)
+  const height = Math.max(cur.height, req.y + req.height - y)
+  if (x === cur.x && y === cur.y && width === cur.width && height === cur.height) return null
+  return { x, y, width, height }
+}
+
 // Drop member ids that no longer exist; return kept groups + dropped group ids.
 export function pruneGroupMembers(groupNodes, validIds) {
   const valid = new Set(validIds)
