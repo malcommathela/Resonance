@@ -1,6 +1,8 @@
 import { useEffect, useRef, useCallback } from 'react'
-import { useDesignStore } from '@/stores/designStore'
+import { useDesignStore, serverVersionOrigin } from '@/stores/designStore'
 import { useCanvasStore } from '@/stores/canvasStore'
+import { shouldRetryAfterConflict } from '@/features/canvas/persistence/canvasPersistence'
+import { api } from '@/services/api'
 
 const AUTOSAVE_DELAY = 10000
 const MAX_RETRIES = 3
@@ -17,32 +19,12 @@ export const useAutoSave = (
   const timeoutRef = useRef(null)
   const retryTimeoutRef = useRef(null)
 
-  const lastSavedRef = useRef(null)
   const latestStateRef = useRef({ nodes: [], edges: [] })
   const versionRef = useRef(version)
 
   const retryCountRef = useRef(0)
   const isSavingRef = useRef(false)
   const dirtyRef = useRef(false)
-
-  const serialize = useCallback((n, e) => {
-    return JSON.stringify({
-      nodes: (n || []).map(node => ({
-        id: node.id,
-        position: node.position,
-        data: node.data,
-        type: node.type,
-      })),
-      edges: (e || []).map(edge => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        data: edge.data,
-        type: edge.type,
-        animated: edge.animated,
-      })),
-    })
-  }, [])
 
   /*
    * Keep the latest state in a ref.
@@ -56,7 +38,12 @@ export const useAutoSave = (
       edges: edges || [],
     }
 
-    versionRef.current = version
+    // Monotonic: the 409 path may have refreshed to a NEWER base version than
+    // the prop (currentDesign only advances on successful save). Never slide
+    // back — markHydrated is the explicit reset point on design load.
+    if (version != null) {
+      versionRef.current = Math.max(versionRef.current ?? version, version)
+    }
   }, [nodes, edges, version])
 
   /*
@@ -66,18 +53,15 @@ export const useAutoSave = (
    * server successfully loads a design.
    */
   const markHydrated = useCallback((hydratedNodes, hydratedEdges, hydratedVersion) => {
-    const snapshot = serialize(hydratedNodes || [], hydratedEdges || [])
-
     latestStateRef.current = {
       nodes: hydratedNodes || [],
       edges: hydratedEdges || [],
     }
 
-    lastSavedRef.current = snapshot
     versionRef.current = hydratedVersion ?? null
     dirtyRef.current = false
     retryCountRef.current = 0
-  }, [serialize])
+  }, [])
 
   /*
    * Explicitly mark the canvas dirty after a REAL user change.
@@ -102,6 +86,10 @@ export const useAutoSave = (
 
     const stateAtStart = latestStateRef.current
     const versionAtStart = versionRef.current
+    // Revision-tagged save: only this revision completing while the document
+    // is unchanged may clear dirty. Edits during flight keep dirty=true so
+    // the newest state saves next (no stale save marks newer state clean).
+    const revisionAtStart = useCanvasStore.getState().revision
 
     isSavingRef.current = true
 
@@ -110,24 +98,10 @@ export const useAutoSave = (
         nodes: stateAtStart.nodes,
         edges: stateAtStart.edges,
         version: versionAtStart,
+        revision: revisionAtStart,
       })
 
-      /*
-       * Only mark this snapshot clean if the state has not changed while
-       * the request was in flight.
-       */
-      const savedSnapshot = serialize(
-        stateAtStart.nodes,
-        stateAtStart.edges
-      )
-
-      const latestSnapshot = serialize(
-        latestStateRef.current.nodes,
-        latestStateRef.current.edges
-      )
-
-      if (savedSnapshot === latestSnapshot) {
-        lastSavedRef.current = savedSnapshot
+      if (useCanvasStore.getState().revision === revisionAtStart) {
         dirtyRef.current = false
 
         /*
@@ -166,13 +140,37 @@ export const useAutoSave = (
 
       if (err?.status === 409) {
         /*
-         * Revision conflict must NOT be blindly retried.
-         * Another writer has changed the design.
+         * Base-version conflict. Only retry when the server version is our
+         * own lineage (same-tab race, e.g. a manual save landed first) — then
+         * retrying the LATEST state on the fresh base is safe. A foreign
+         * version means another writer changed the design: retrying would
+         * overwrite their work, so abort loud and stay dirty for an explicit
+         * user save. Backend checks untouched.
          */
-        retryCountRef.current = 0
+        let freshVersion = null
+        try {
+          const fresh = await api.getDesign(designId)
+          freshVersion = fresh?.version ?? null
+        } catch {
+          // Version refresh failed — a later edit retries with the old base
+          // (bounded) or manual save recovers.
+        }
+        if (freshVersion != null) {
+          versionRef.current = Math.max(versionRef.current ?? freshVersion, freshVersion)
+        }
+        if (shouldRetryAfterConflict({
+          origin: serverVersionOrigin(freshVersion),
+          retries: retryCountRef.current,
+          maxRetries: MAX_RETRIES,
+        })) {
+          retryCountRef.current += 1
+          if (timeoutRef.current) clearTimeout(timeoutRef.current)
+          timeoutRef.current = setTimeout(performSave, AUTOSAVE_DELAY)
+          return
+        }
         console.error(
-          'Auto-save revision conflict. Save aborted to protect newer data.',
-          err
+          'Auto-save version conflict with another writer. Manual save to resolve — autosave will not overwrite their changes.',
+          err,
         )
         return
       }
@@ -202,7 +200,6 @@ export const useAutoSave = (
     designId,
     enabled,
     autoSaveCanvas,
-    serialize,
   ])
 
   /*

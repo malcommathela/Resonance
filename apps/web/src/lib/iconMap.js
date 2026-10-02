@@ -49,6 +49,13 @@ import {
   Maximize,
   ZoomIn,
   ZoomOut,
+  Brain,
+  Cable,
+  Code,
+  GitGraph,
+  Lock,
+  Radio,
+  Files,
 } from 'lucide-react'
 
 export const blockIconMap = {
@@ -68,6 +75,17 @@ export const blockIconMap = {
   Settings,
   Palette,
   GitBranch,
+  Brain,
+  Cable,
+  Code,
+  GitGraph,
+  Lock,
+  Radio,
+  Files,
+  // Alias: shared constants use 'FileTransfer' (sftp), which this lucide
+  // version doesn't ship — Files is the closest glyph. Kept as an alias so
+  // persisted designs carrying the old name keep rendering.
+  FileTransfer: Files,
 }
 
 export const libraryIconMap = {
@@ -121,6 +139,14 @@ export const libraryIconMap = {
   Maximize,
   ZoomIn,
   ZoomOut,
+  Brain,
+  Cable,
+  Code,
+  GitGraph,
+  Lock,
+  Radio,
+  Files,
+  FileTransfer: Files,
 }
 
 export const getBlockIcon = (iconName) => {

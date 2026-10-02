@@ -1,7 +1,12 @@
 // Self-check for document.js (dependency-free, not bundled — never imported).
 // Run: node apps/web/src/features/canvas/core/document.check.js
 import assert from 'node:assert/strict'
-import { emptyDocument, normalizeDocument, documentFromGraph, isBlockNode, toPersistable } from './document.js'
+import {
+  emptyDocument, createCanvasDocument, normalizeDocument, documentFromGraph,
+  cloneCanvasDocument, validateCanvasDocument, toReactFlowDocument,
+  fromReactFlowDocument, toPersistableCanvas, toSimulationInput,
+  isBlockNode, toPersistable,
+} from './document.js'
 
 const old = { id: 'd1', nodes: [{ id: 'n1', position: { x: 20, y: 40 } }], edges: [{ id: 'e1', source: 'n1', target: 'n2' }] }
 const n = normalizeDocument(old)
@@ -38,5 +43,39 @@ assert.equal(clean.nodes[0].data.label, 'A') // document fields intact
 assert.equal(clean.edges[0].data.retryCount, 3) // ambiguous config key preserved
 assert.ok(!('circuitOpen' in clean.edges[0].data))
 assert.ok(!('latencyMs' in clean.edges[0].data))
+
+// Canonical doc: version/revision/viewport defaults, legacy input unchanged
+const legacy = normalizeDocument({ nodes: [{ id: 'n1' }], edges: [] })
+assert.equal(legacy.version, 1)
+assert.equal(legacy.revision, 0)
+assert.deepEqual(legacy.viewport, { x: 0, y: 0, zoom: 1 })
+
+const created = createCanvasDocument({ revision: 7 })
+assert.equal(created.version, 1)
+assert.equal(created.revision, 7)
+
+// Clone is deep and round-trips
+const cloned = cloneCanvasDocument({ nodes: [{ id: 'n1' }], edges: [], revision: 3 })
+assert.equal(cloned.revision, 3)
+cloned.nodes[0].id = 'changed'
+assert.equal(validateCanvasDocument({ nodes: [{ id: 'n1' }], edges: [] }).length, 0)
+
+// Invalid references detected (edge + group member)
+const bad = {
+  nodes: [{ id: 'n1', type: 'group', data: { nodeIds: ['ghost'] } }],
+  edges: [{ id: 'e1', source: 'n1', target: 'missing' }],
+}
+const issues = validateCanvasDocument(bad)
+assert.ok(issues.some((i) => i.type === 'edge-target-missing'))
+assert.ok(issues.some((i) => i.type === 'group-member-missing'))
+
+// RF converters isolate the renderer; simulation excludes groups
+const rf = toReactFlowDocument({ nodes: [{ id: 'n1' }], edges: [{ id: 'e1' }] })
+assert.deepEqual(Object.keys(rf).sort(), ['edges', 'nodes'])
+const back = fromReactFlowDocument(rf.nodes, rf.edges)
+assert.equal(back.version, 1)
+assert.deepEqual(toPersistableCanvas({ nodes: mixed, edges: mixedEdges }).nodes.map((n) => n.id), ['n1'])
+assert.deepEqual(toSimulationInput({ nodes: mixed, edges: mixedEdges }).nodes.map((n) => n.id), ['n1'])
+assert.deepEqual(documentFromGraph([{ id: 'n1' }], []).nodes.map((n) => n.id), ['n1'])
 
 console.log('document.check: OK')

@@ -29,6 +29,7 @@ import { blockIconMap } from '@/lib/iconMap'
 import { categories, CONNECTION_TYPE_META, DATABASE_ENGINES, getBlockBehavioralModel, getConnectionBehavioralModel } from '@shared/constants'
 import { DECORATIVE_PROPS } from '@/stores/canvasStore'
 import { canvasCommands } from '@/features/canvas/core/canvasCommands'
+import { setBehavioralValue, setConfigValue } from '@/features/canvas/inspector/propertyResolver'
 import { validateSingleProperty } from '@/lib/validation'
 
 // ============================================================================
@@ -230,25 +231,13 @@ export const PropertyPanel = forwardRef(({
   const behavioralModel = data.config?.behavioralModel || getBlockBehavioralModel(data.type) || {}
 
   const handleConfigChange = (key, value) => {
-    updateNode(selectedNode.id, {
-      config: { ...data.config, [key]: value }
-    })
+    const node = useCanvasStore.getState().nodes.find(n => n.id === selectedNode.id)
+    updateNode(selectedNode.id, setConfigValue(node || selectedNode, key, value))
   }
 
   const handleBehavioralChange = (section, key, value) => {
-    const currentModel = data.config?.behavioralModel || {}
-    updateNode(selectedNode.id, {
-      config: {
-        ...data.config,
-        behavioralModel: {
-          ...currentModel,
-          [section]: {
-            ...currentModel[section],
-            [key]: value,
-          },
-        },
-      },
-    })
+    const node = useCanvasStore.getState().nodes.find(n => n.id === selectedNode.id)
+    updateNode(selectedNode.id, setBehavioralValue(node || selectedNode, section, key, value))
   }
 
   const handleLabelChange = (value) => {

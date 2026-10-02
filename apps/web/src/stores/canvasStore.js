@@ -22,6 +22,13 @@ import {
   pruneGroupMembers,
   readCanvasMeta,
 } from '@/features/canvas/groups/meta'
+import { pruneFindings } from '@/features/canvas/validation/validationAdapter'
+
+// Drop findings whose elements are gone after a delete; canvas-level findings stay.
+function dropDeletedFindings(validationResult, nodes, edges) {
+  if (!validationResult?.findings) return validationResult
+  return { ...validationResult, findings: pruneFindings(validationResult.findings, nodes, edges) }
+}
 
 const GRID_SIZE = 20
 
@@ -107,11 +114,33 @@ function getDefaultEdgeConfig(connectionType) {
 }
 
 export const useCanvasStore = create((set, get) => ({
+  // ==========================================================================
+  // DOMAIN MAP (Phase 11). One store, explicit sections — split into separate
+  // stores only if a domain measurably needs isolation. Selectors in
+  // features/canvas/core/canvasSelectors.js are the subscription boundary.
+  //   Document ......... nodes, edges, revision, viewport, history
+  //   Selection ........ selected*, groupDropTarget (transient)
+  //   Validation ....... validationResult/Revision, isValidating, highlight
+  //   Simulation runtime simulation* (maps only — never node.data; sim ticks
+  //                      must not re-render architecture or dirty the document)
+  //   UI ............... panels, activeTab, zoom, nodePicker
+  //   Persistence ...... isDirty, persistedRevision
+  // ==========================================================================
+
+  // --- Document ---
   nodes: [],
   edges: [],
 
+  // Phase 1: monotonic document revision — bumped alongside every isDirty set
+  // (saveHistory covers history mutations; non-history mutators bump inline).
+  // Basis for validation/autosave freshness and future undo/collab.
+  revision: 0,
+  viewport: { x: 0, y: 0, zoom: 1 },
+  persistedRevision: 0,
+
   isDirty: false,
 
+  // --- Selection (+ transient validation emphasis; distinct from selection) ---
   selectedNodeId: null,
   selectedEdgeId: null,
   selectedNodeIds: [],
@@ -133,6 +162,7 @@ export const useCanvasStore = create((set, get) => ({
   activeTab: 'editor',
   zoom: 1,
   validationResult: null,
+  validationRevision: null, // document revision the result was computed for
   isValidating: false,
   showValidationPanel: false,
   simulationBlockMetrics: {},
@@ -339,7 +369,7 @@ export const useCanvasStore = create((set, get) => ({
     const newHistory = history.slice(0, historyIndex + 1)
     newHistory.push({ nodes: clone(preNodes), edges: clone(edges) })
     if (newHistory.length > maxHistorySize) newHistory.shift()
-    set({ nodes: next, history: newHistory, historyIndex: newHistory.length - 1, isDirty: true })
+    set({ nodes: next, history: newHistory, historyIndex: newHistory.length - 1, isDirty: true, revision: get().revision + 1 })
   },
 
   // Single-undo resize commit: keep the user's size, only grow to fit members.
@@ -366,7 +396,7 @@ export const useCanvasStore = create((set, get) => ({
     const newHistory = history.slice(0, historyIndex + 1)
     newHistory.push({ nodes: clone(preNodes), edges: clone(edges) })
     if (newHistory.length > maxHistorySize) newHistory.shift()
-    set({ nodes: next, history: newHistory, historyIndex: newHistory.length - 1, isDirty: true })
+    set({ nodes: next, history: newHistory, historyIndex: newHistory.length - 1, isDirty: true, revision: get().revision + 1 })
   },
 
   toggleGroupCollapse: (id) => {
@@ -480,6 +510,14 @@ export const useCanvasStore = create((set, get) => ({
     }
     const elementId = finding.elementId || finding.blockId || finding.edgeId
     const elementType = finding.elementType || (finding.blockId ? 'node' : finding.edgeId ? 'edge' : 'node')
+    // Root-cause stale guard: emphasis for a deleted/never-existing element is
+    // ignored here so no caller can pan to a ghost. Canvas-level findings
+    // (no elementId) always apply.
+    if (elementId) {
+      const { nodes, edges } = get()
+      const list = elementType === 'edge' ? edges : nodes
+      if (!list.some((n) => n.id === elementId)) return
+    }
     set({
       validationHighlight: {
         elementId,
@@ -529,7 +567,12 @@ export const useCanvasStore = create((set, get) => ({
 
   markCanvasDirty: () => set({ isDirty: true }),
 
-  markCanvasClean: () => set({ isDirty: false }),
+  // Revision-safe clean: a stale save (older revision finishing after newer
+  // edits) must not clear dirty. Only the save matching the current revision
+  // cleans; no-arg callers (load/reset) clean unconditionally.
+  markCanvasClean: (savedRevision) => set((s) => (savedRevision != null && savedRevision !== s.revision)
+    ? { persistedRevision: Math.max(s.persistedRevision, savedRevision) }
+    : { isDirty: false, persistedRevision: s.revision }),
 
   resetCanvasPersistence: () => set({ isDirty: false }),
 
@@ -629,7 +672,7 @@ export const useCanvasStore = create((set, get) => ({
   // ==========================================================================
 
   saveHistory: () => {
-    const { nodes, edges, history, historyIndex, maxHistorySize } = get()
+    const { nodes, edges, history, historyIndex, maxHistorySize, revision } = get()
     const state = {
       nodes: JSON.parse(JSON.stringify(nodes)),
       edges: JSON.parse(JSON.stringify(edges))
@@ -637,7 +680,7 @@ export const useCanvasStore = create((set, get) => ({
     const newHistory = history.slice(0, historyIndex + 1)
     newHistory.push(state)
     if (newHistory.length > maxHistorySize) newHistory.shift()
-    set({ history: newHistory, historyIndex: newHistory.length - 1 })
+    set({ history: newHistory, historyIndex: newHistory.length - 1, revision: revision + 1, isDirty: true })
   },
 
   undo: () => {
@@ -769,7 +812,8 @@ export const useCanvasStore = create((set, get) => ({
   },
 
   updateNode: (id, updates) => {
-    // ponytail: no per-keystroke history here (would flood undo); commit-coalescing if it matters
+    // ponytail: no per-keystroke history here (would flood undo); revision still
+    // bumps so validation/autosave see the edit. Commit-coalescing if it matters.
     const { nodes, selectedNodeId } = get()
     const next = nodes.map(n => {
       if (n.id !== id) return n
@@ -804,6 +848,7 @@ export const useCanvasStore = create((set, get) => ({
     set({
       nodes: next,
       isDirty: true,
+      revision: get().revision + 1,
       selectedNode: selectedNodeId === id ? next.find((n) => n.id === id) || null : get().selectedNode,
       selectedNodes: get().selectedNodes.map((n) => (n.id === id ? next.find((m) => m.id === id) || n : n)),
     })
@@ -870,12 +915,13 @@ export const useCanvasStore = create((set, get) => ({
     set({
       edges: next,
       isDirty: true,
+      revision: get().revision + 1,
       selectedEdge: selectedEdgeId === id ? next.find((e) => e.id === id) || null : get().selectedEdge,
     })
   },
 
-  setNodes: (nodes) => set({ nodes }),
-  setEdges: (edges) => set({ edges }),
+  setNodes: (nodes) => set((s) => ({ nodes, revision: s.revision + 1 })),
+  setEdges: (edges) => set((s) => ({ edges, revision: s.revision + 1 })),
 
   setSelectedNode: (node) => {
     if (node) get().selectNode(node.id)
@@ -915,11 +961,17 @@ export const useCanvasStore = create((set, get) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
   setZoom: (zoom) => set({ zoom }),
 
-  setValidationResult: (result) => set({ validationResult: result }),
+  // Revision-safe: a response computed for an older revision is stale and
+  // discarded, never displayed as if it described the current canvas.
+  setValidationResult: (result, validatedRevision) => {
+    if (validatedRevision != null && validatedRevision !== get().revision) return
+    set({ validationResult: result, validationRevision: validatedRevision ?? get().revision })
+  },
   setIsValidating: (val) => set({ isValidating: val }),
   setShowValidationPanel: (show) => set({ showValidationPanel: show }),
   clearValidation: () => set({
     validationResult: null,
+    validationRevision: null,
     validationHighlight: null,
   }),
 
@@ -944,17 +996,20 @@ export const useCanvasStore = create((set, get) => ({
   deleteNodes: (ids) => {
     const list = Array.isArray(ids) ? ids : [ids]
     if (!list.length) return
-    const { nodes, edges } = get()
+    const { nodes, edges, validationResult } = get()
     const idSet = new Set(list)
     if (!nodes.some((n) => idSet.has(n.id))) return
     get().saveHistory()
+    const nextNodes = dropEmptyGroups(nodes.filter((n) => !idSet.has(n.id)))
+    const nextEdges = edges.filter((e) => {
+      const src = e.source || e.sourceId
+      const tgt = e.target || e.targetId
+      return !idSet.has(src) && !idSet.has(tgt)
+    })
     set({
-      nodes: dropEmptyGroups(nodes.filter((n) => !idSet.has(n.id))),
-      edges: edges.filter((e) => {
-        const src = e.source || e.sourceId
-        const tgt = e.target || e.targetId
-        return !idSet.has(src) && !idSet.has(tgt)
-      }),
+      nodes: nextNodes,
+      edges: nextEdges,
+      validationResult: dropDeletedFindings(validationResult, nextNodes, nextEdges),
       isDirty: true,
       selectedNodeId: null,
       selectedEdgeId: null,
@@ -971,12 +1026,14 @@ export const useCanvasStore = create((set, get) => ({
   deleteEdges: (ids) => {
     const list = Array.isArray(ids) ? ids : [ids]
     if (!list.length) return
-    const { edges } = get()
+    const { nodes, edges, validationResult } = get()
     const idSet = new Set(list)
     if (!edges.some((e) => idSet.has(e.id))) return
     get().saveHistory()
+    const nextEdges = edges.filter((e) => !idSet.has(e.id))
     set({
-      edges: edges.filter((e) => !idSet.has(e.id)),
+      edges: nextEdges,
+      validationResult: dropDeletedFindings(validationResult, nodes, nextEdges),
       isDirty: true,
       selectedEdgeId: null,
       selectedEdgeIds: [],
@@ -986,17 +1043,20 @@ export const useCanvasStore = create((set, get) => ({
   },
 
   deleteSelected: () => {
-    const { selectedNodeIds, selectedEdgeIds, nodes, edges } = get()
+    const { selectedNodeIds, selectedEdgeIds, nodes, edges, validationResult } = get()
     if (!selectedNodeIds.length && !selectedEdgeIds.length) return
     const nodeIds = new Set(selectedNodeIds)
     get().saveHistory()
+    const nextNodes = dropEmptyGroups(nodes.filter(n => !nodeIds.has(n.id)))
+    const nextEdges = edges.filter(e => {
+      const src = e.source || e.sourceId
+      const tgt = e.target || e.targetId
+      return !nodeIds.has(src) && !nodeIds.has(tgt) && !selectedEdgeIds.some(seid => seid === e.id)
+    })
     set({
-      nodes: dropEmptyGroups(nodes.filter(n => !nodeIds.has(n.id))),
-      edges: edges.filter(e => {
-        const src = e.source || e.sourceId
-        const tgt = e.target || e.targetId
-        return !nodeIds.has(src) && !nodeIds.has(tgt) && !selectedEdgeIds.some(seid => seid === e.id)
-      }),
+      nodes: nextNodes,
+      edges: nextEdges,
+      validationResult: dropDeletedFindings(validationResult, nextNodes, nextEdges),
       selectedNodeId: null,
       selectedEdgeId: null,
       selectedNodeIds: [],
@@ -1091,6 +1151,9 @@ export const useCanvasStore = create((set, get) => ({
     set({
       nodes: migratedNodes,
       edges: migratedEdges,
+      revision: 0,
+      persistedRevision: 0,
+      isDirty: false,
       selectedNodeId: null,
       selectedEdgeId: null,
       selectedNodeIds: [],
@@ -1107,6 +1170,7 @@ export const useCanvasStore = create((set, get) => ({
       simulationAlerts: [],
       simulationConfig: null,
       validationResult: null,
+      validationRevision: null,
       showValidationPanel: false,
       nodePicker: null,
       history: [],
@@ -1140,6 +1204,7 @@ export const useCanvasStore = create((set, get) => ({
       simulationAlerts: [],
       simulationConfig: null,
       validationResult: null,
+      validationRevision: null,
       showValidationPanel: false,
       nodePicker: null,
       history: [],

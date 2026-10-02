@@ -51,6 +51,12 @@ export const CanvasGroup = memo(function CanvasGroup({ id, data, selected }) {
     }
   }, [data?.justCreated]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Resize lifecycle lives on the NodeResizer itself (<ReactFlow> has no
+  // onResizeStart/onResizeEnd props — passing them there warns and never
+  // fires, so the single-undo commit + grow-to-fit never ran). Capture the
+  // pre-resize size here; the commit reconstructs true pre-state from it.
+  const resizeStartRef = useRef(null)
+
   return (
     <>
       <NodeResizer
@@ -59,6 +65,11 @@ export const CanvasGroup = memo(function CanvasGroup({ id, data, selected }) {
         isVisible={!!selected}
         lineClassName="!border-resonance-text-muted"
         handleClassName="!w-2 !h-2 !bg-resonance-bg-elevated !border !border-resonance-text-muted !rounded-sm"
+        onResizeStart={(_, params) => { resizeStartRef.current = { ...(params || {}) } }}
+        onResizeEnd={() => {
+          canvasCommands.resizeGroup(id, resizeStartRef.current)
+          resizeStartRef.current = null
+        }}
       />
       <div
         className={`h-full w-full rounded-2xl border bg-resonance-bg-elevated/40 ${selected || isDropTarget ? 'border-resonance-text-muted' : 'border-transparent'}`}

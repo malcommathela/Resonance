@@ -12,6 +12,31 @@ import {
 // Monotonic id so a slow loadAllReports can't overwrite a newer one.
 let reportRequestId = 0
 
+// Serialize saves per design: without this, rev43 can complete before rev42
+// and 42's late completion would mark newer state clean (or last-write stale
+// content over it). Chained promises preserve call order; the revision check
+// in markCanvasClean handles edits made during flight.
+const saveQueues = new Map()
+function queuedSave(id, fn) {
+  const prev = saveQueues.get(id) || Promise.resolve()
+  const next = prev.catch(() => {}).then(fn)
+  saveQueues.set(id, next)
+  // then(cleanup, cleanup) resolves either way — unlike finally(), it never
+  // forks an unhandled rejection alongside the caller's await.
+  next.then(
+    () => { if (saveQueues.get(id) === next) saveQueues.delete(id) },
+    () => { if (saveQueues.get(id) === next) saveQueues.delete(id) },
+  )
+  return next
+}
+
+// Lineage of server versions observed by THIS tab lives in the persistence
+// boundary (canvasPersistence): 'ours' = committed by our saves,
+// 'seen' = loaded. Lets autosave tell a same-tab race (safe to retry with
+// latest state) from a foreign writer (must NOT overwrite — abort loud).
+import { noteServerVersion, serverVersionOrigin } from '@/features/canvas/persistence/canvasPersistence'
+export { serverVersionOrigin }
+
 // Helper to ensure designs always have computed fields
 const enrichDesign = (design) => {
   if (!design) return null
@@ -65,6 +90,7 @@ export const useDesignStore = create((set, get) => ({
     try {
       const design = await api.getDesign(id)
       const enriched = enrichDesign(design)
+      if (enriched?.version != null) noteServerVersion(enriched.version, 'seen')
       set({ currentDesign: enriched, isLoading: false })
       return enriched
     } catch (err) {
@@ -172,22 +198,29 @@ export const useDesignStore = create((set, get) => ({
     }
   },
 
-  saveCanvas: async (id, { nodes, edges, version }) => {
+  saveCanvas: async (id, { nodes, edges, version, revision }) => {
     set({ isSaving: true, saveStatus: 'saving' })
 
+    // Single funnel: groups/notes + sim runtime state never reach the API.
+    // Prepared once, outside the queued callback, so clean remains in scope.
+    const clean = toPersistable(nodes, edges)
+
     try {
-      // Single funnel: groups/notes + sim runtime state never reach the API.
-      const clean = toPersistable(nodes, edges)
-      const result = await api.saveCanvas(id, { nodes: clean.nodes, edges: clean.edges, version })
+      const result = await queuedSave(id, async () => {
+        return api.saveCanvas(id, { nodes: clean.nodes, edges: clean.edges, version })
+      })
 
       const blockCount = clean.nodes.length
+      const savedAt = new Date().toISOString()
+
+      if (result?.version != null) noteServerVersion(result.version, 'ours')
 
       set((state) => ({
         isSaving: false,
         saveStatus: 'saved',
         designs: state.designs.map((d) =>
           d.id === id
-            ? { ...d, blocks: blockCount, updatedAt: new Date().toISOString() }
+            ? { ...d, blocks: blockCount, updatedAt: savedAt }
             : d
         ),
         currentDesign:
@@ -195,13 +228,13 @@ export const useDesignStore = create((set, get) => ({
             ? {
               ...state.currentDesign,
               blocks: blockCount,
-              updatedAt: new Date().toISOString(),
+              updatedAt: savedAt,
               ...(result?.version != null ? { version: result.version } : {}),
             }
             : state.currentDesign,
       }))
 
-      useCanvasStore.getState().markCanvasClean()
+      useCanvasStore.getState().markCanvasClean(revision)
 
       setTimeout(() => set({ saveStatus: 'idle' }), 2000)
 
@@ -212,22 +245,28 @@ export const useDesignStore = create((set, get) => ({
     }
   },
 
-  autoSaveCanvas: async (id, { nodes, edges, version }) => {
+  autoSaveCanvas: async (id, { nodes, edges, version, revision }) => {
     set({ saveStatus: 'saving' })
 
+    // Keep the persistable snapshot accessible after the queued request.
+    const clean = toPersistable(nodes, edges)
+
     try {
-      // Single funnel: groups/notes + sim runtime state never reach the API.
-      const clean = toPersistable(nodes, edges)
-      const result = await api.autoSaveCanvas(id, { nodes: clean.nodes, edges: clean.edges, version })
+      const result = await queuedSave(id, async () => {
+        return api.autoSaveCanvas(id, { nodes: clean.nodes, edges: clean.edges, version })
+      })
 
       const blockCount = clean.nodes.length
+      const savedAt = new Date().toISOString()
+
+      if (result?.version != null) noteServerVersion(result.version, 'ours')
 
       set((state) => ({
         saveStatus: 'saved',
 
         designs: state.designs.map((d) =>
           d.id === id
-            ? { ...d, blocks: blockCount, updatedAt: new Date().toISOString() }
+            ? { ...d, blocks: blockCount, updatedAt: savedAt }
             : d
         ),
 
@@ -236,13 +275,13 @@ export const useDesignStore = create((set, get) => ({
             ? {
               ...state.currentDesign,
               blocks: blockCount,
-              updatedAt: new Date().toISOString(),
+              updatedAt: savedAt,
               ...(result?.version != null ? { version: result.version } : {}),
             }
             : state.currentDesign,
       }))
 
-      useCanvasStore.getState().markCanvasClean()
+      useCanvasStore.getState().markCanvasClean(revision)
 
       setTimeout(() => set({ saveStatus: 'idle' }), 2000)
 

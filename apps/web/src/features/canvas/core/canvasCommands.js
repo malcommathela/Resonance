@@ -24,6 +24,8 @@ export const hasClipboard = () => !!memoryClipboard
 
 export const canvasCommands = {
   addNode: (type, position, overrides) => s().addNode(type, position, overrides),
+  updateNode: (id, updates) => s().updateNode(id, updates),
+  moveNode: (id, position) => s().updateNodePosition(id, position),
   addConnectedNode: (type, position, sourceId, connectionType = 'http', overrides) => {
     const before = s().history.length
     const node = s().addNode(type, position, overrides)
@@ -40,7 +42,24 @@ export const canvasCommands = {
   renameNode: (id, label) => s().updateNode(id, { label }),
   connectNodes: (sourceId, targetId, connectionType = 'http') =>
     s().addEdge({ source: sourceId, target: targetId }, connectionType),
+  updateEdge: (id, updates) => s().updateEdge(id, updates),
   deleteEdge: (id) => s().deleteEdges([id]),
+  selectNode: (id) => s().selectNode(id),
+  selectEdge: (id) => s().selectEdge(id),
+  // Semantic entry: validation/overlays/menus request selection, never own it.
+  selectElement: ({ type, id } = {}) => {
+    if (type === 'edge') s().selectEdge(id)
+    else if (type === 'node') s().selectNode(id)
+    else if (id) s().selectNode(id)
+    else s().clearSelection()
+  },
+  // Transient validation emphasis — deliberately NOT selection.
+  emphasizeFinding: (finding) => s().setValidationHighlight(finding),
+  clearEmphasis: () => s().clearValidationHighlight(),
+  selectNodes: (ids) => s().setSelectedNodes((ids || []).map((id) => s().nodes.find((n) => n.id === id)).filter(Boolean)),
+  selectEdges: (ids) => s().setSelectedEdges((ids || []).map((id) => s().edges.find((e) => e.id === id)).filter(Boolean)),
+  clearSelection: () => s().clearSelection(),
+  getRevision: () => s().revision,
   select: (id) => { if (id) s().selectNode(id); else s().clearSelection() },
   selectAll: () => s().setSelectedNodes([...s().nodes]),
   copySelection: async () => {
@@ -131,6 +150,8 @@ export const canvasCommands = {
   removeGroupMember: (groupId, nodeId) => s().removeGroupMember(groupId, nodeId),
   renameGroup: (id, label) => s().renameGroup(id, label),
   toggleGroupCollapse: (id) => s().toggleGroupCollapse(id),
+  deleteGroup: (id) => s().deleteNodes([id]),
+  resizeGroup: (id, start) => s().commitGroupResize(id, start),
   ungroup: (id) => s().ungroup(id),
   moveGroup: (id, position, start) => s().moveGroup(id, position, start),
   commitGroupResize: (id, start) => s().commitGroupResize(id, start),
