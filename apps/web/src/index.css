@@ -230,6 +230,16 @@
   50% { opacity: 0.4; }
 }
 
+/* Canvas groups: custom type 'group' matches RF's built-in
+   .react-flow__node-group wrapper (10px padding + gray wash + 3px
+   radius). Neutralize it so the CanvasGroup div is the single surface.
+   Doubled class for specificity — wins over RF defaults regardless of
+   stylesheet order. */
+.react-flow__node.react-flow__node-group {
+  padding: 0;
+  background-color: transparent;
+}
+
 /* Canvas V2: simulation flow + node activity (dash/opacity only, no layout) */
 @keyframes arch-edge-flow {
   to { stroke-dashoffset: -20; }

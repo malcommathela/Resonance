@@ -21,9 +21,8 @@ export function documentFromGraph(nodes, edges) {
 
 export const isBlockNode = (n) => n?.type === 'customBlock'
 export const isGroupNode = (n) => n?.type === 'group'
-export const isNoteNode = (n) => n?.type === 'note'
 
-// Nodes the backend understands. Group/note canvas objects plus per-tick
+// Nodes the backend understands. Group canvas objects plus per-tick
 // runtime state never reach the API — single funnel: designStore saves.
 // Note: edge retryCount is left alone (config and runtime share the key;
 // the engine recomputes it, so a stale value is harmless).

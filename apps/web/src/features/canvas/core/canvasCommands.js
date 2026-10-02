@@ -119,15 +119,19 @@ export const canvasCommands = {
     if (g) s().selectNode(g.id)
     return g
   },
+  createEmptyGroup: (position) => {
+    const inst = getFlowInstance()
+    const at = position
+      || (inst ? inst.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 }) : { x: 0, y: 0 })
+    const g = s().createEmptyGroup(at)
+    if (g) s().selectNode(g.id)
+    return g
+  },
+  addGroupMember: (groupId, nodeId) => s().addGroupMember(groupId, nodeId),
+  removeGroupMember: (groupId, nodeId) => s().removeGroupMember(groupId, nodeId),
   renameGroup: (id, label) => s().renameGroup(id, label),
   toggleGroupCollapse: (id) => s().toggleGroupCollapse(id),
   ungroup: (id) => s().ungroup(id),
   moveGroup: (id, position, start) => s().moveGroup(id, position, start),
   commitGroupResize: (id, start) => s().commitGroupResize(id, start),
-  addNote: (position) => {
-    const n = s().addNote(position)
-    if (n) s().selectNode(n.id)
-    return n
-  },
-  updateNoteText: (id, text) => s().updateNoteText(id, text),
 }

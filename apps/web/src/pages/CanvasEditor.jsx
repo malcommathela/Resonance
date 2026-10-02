@@ -44,7 +44,7 @@ import { getValidationSummary, preValidateArchitecture } from '@/lib/validation'
 // === END P1 + BATCH 4 ===
 import { useCanvasDocument } from '@/features/canvas/core/useCanvasDocument'
 import { normalizeDocument, isBlockNode } from '@/features/canvas/core/document'
-import { persistCanvasMeta } from '@/features/canvas/groups/meta'
+import { persistCanvasMeta, findGroupDropTarget } from '@/features/canvas/groups/meta'
 import { nodeTypes, edgeTypes } from '@/features/canvas/core/canvasTypes'
 import { canvasCommands } from '@/features/canvas/core/canvasCommands'
 import { setFlowInstance } from '@/features/canvas/core/flowInstance'
@@ -518,7 +518,16 @@ function CanvasEditorInner() {
     groupDragRef.current = { group: { ...node.position }, members }
   }, [])
 
+  // Live drop-target highlight: store updates only on enter/leave, so a drag
+  // costs two renders, not one per mousemove.
+  const onNodeDrag = useCallback((_, node) => {
+    if (!node || node.type !== 'customBlock') return
+    const st = useCanvasStore.getState()
+    st.setGroupDropTarget(findGroupDropTarget(st.nodes.filter((n) => n.type === 'group'), node))
+  }, [])
+
   const onNodeDragStop = useCallback((_, node) => {
+    const st = useCanvasStore.getState()
     if (node.type === 'group') {
       // Rigid move: group + members by identical delta, ONE history entry.
       canvasCommands.moveGroup(node.id, node.position, groupDragRef.current)
@@ -527,7 +536,11 @@ function CanvasEditorInner() {
       return
     }
     updateNodePosition(node.id, node.position)
-    useCanvasStore.getState().refreshGroupBoxes()
+    // Drop into group: node center inside a group rect adopts membership
+    // (single-group rule + flat groups enforced in the store).
+    st.setGroupDropTarget(null)
+    const target = findGroupDropTarget(st.nodes.filter((n) => n.type === 'group'), node)
+    if (target) canvasCommands.addGroupMember(target, node.id)
     markDirty()
   }, [updateNodePosition, markDirty])
   const groupResizeRef = useRef(null)
@@ -1450,10 +1463,12 @@ function CanvasEditorInner() {
               onDragOver={onDragOver}
               onDrop={onDrop}
               onNodeDragStart={onNodeDragStart}
+              onNodeDrag={onNodeDrag}
               onNodeDragStop={onNodeDragStop}
               onResizeStart={onResizeStart}
               onResizeEnd={onResizeEnd}
               elevateNodesOnSelect={false}
+              zIndexMode="manual"
               onNodesDelete={onNodesDelete}
               onEdgesDelete={onEdgesDelete}
               onSelectionChange={onSelectionChange}
@@ -1477,7 +1492,7 @@ function CanvasEditorInner() {
               <Controls className="!bg-resonance-bg-elevated !border-resonance-border !rounded-xl !shadow-lg" showInteractive={false} />
               <MiniMap
                 className="!bg-resonance-bg-elevated !border-resonance-border !rounded-xl !shadow-lg"
-                nodeColor={(node) => node.data?.color || '#8b5cf6'}
+                nodeColor={(node) => (node.type === 'group' ? '#71717a' : (node.data?.color || '#8b5cf6'))}
                 maskColor="rgba(0, 0, 0, 0.2)"
               />
             </ReactFlow>
@@ -1558,7 +1573,7 @@ function CanvasEditorInner() {
 
           {/* Shared floating slot: properties OR validation, canvas never resizes */}
           {activePanel === 'properties' && (selectedNodeId || selectedEdgeId) && (
-            <InspectorShell label="Properties" size="lg" onClose={() => setActivePanel(null)}>
+            <InspectorShell label="Properties" size="sm" onClose={() => setActivePanel(null)}>
               <PropertyPanel
                 ref={propertyPanelRef}
                 validationResult={validationResult}
@@ -1568,9 +1583,9 @@ function CanvasEditorInner() {
             </InspectorShell>
           )}
           {activePanel === 'validation' && (
-            <InspectorShell
-              label="Validation"
-              size="lg"
+              <InspectorShell
+                label="Validation"
+                size="sm"
               onClose={() => { setActivePanel(null); setShowValidationPanel(false) }}
             >
               <ValidationPanel

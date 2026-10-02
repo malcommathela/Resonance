@@ -10,9 +10,13 @@ import {
   getConnectionBehavioralModel,
 } from '@shared/constants'
 import {
-  GROUP_COLORS,
   COLLAPSED_W,
   COLLAPSED_H,
+  GROUP_Z_INDEX,
+  NODE_Z_INDEX,
+  GROUP_DRAG_HANDLE,
+  EMPTY_GROUP_W,
+  EMPTY_GROUP_H,
   groupBox,
   expandGroupBox,
   pruneGroupMembers,
@@ -140,6 +144,7 @@ export const useCanvasStore = create((set, get) => ({
   history: [],
   historyIndex: -1,
   maxHistorySize: 50,
+  groupDropTarget: null, // transient drag highlight id — never persisted, never in history
 
   // ==========================================================================
   // SELECTION ACTIONS
@@ -193,8 +198,72 @@ export const useCanvasStore = create((set, get) => ({
   closeNodePicker: () => set({ nodePicker: null }),
 
   // ==========================================================================
-  // GROUPS + NOTES (Phase 8 — canvas-only objects, localStorage persistence)
+  // GROUPS (Phase 8 — canvas-only objects, localStorage persistence)
   // ==========================================================================
+
+  createEmptyGroup: (position) => {
+    get().saveHistory()
+    const { nodes } = get()
+    const existing = nodes.filter((n) => n.type === 'group').length
+    const at = position || { x: 0, y: 0 }
+    const node = {
+      id: `group-${Date.now()}`,
+      type: 'group',
+      position: { x: Math.round(at.x), y: Math.round(at.y) },
+      draggable: true,
+      selectable: true,
+      zIndex: GROUP_Z_INDEX,
+      dragHandle: `.${GROUP_DRAG_HANDLE}`,
+      style: { width: EMPTY_GROUP_W, height: EMPTY_GROUP_H },
+      data: {
+        label: 'New Group',
+        nodeIds: [],
+        collapsed: false,
+        memberCount: 0,
+        justCreated: true,
+      },
+    }
+    set({ nodes: [...get().nodes, node], isDirty: true })
+    return node
+  },
+
+  addGroupMember: (groupId, nodeId) => {
+    const { nodes } = get()
+    const g = nodes.find((n) => n.id === groupId && n.type === 'group')
+    const n = nodes.find((x) => x.id === nodeId)
+    if (!g || !n || n.type !== 'customBlock' || g.data?.collapsed) return false
+    if ((g.data?.nodeIds || []).includes(nodeId)) return false
+    get().saveHistory()
+    set({
+      nodes: get().nodes.map((x) => {
+        if (x.type !== 'group') return x
+        const ids = (x.data?.nodeIds || []).filter((id) => id !== nodeId)
+        if (x.id === groupId) ids.push(nodeId)
+        if (ids.length === (x.data?.nodeIds || []).length && x.id !== groupId) return x
+        return { ...x, data: { ...x.data, nodeIds: ids, memberCount: ids.length } }
+      }),
+      isDirty: true,
+    })
+    return true
+  },
+
+  removeGroupMember: (groupId, nodeId) => {
+    const g = get().nodes.find((n) => n.id === groupId && n.type === 'group')
+    if (!g || !(g.data?.nodeIds || []).includes(nodeId)) return false
+    get().saveHistory()
+    const ids = g.data.nodeIds.filter((id) => id !== nodeId)
+    set({
+      nodes: get().nodes.map((x) => x.id === groupId && x.type === 'group'
+        ? { ...x, data: { ...x.data, nodeIds: ids, memberCount: ids.length } }
+        : x),
+      isDirty: true,
+    })
+    return true
+  },
+
+  setGroupDropTarget: (id) => {
+    if (get().groupDropTarget !== id) set({ groupDropTarget: id })
+  },
 
   createGroup: () => {
     const { selectedNodeIds, nodes } = get()
@@ -202,7 +271,7 @@ export const useCanvasStore = create((set, get) => ({
     if (ids.length < 2) return null
     get().saveHistory()
     const members = nodes.filter((n) => ids.includes(n.id))
-    const box = groupBox(members) || { x: 0, y: 0, width: 400, height: 200 }
+    const box = groupBox(members) || { x: 0, y: 0, width: EMPTY_GROUP_W, height: EMPTY_GROUP_H }
     const existing = nodes.filter((n) => n.type === 'group').length
     const node = {
       id: `group-${Date.now()}`,
@@ -210,13 +279,12 @@ export const useCanvasStore = create((set, get) => ({
       position: { x: box.x, y: box.y },
       draggable: true,
       selectable: true,
-      // ponytail: RF elevations on select would yank the backdrop above nodes;
-      // CanvasEditor also sets elevateNodesOnSelect={false}
-      zIndex: -1,
+      // Explicit backdrop layer (never negative); drag restricted to the header.
+      zIndex: GROUP_Z_INDEX,
+      dragHandle: `.${GROUP_DRAG_HANDLE}`,
       style: { width: box.width, height: box.height },
       data: {
         label: `Group ${existing + 1}`,
-        color: GROUP_COLORS[existing % GROUP_COLORS.length],
         nodeIds: ids,
         collapsed: false,
         memberCount: ids.length,
@@ -259,20 +327,15 @@ export const useCanvasStore = create((set, get) => ({
     const dy = ny - start.group.y
     if (dx === 0 && dy === 0) return
     const memberIds = new Set(g.data?.nodeIds || [])
+    // Reconstruct the true pre-drag state (RF streamed the group live).
     const preNodes = nodes.map((n) => {
       if (n.id === id) return { ...g, position: { ...start.group } }
       if (memberIds.has(n.id) && start.members[n.id]) return { ...n, position: { ...start.members[n.id] } }
       return n
     })
     const clone = (o) => JSON.parse(JSON.stringify(o))
-    const next = nodes.map((n) => {
-      if (n.id === id) return { ...n, position: { x: nx, y: ny } }
-      if (memberIds.has(n.id) && n.type === 'customBlock') {
-        const s = start.members[n.id] || n.position
-        return { ...n, position: { x: snapToGrid(s.x + dx), y: snapToGrid(s.y + dy) } }
-      }
-      return n
-    })
+    // Forward application IS the tested pure helper (snapped per position).
+    const { nodes: next } = shiftGroupNodes(preNodes, id, dx, dy, snapToGrid)
     const newHistory = history.slice(0, historyIndex + 1)
     newHistory.push({ nodes: clone(preNodes), edges: clone(edges) })
     if (newHistory.length > maxHistorySize) newHistory.shift()
@@ -380,62 +443,17 @@ export const useCanvasStore = create((set, get) => ({
     })
   },
 
-  refreshGroupBoxes: () => {
-    const { nodes } = get()
-    if (!nodes.some((n) => n.type === 'group')) return
-    const byId = new Map(nodes.map((n) => [n.id, n]))
-    let changed = false
-    const next = nodes.map((n) => {
-      if (n.type !== 'group' || n.data?.collapsed) return n
-      const members = (n.data?.nodeIds || []).map((mid) => byId.get(mid)).filter((m) => m && m.type === 'customBlock')
-      const count = members.length
-      const box = expandGroupBox(n, members)
-      if (!box && (n.data?.memberCount || 0) === count) return n
-      changed = true
-      return {
-        ...n,
-        position: box ? { x: box.x, y: box.y } : n.position,
-        style: box ? { ...(n.style || {}), width: box.width, height: box.height } : n.style,
-        data: { ...n.data, memberCount: count },
-      }
-    })
-    if (changed) set({ nodes: next })
-  },
-
-  addNote: (position) => {
-    get().saveHistory()
-    const existing = get().nodes.filter((n) => n.type === 'note').length
-    const colors = ['#f59e0b', '#3b82f6', '#10b981', '#ec4899']
-    const node = {
-      id: `note-${Date.now()}`,
-      type: 'note',
-      position: { x: Math.round(position.x), y: Math.round(position.y) },
-      draggable: true,
-      selectable: true,
-      data: { text: '', color: colors[existing % colors.length] },
-    }
-    set({ nodes: [...get().nodes, node], isDirty: true })
-    return node
-  },
-
-  updateNoteText: (id, text) => {
-    get().saveHistory()
-    set({
-      nodes: get().nodes.map((n) => n.id === id && n.type === 'note' ? { ...n, data: { ...n.data, text } } : n),
-      isDirty: true,
-    })
-  },
-
   loadCanvasMeta: (designId) => {
     const meta = readCanvasMeta(designId)
     if (!meta) return
     const { nodes, edges } = get()
     const have = new Set(nodes.map((n) => n.id))
-    // Normalize persisted groups to the movable/backdrop contract (§5):
-    // older metas stored draggable:false and no zIndex.
-    const fresh = [...meta.groups, ...meta.notes]
-      .filter((n) => n && n.id && !have.has(n.id))
-      .map((n) => (n.type === 'group' ? { ...n, draggable: true, zIndex: -1 } : n))
+    // Normalize persisted groups to the movable/backdrop contract:
+    // older metas stored draggable:false and zIndex:-1 or nothing.
+    // Legacy note entries are ignored (never rendered, never written back).
+    const fresh = [...meta.groups]
+      .filter((n) => n && n.id && n.type === 'group' && !have.has(n.id))
+      .map((n) => ({ ...n, draggable: true, zIndex: GROUP_Z_INDEX, dragHandle: `.${GROUP_DRAG_HANDLE}` }))
     if (!fresh.length) return
     const collapsedIds = new Set()
     fresh.forEach((n) => {
@@ -710,6 +728,7 @@ export const useCanvasStore = create((set, get) => ({
     const newNode = {
       id: `${type}-${Date.now()}`,
       type: 'customBlock',
+      zIndex: NODE_Z_INDEX,
       position: {
         x: snapToGrid(position.x),
         y: snapToGrid(position.y),
@@ -1027,15 +1046,19 @@ export const useCanvasStore = create((set, get) => ({
   // FIX: loadDesign now restores edge.config into edge.data
   // ==========================================================================
   loadDesign: (design) => {
-    // Migrate nodes: sanitize config + inject missing behavioralModel
-    const migratedNodes = (design.nodes || []).map(node => {
+    // Migrate nodes: sanitize config + inject missing behavioralModel.
+    // Legacy `note` nodes are dropped (ignored, never rendered/written back).
+    const migratedNodes = (design.nodes || []).filter((node) => node?.type !== 'note').map(node => {
       const config = stripDecorativeProps(node.data?.config || {})
       if (!config.behavioralModel) {
         const blockType = node.data?.type || 'service'
         config.behavioralModel = getBlockBehavioralModel(blockType)
       }
+      // Normalize explicit canvas layers (older designs stored no zIndex).
       return {
         ...node,
+        ...(node.zIndex == null ? { zIndex: node.type === 'group' ? GROUP_Z_INDEX : NODE_Z_INDEX } : {}),
+        ...(node.type === 'group' ? { draggable: true, dragHandle: `.${GROUP_DRAG_HANDLE}` } : {}),
         data: {
           ...node.data,
           config,
@@ -1134,19 +1157,19 @@ export const useCanvasStore = create((set, get) => ({
 // GROUP MEMBERSHIP PRUNING (Phase 8)
 // ============================================================================
 
-// Refresh group membership after deletions; drop groups left with no members.
+// Refresh group membership after deletions; groups are always kept (possibly
+// empty) — only explicit Delete/Ungroup removes a group.
 function dropEmptyGroups(nodes) {
   const groups = nodes.filter((n) => n.type === 'group')
   if (groups.length === 0) return nodes
-  const { kept, dropped } = pruneGroupMembers(groups, nodes.map((n) => n.id))
-  const unchanged = dropped.length === 0 && kept.every((k) => {
+  const { kept } = pruneGroupMembers(groups, nodes.map((n) => n.id))
+  const unchanged = kept.every((k) => {
     const orig = nodes.find((n) => n.id === k.id)
     return orig && (orig.data?.nodeIds || []).length === k.data.nodeIds.length
   })
   if (unchanged) return nodes
-  const dropIds = new Set(dropped)
   const keptById = new Map(kept.map((k) => [k.id, k]))
-  return nodes.filter((n) => !dropIds.has(n.id)).map((n) => keptById.get(n.id) || n)
+  return nodes.map((n) => keptById.get(n.id) || n)
 }
 
 // ============================================================================
