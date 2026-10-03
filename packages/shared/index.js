@@ -1,5 +1,6 @@
 export * from './constants.js'
 export * from './simulation-engine.js'
+export { extractReplicaConfig, validateReplicaConfig } from './replicaValidation.js'
 export { DeterministicRNG, createSimulationSeed, validateDeterminism } from './deterministic.js'
 export {
   SIMULATION_BLOCK_TYPES,

@@ -19,6 +19,7 @@ import {
   EMPTY_GROUP_H,
   groupBox,
   expandGroupBox,
+  groupSize,
   pruneGroupMembers,
   readCanvasMeta,
 } from '@/features/canvas/groups/meta'
@@ -373,23 +374,31 @@ export const useCanvasStore = create((set, get) => ({
   },
 
   // Single-undo resize commit: keep the user's size, only grow to fit members.
-  // RF streams the new size into the store during the gesture, so the true
-  // pre-resize size comes from `start` (captured in onResizeStart) — the same
-  // half-mutated-history problem moveGroup solves. Unchanged size = no entry.
+  // RF streams the live size into node.width/measured (style is frozen at
+  // creation), so compare against the effective size and write it back into
+  // style — otherwise the next save persists the creation size and reload
+  // reverts the resize. Unchanged size = no entry.
   commitGroupResize: (id, start) => {
     const { nodes, edges, history, historyIndex, maxHistorySize } = get()
     const g = nodes.find((n) => n.id === id && n.type === 'group')
     if (!g || g.data?.collapsed) return
+    const live = groupSize(g)
+    const freshStyle = {
+      ...(g.style || {}),
+      ...(live.width != null ? { width: live.width } : {}),
+      ...(live.height != null ? { height: live.height } : {}),
+    }
     const startStyle = start && typeof start.width === 'number' ? start : null
-    if (startStyle && startStyle.width === g.style?.width && startStyle.height === g.style?.height) return
     const byId = new Map(nodes.map((n) => [n.id, n]))
     const members = (g.data?.nodeIds || []).map((mid) => byId.get(mid)).filter((m) => m && m.type === 'customBlock')
     const box = expandGroupBox(g, members)
+    const styleDirty = freshStyle.width !== g.style?.width || freshStyle.height !== g.style?.height
+    if (!box && !styleDirty) return
     const clone = (o) => JSON.parse(JSON.stringify(o))
     const preNodes = startStyle
       ? nodes.map((n) => (n.id === id ? { ...n, style: { ...(n.style || {}), ...startStyle } } : n))
       : clone(nodes)
-    const next = !box ? nodes : nodes.map((n) => {
+    const next = !box ? nodes.map((n) => (n.id === id ? { ...n, style: freshStyle } : n)) : nodes.map((n) => {
       if (n.id !== id) return n
       return { ...n, position: { x: box.x, y: box.y }, style: { ...(n.style || {}), width: box.width, height: box.height } }
     })
@@ -476,12 +485,20 @@ export const useCanvasStore = create((set, get) => ({
   loadCanvasMeta: (designId) => {
     const meta = readCanvasMeta(designId)
     if (!meta) return
+    get().applyServerGroups(meta.groups)
+  },
+
+  // Server is authoritative (Phase 1). Applies a group list from GET detail;
+  // localStorage fallback calls this only when the server has no groups.
+  applyServerGroups: (serverGroups) => {
+    const list = Array.isArray(serverGroups) ? serverGroups : serverGroups?.groups
+    if (!list?.length) return
     const { nodes, edges } = get()
     const have = new Set(nodes.map((n) => n.id))
     // Normalize persisted groups to the movable/backdrop contract:
     // older metas stored draggable:false and zIndex:-1 or nothing.
     // Legacy note entries are ignored (never rendered, never written back).
-    const fresh = [...meta.groups]
+    const fresh = [...list]
       .filter((n) => n && n.id && n.type === 'group' && !have.has(n.id))
       .map((n) => ({ ...n, draggable: true, zIndex: GROUP_Z_INDEX, dragHandle: `.${GROUP_DRAG_HANDLE}` }))
     if (!fresh.length) return

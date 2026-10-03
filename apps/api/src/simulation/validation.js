@@ -19,6 +19,11 @@ import {
   normalizeTrafficPattern,
 } from '@resonance/shared/traffic-models'
 
+import {
+  extractReplicaConfig,
+  validateReplicaConfig,
+} from '@resonance/shared/replica-validation'
+
 // ============================================================================
 // SHARED CONSTANTS
 // ============================================================================
@@ -431,36 +436,51 @@ function validateBlockProperties(block) {
     }
   }
 
-  // maxReplicas: >= minReplicas
-  if (config.maxReplicas !== undefined) {
-    if (!isInteger(config.maxReplicas) || config.maxReplicas < 1) {
+  // Scaling bounds: flat config.* wins, behavioralModel.scalingBehavior is the
+  // fallback (shared contract — the inspector writes min/max there). One edit
+  // never mutates another; out-of-bounds autoscaling replicas block simulation.
+  const replicaConfig = extractReplicaConfig(config)
+  for (const issue of validateReplicaConfig(replicaConfig)) {
+    if (issue.code === 'replicas') continue // covered by the flat check above
+    if (issue.code === 'minReplicas') {
+      findings.push(makeFinding(
+        `val-min-rep-${block.id}`,
+        SEVERITY.WARNING,
+        FINDING_TYPES.INVALID_MAX_REPLICAS,
+        `Block "${label}" has invalid minReplicas: ${issue.currentValue}. Must be an integer >= 1.`,
+        { blockId: block.id, property: 'minReplicas', currentValue: issue.currentValue, recommendation: 'Set minReplicas to a whole number >= 1.' }
+      ))
+    } else if (issue.code === 'maxReplicas') {
       findings.push(makeFinding(
         `val-max-rep-${block.id}`,
         SEVERITY.WARNING,
         FINDING_TYPES.INVALID_MAX_REPLICAS,
-        `Block "${label}" has invalid maxReplicas: ${config.maxReplicas}. Must be an integer >= 1.`,
-        { blockId: block.id, property: 'maxReplicas', currentValue: config.maxReplicas, recommendation: 'Set maxReplicas to a whole number >= 1.' }
+        `Block "${label}" has invalid maxReplicas: ${issue.currentValue}. Must be an integer >= 1.`,
+        { blockId: block.id, property: 'maxReplicas', currentValue: issue.currentValue, recommendation: 'Set maxReplicas to a whole number >= 1.' }
       ))
-    } else if (config.minReplicas !== undefined && config.maxReplicas < config.minReplicas) {
+    } else if (issue.code === 'range') {
       findings.push(makeFinding(
         `val-max-lt-min-${block.id}`,
         SEVERITY.WARNING,
         FINDING_TYPES.INVALID_MAX_REPLICAS,
-        `Block "${label}" has maxReplicas (${config.maxReplicas}) < minReplicas (${config.minReplicas}).`,
-        { blockId: block.id, property: 'maxReplicas', currentValue: config.maxReplicas, recommendation: 'Ensure maxReplicas >= minReplicas.' }
+        `Block "${label}" has maxReplicas (${replicaConfig.maxReplicas}) < minReplicas (${replicaConfig.minReplicas}).`,
+        { blockId: block.id, property: 'maxReplicas', currentValue: issue.currentValue, recommendation: 'Ensure maxReplicas >= minReplicas.' }
       ))
-    }
-  }
-
-  // autoScaling: if true, maxReplicas and minReplicas required
-  if (config.autoScaling === true) {
-    if (config.maxReplicas === undefined || config.minReplicas === undefined) {
+    } else if (issue.code === 'autoscaling') {
       findings.push(makeFinding(
         `val-autoscale-${block.id}`,
         SEVERITY.WARNING,
         FINDING_TYPES.INVALID_AUTO_SCALING,
         `Block "${label}" has autoScaling enabled but is missing minReplicas or maxReplicas.`,
         { blockId: block.id, property: 'autoScaling', currentValue: true, recommendation: 'Set both minReplicas and maxReplicas when autoScaling is enabled.' }
+      ))
+    } else if (issue.code === 'bounds') {
+      findings.push(makeFinding(
+        `val-replicas-bounds-${block.id}`,
+        SEVERITY.CRITICAL,
+        FINDING_TYPES.INVALID_REPLICAS,
+        `Block "${label}" has replicas (${issue.currentValue}) outside autoscaling bounds. ${issue.message}`,
+        { blockId: block.id, property: 'replicas', currentValue: issue.currentValue, recommendation: 'Set replicas within [minReplicas, maxReplicas] or adjust the bounds.' }
       ))
     }
   }

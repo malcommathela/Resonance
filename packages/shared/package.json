@@ -11,6 +11,7 @@
     "./simulation-models": "./simulation-models.js",
     "./traffic-models": "./traffic-models.js",
     "./simulation-engine": "./simulation-engine.js",
+    "./replica-validation": "./replicaValidation.js",
     "./canonical-model": "./canonical-model.js"
   }
 }

@@ -30,6 +30,20 @@ export const ArchitectureNode = memo(function ArchitectureNode({ id, data, selec
   const status = nodeStatus({ highlighted, severity: validationHighlight?.severity, running, runtime })
   const dotColor = status.tone === 'idle' ? color : (TONE_COLOR[status.tone] || color)
 
+  // Configured deployment metadata, read verbatim — never invented. Runtime
+  // count only while simulating and only when it differs from configured.
+  const port = data?.config?.port
+  const replicas = data?.config?.replicas
+  const liveReplicas = running && runtime?.currentReplicas != null && runtime.currentReplicas !== replicas
+    ? runtime.currentReplicas
+    : null
+  const metaParts = [
+    port != null && port !== '' ? `:${port}` : null,
+    Number.isInteger(replicas) ? `${replicas} replica${replicas === 1 ? '' : 's'}` : null,
+    liveReplicas != null ? `${liveReplicas} live` : null,
+  ].filter(Boolean)
+  const metaLine = metaParts.join(' · ')
+
   useEffect(() => {
     if (!editing) setDraft(data?.label || '')
   }, [data?.label, editing])
@@ -58,7 +72,7 @@ export const ArchitectureNode = memo(function ArchitectureNode({ id, data, selec
       />
 
       <div
-        className={`w-[200px] rounded-xl border bg-resonance-bg-elevated shadow-md transition-shadow hover:shadow-lg ${isSelected ? 'border-resonance-accent ring-1 ring-resonance-accent' : 'border-resonance-border'}`}
+        className={`w-[232px] rounded-xl border bg-resonance-bg-elevated shadow-md transition-shadow hover:shadow-lg ${isSelected ? 'border-resonance-accent ring-1 ring-resonance-accent' : 'border-resonance-border'}`}
         style={highlighted ? { borderColor: dotColor } : { borderLeft: `3px solid ${color}` }}
       >
         <div className="flex items-center gap-2 px-2.5 py-2">
@@ -110,6 +124,11 @@ export const ArchitectureNode = memo(function ArchitectureNode({ id, data, selec
             <span className="block truncate text-[11px] capitalize text-resonance-text-muted">
               {(data?.type || 'block').replace(/-/g, ' ')}
             </span>
+            {metaLine ? (
+              <span className="block truncate text-[10px] text-resonance-text-muted" title={metaLine}>
+                {metaLine}
+              </span>
+            ) : null}
           </span>
           <button
             onClick={(e) => { e.stopPropagation(); canvasCommands.openNodePicker(id) }}

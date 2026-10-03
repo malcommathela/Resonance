@@ -190,16 +190,18 @@ export const useDesignStore = create((set, get) => ({
   saveCanvas: async (id, { nodes, edges, version, revision, getVersion }) => {
     set({ isSaving: true, saveStatus: 'saving' })
 
-    // Single funnel: groups/notes + sim runtime state never reach the API.
+    // Single funnel: groups ride the versioned server canvasMeta (Phase 1);
+    // notes + sim runtime state never reach the API.
     // Prepared once, outside the queued callback, so clean remains in scope.
     const clean = toPersistable(nodes, edges)
+    const groups = (nodes || []).filter((n) => n?.type === 'group')
     // Version read at EXECUTION time (inside the queue), not enqueue time:
     // falls back to the enqueue-time version for callers without a supplier.
     const readVersion = typeof getVersion === 'function' ? getVersion : () => version
 
     try {
       const result = await queuedSave(id, async () => {
-        return api.saveCanvas(id, { nodes: clean.nodes, edges: clean.edges, version: readVersion() })
+        return api.saveCanvas(id, { nodes: clean.nodes, edges: clean.edges, version: readVersion(), groups })
       })
 
       const blockCount = clean.nodes.length
@@ -243,11 +245,12 @@ export const useDesignStore = create((set, get) => ({
 
     // Keep the persistable snapshot accessible after the queued request.
     const clean = toPersistable(nodes, edges)
+    const groups = (nodes || []).filter((n) => n?.type === 'group')
     const readVersion = typeof getVersion === 'function' ? getVersion : () => version
 
     try {
       const result = await queuedSave(id, async () => {
-        return api.autoSaveCanvas(id, { nodes: clean.nodes, edges: clean.edges, version: readVersion() })
+        return api.autoSaveCanvas(id, { nodes: clean.nodes, edges: clean.edges, version: readVersion(), groups })
       })
 
       const blockCount = clean.nodes.length

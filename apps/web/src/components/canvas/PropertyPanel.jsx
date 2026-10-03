@@ -30,6 +30,7 @@ import { categories, CONNECTION_TYPE_META, DATABASE_ENGINES, getBlockBehavioralM
 import { DECORATIVE_PROPS } from '@/stores/canvasStore'
 import { canvasCommands } from '@/features/canvas/core/canvasCommands'
 import { setBehavioralValue, setConfigValue } from '@/features/canvas/inspector/propertyResolver'
+import { getPropertyDefinition } from '@/features/canvas/inspector/propertyDefinitions'
 import { validateSingleProperty } from '@/lib/validation'
 
 // ============================================================================
@@ -275,7 +276,9 @@ export const PropertyPanel = forwardRef(({
   const handleAddConfigField = () => {
     if (!newConfigKey.trim()) return
     const key = newConfigKey.trim()
-    if (DECORATIVE_PROPS.has(key)) {
+    // Registry-owned keys already have an explicit field — a custom twin
+    // would shadow it with a confusing duplicate label. Edit it in place.
+    if (DECORATIVE_PROPS.has(key) || getPropertyDefinition(key)) {
       setNewConfigKey('')
       setNewConfigValue('')
       setShowAddConfig(false)
@@ -899,8 +902,9 @@ export const PropertyPanel = forwardRef(({
 
               {genericConfig.map(([key, value]) => (
                 <div key={key} className="group" data-property={key}>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs text-resonance-text-muted capitalize">{key.replace(/-/g, ' ')}</label>
+                  {/* Single label ownership: ConfigInput renders the label.
+                      A wrapper label here renders Port/Replicas twice. */}
+                  <div className="flex items-center justify-end mb-1">
                     <button
                       onClick={() => handleRemoveConfigField(key)}
                       className="opacity-0 group-hover:opacity-100 p-0.5 rounded-lg hover:bg-red-500/10 text-red-500 transition-all"
@@ -950,7 +954,7 @@ export const PropertyPanel = forwardRef(({
                   <div className="flex gap-1.5">
                     <button
                       onClick={handleAddConfigField}
-                      disabled={!newConfigKey.trim() || DECORATIVE_PROPS.has(newConfigKey.trim())}
+                      disabled={!newConfigKey.trim() || DECORATIVE_PROPS.has(newConfigKey.trim()) || !!getPropertyDefinition(newConfigKey.trim())}
                       className="flex-1 px-2 py-1 rounded-lg bg-resonance-accent text-resonance-neutral text-[10px] font-medium hover:bg-resonance-accent-hover disabled:opacity-40 transition-colors"
                     >
                       Add

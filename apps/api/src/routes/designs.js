@@ -4,6 +4,10 @@ import { assertDesignAccess, assertDesignWriteAccess, requireTeamRole } from '..
 import { logAuditEvent } from '../simulation/utils/audit.js'
 import { logger } from '../lib/logger.js'
 import { cache } from '../lib/redis.js'
+import { normalizeCanvasMeta } from '../canvas/canvasMeta.js'
+import { extractReplicaConfig } from '@resonance/shared/replica-validation'
+
+export { normalizeCanvasMeta } // re-export: existing importers keep working
 
 const router = Router()
 
@@ -206,7 +210,15 @@ router.get('/:id', async (req, res) => {
       },
     }))
 
-    res.json({ ...design, nodes, edges, version: design.version })
+    // Canonical canvas groups; old rows / stale cache entries -> [].
+    let groups = []
+    try {
+      const meta = typeof design.canvasMeta === 'string' ? JSON.parse(design.canvasMeta) : design.canvasMeta
+      const list = Array.isArray(meta) ? meta : meta?.groups
+      if (Array.isArray(list)) groups = list.filter((g) => g?.type === 'group' && typeof g.id === 'string')
+    } catch { groups = [] }
+
+    res.json({ ...design, nodes, edges, groups, version: design.version })
   } catch (err) {
     logger.error({ err: err.message, designId: req.params.id }, 'Failed to get design')
     res.status(500).json({ error: err.message })
@@ -276,14 +288,14 @@ router.patch('/:id', async (req, res) => {
   }
 })
 
-// ============================================================================
 // BATCHED CANVAS SYNC — replaces N+1 sequential upserts
 // ============================================================================
 async function syncCanvasData(
   designId,
   nodes,
   edges,
-  expectedVersion
+  expectedVersion,
+  canvasMetaInput,
 ) {
   const result = await prisma.$transaction(async (tx) => {
     const design = await tx.design.findUnique({
@@ -291,6 +303,7 @@ async function syncCanvasData(
       select: {
         id: true,
         version: true,
+        canvasMeta: true,
       },
     })
 
@@ -328,6 +341,25 @@ async function syncCanvasData(
 
     const nodeIds = safeNodes.map((n) => n.id).filter(Boolean)
     const edgeIds = safeEdges.map((e) => e.id).filter(Boolean)
+
+    // Canvas groups reference block ids; prune stale members deterministically
+    // against the blocks saved in THIS request — never fail the whole save.
+    // Rollback safety: a save WITHOUT groups (old client, partial writer)
+    // preserves the stored groups instead of resetting them to []. Only an
+    // explicit groups array (possibly empty = "delete all groups") replaces.
+    let meta
+    if (canvasMetaInput == null) {
+      meta = { schemaVersion: 1, groups: [] }
+      try {
+        meta = normalizeCanvasMeta(design.canvasMeta ?? [])
+      } catch { /* corrupt stored meta: fall back to [] rather than block saves */ }
+    } else {
+      meta = normalizeCanvasMeta(canvasMetaInput)
+    }
+    const validIds = new Set(nodeIds)
+    for (const g of meta.groups) {
+      g.data.nodeIds = g.data.nodeIds.filter((m) => validIds.has(m))
+    }
 
     /*
      * Empty [] is now allowed ONLY when it arrives with a valid revision.
@@ -368,8 +400,18 @@ async function syncCanvasData(
 
     for (let i = 0; i < safeNodes.length; i += CHUNK_SIZE) {
       await Promise.all(
-        safeNodes.slice(i, i + CHUNK_SIZE).map((node) =>
-          tx.block.upsert({
+        safeNodes.slice(i, i + CHUNK_SIZE).map((node) => {
+          // Denormalized columns follow config (source of truth); never the
+          // reverse. Null clears stale values when the key is removed.
+          const cfg = node.data?.config || {}
+          const rep = extractReplicaConfig(cfg)
+          const intOrNull = (v) => (Number.isInteger(v) ? v : null)
+          const denorm = {
+            replicas: intOrNull(rep.replicas),
+            rateLimit: intOrNull(cfg.rateLimit),
+            timeoutMs: intOrNull(cfg.timeoutMs ?? cfg.timeout),
+          }
+          return tx.block.upsert({
             where: { id: node.id },
 
             update: {
@@ -384,6 +426,7 @@ async function syncCanvasData(
               metrics: node.data?.metrics
                 ? JSON.stringify(node.data.metrics)
                 : null,
+              ...denorm,
               updatedAt: new Date(),
             },
 
@@ -401,9 +444,10 @@ async function syncCanvasData(
               metrics: node.data?.metrics
                 ? JSON.stringify(node.data.metrics)
                 : null,
+              ...denorm,
             },
           })
-        )
+        })
       )
     }
 
@@ -450,7 +494,8 @@ async function syncCanvasData(
     }
 
     /*
-     * Version increments atomically with the canvas mutation.
+     * Version increments atomically with the canvas mutation — including
+     * group-only edits, so AI context caches keyed on version invalidate.
      */
     const updatedDesign = await tx.design.update({
       where: {
@@ -461,6 +506,7 @@ async function syncCanvasData(
         version: {
           increment: 1,
         },
+        canvasMeta: meta,
         updatedAt: new Date(),
       },
 
@@ -479,13 +525,14 @@ async function syncCanvasData(
 
 router.post('/:id/canvas', async (req, res) => {
   try {
-    const { nodes, edges, version } = req.body
+    const { nodes, edges, version, groups, canvasMeta } = req.body
     await assertDesignWriteAccess(req, req.params.id)
     const savedDesign = await syncCanvasData(
       req.params.id,
       nodes,
       edges,
-      version
+      version,
+      groups ?? canvasMeta,
     )
     await invalidateDesignCache(req.dbUser.id, req.params.id)
     await logAuditEvent({
@@ -525,13 +572,14 @@ router.post('/:id/canvas', async (req, res) => {
 
 router.post('/:id/autosave', async (req, res) => {
   try {
-    const { nodes, edges, version } = req.body
+    const { nodes, edges, version, groups, canvasMeta } = req.body
     await assertDesignWriteAccess(req, req.params.id)
     const savedDesign = await syncCanvasData(
       req.params.id,
       nodes,
       edges,
-      version
+      version,
+      groups ?? canvasMeta,
     )
     await invalidateDesignCache(req.dbUser.id, req.params.id)
     res.json({

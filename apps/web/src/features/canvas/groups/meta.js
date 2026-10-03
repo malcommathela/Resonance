@@ -3,9 +3,27 @@
 // contract only understands simulating blocks (unknown types fall through to
 // the service model), so canvas-only objects stay out of the API payload
 // (see document.js toPersistable). Backend migration = the upgrade path.
-// ponytail: fixed architecture-node footprint; read RF measured sizes when resize-aware boxes land
-export const NODE_W = 208
-export const NODE_H = 72
+// ponytail: fixed architecture-node footprint matching ArchitectureNode's
+// w-[232px] card + metadata row; read RF measured sizes when resize-aware boxes land
+export const NODE_W = 232
+export const NODE_H = 88
+// RF v12 streams resize dims into node.width/height (+measured) and never
+// touches node.style — style is frozen at creation. Effective size prefers
+// style, then top-level attrs, then measured. Single funnel: every size reader
+// below goes through here or it silently uses the creation size.
+const numOrUndef = (v) => {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
+export function groupSize(node) {
+  const style = node?.style || {}
+  const measured = node?.measured || {}
+  return {
+    width: numOrUndef(style.width) ?? numOrUndef(node?.width) ?? numOrUndef(measured.width),
+    height: numOrUndef(style.height) ?? numOrUndef(node?.height) ?? numOrUndef(measured.height),
+  }
+}
 export const PAD_X = 20
 export const HEADER_H = 44
 export const PAD_BOTTOM = 20
@@ -47,11 +65,12 @@ export function groupBox(members) {
 export function expandGroupBox(current, members) {
   const req = groupBox(members)
   if (!req) return null
+  const size = groupSize(current)
   const cur = {
     x: current?.position?.x ?? req.x,
     y: current?.position?.y ?? req.y,
-    width: current?.style?.width ?? req.width,
-    height: current?.style?.height ?? req.height,
+    width: size.width ?? req.width,
+    height: size.height ?? req.height,
   }
   const x = Math.min(cur.x, req.x)
   const y = Math.min(cur.y, req.y)
@@ -110,10 +129,11 @@ export function findGroupDropTarget(groups, node) {
   const cy = node.position.y + NODE_H / 2
   for (const g of groups || []) {
     if (g?.type !== 'group' || g.data?.collapsed) continue
+    const size = groupSize(g)
     const x = g.position?.x ?? 0
     const y = g.position?.y ?? 0
-    const w = g.style?.width ?? EMPTY_GROUP_W
-    const h = g.style?.height ?? EMPTY_GROUP_H
+    const w = size.width ?? EMPTY_GROUP_W
+    const h = size.height ?? EMPTY_GROUP_H
     if (cx >= x && cx <= x + w && cy >= y && cy <= y + h) return g.id
   }
   return null
