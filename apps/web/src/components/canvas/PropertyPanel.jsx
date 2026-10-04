@@ -319,7 +319,7 @@ export const PropertyPanel = forwardRef(({
       {/* Title bar */}
       <div className="flex items-center justify-between p-3 border-b border-resonance-border shrink-0">
         <h3 className="text-sm font-semibold text-resonance-text-primary">
-          {propertyView === 'overview' ? (data.label || 'Service') : activeCategory?.label}
+          {propertyView === 'overview' ? 'Properties' : activeCategory?.label}
         </h3>
         <div className="flex items-center gap-1">
           <button
@@ -331,13 +331,9 @@ export const PropertyPanel = forwardRef(({
           </button>
         </div>
       </div>
-      {propertyView === 'overview' && (
-        <p className="px-3 pt-2 text-xs text-resonance-text-muted shrink-0">{data.type || 'service-node'}</p>
-      )}
-
-      {/* Block header */}
-      <div className="p-4 border-b border-resonance-border shrink-0">
-        <div className="flex items-center gap-3 mb-4">
+      {/* Block header (name + type live here; the title bar stays generic) */}
+      <div className="p-3 border-b border-resonance-border shrink-0">
+        <div className="flex items-center gap-3 mb-3">
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
             style={{ backgroundColor: `${data.color || '#8b5cf6'}15` }}
