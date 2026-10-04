@@ -375,7 +375,7 @@ export const useCanvasStore = create((set, get) => ({
 
   // Single-undo resize commit: keep the user's size, only grow to fit members.
   // RF streams the live size into node.width/measured (style is frozen at
-  // creation), so compare against the effective size and write it back into
+  // creation), so the effective (live-first) size is written back into
   // style — otherwise the next save persists the creation size and reload
   // reverts the resize. Unchanged size = no entry.
   commitGroupResize: (id, start) => {
@@ -395,8 +395,22 @@ export const useCanvasStore = create((set, get) => ({
     const styleDirty = freshStyle.width !== g.style?.width || freshStyle.height !== g.style?.height
     if (!box && !styleDirty) return
     const clone = (o) => JSON.parse(JSON.stringify(o))
+    // Pre-state restores the live attrs too: groupSize reads them first, so
+    // a style-only restore would leave undo showing the post-resize size.
     const preNodes = startStyle
-      ? nodes.map((n) => (n.id === id ? { ...n, style: { ...(n.style || {}), ...startStyle } } : n))
+      ? nodes.map((n) => (n.id === id ? {
+        ...n,
+        style: { ...(n.style || {}), ...startStyle },
+        ...(start.height != null || start.width != null ? {
+          ...(start.width != null ? { width: start.width } : {}),
+          ...(start.height != null ? { height: start.height } : {}),
+          measured: {
+            ...(n.measured || {}),
+            ...(start.width != null ? { width: start.width } : {}),
+            ...(start.height != null ? { height: start.height } : {}),
+          },
+        } : {}),
+      } : n))
       : clone(nodes)
     const next = !box ? nodes.map((n) => (n.id === id ? { ...n, style: freshStyle } : n)) : nodes.map((n) => {
       if (n.id !== id) return n
@@ -424,15 +438,36 @@ export const useCanvasStore = create((set, get) => ({
     set({
       nodes: nodes.map((n) => {
         if (n.id === id) {
+          // Collapse stashes the expanded size in data (persisted via the API
+          // expandedStyle passthrough); expand restores it and only grows
+          // when members no longer fit — the collapsed chip size must never
+          // become the permanent size.
+          if (collapsed) {
+            const size = groupSize(n)
+            return {
+              ...n,
+              style: { width: COLLAPSED_W, height: COLLAPSED_H },
+              data: {
+                ...n.data,
+                collapsed,
+                ...(size.width != null && size.height != null
+                  ? { expandedStyle: { width: size.width, height: size.height } }
+                  : {}),
+              },
+            }
+          }
+          const saved = n.data?.expandedStyle
+          const restored = (Number.isFinite(Number(saved?.width)) && Number(saved.width) > 0
+            && Number.isFinite(Number(saved?.height)) && Number(saved.height) > 0)
+            ? { ...n, style: { ...(n.style || {}), width: Number(saved.width), height: Number(saved.height) } }
+            : n
           // Expand keeps the user's manual size; only grow when members no longer fit.
-          const box = collapsed ? null : expandGroupBox(n, nodes.filter((m) => memberIds.has(m.id) && m.type === 'customBlock'))
+          const box = expandGroupBox(restored, nodes.filter((m) => memberIds.has(m.id) && m.type === 'customBlock'))
           return {
-            ...n,
+            ...restored,
             ...(box ? { position: { x: box.x, y: box.y } } : {}),
-            style: collapsed
-              ? { width: COLLAPSED_W, height: COLLAPSED_H }
-              : { ...(n.style || {}), ...(box ? { width: box.width, height: box.height } : {}) },
-            data: { ...n.data, collapsed },
+            style: { ...(restored.style || {}), ...(box ? { width: box.width, height: box.height } : {}) },
+            data: { ...restored.data, collapsed },
           }
         }
         if (memberIds.has(n.id)) return { ...n, hidden: collapsed }
@@ -512,6 +547,40 @@ export const useCanvasStore = create((set, get) => ({
         const src = e.source || e.sourceId
         const tgt = e.target || e.targetId
         return (collapsedIds.has(src) || collapsedIds.has(tgt)) && !e.hidden ? { ...e, hidden: true } : e
+      }),
+    })
+  },
+
+  // Authoritative hydration for one design load: REPLACES all local groups
+  // with the server list. An explicit [] clears stale groups (design switch,
+  // delete-all); a non-array (not loaded) is a no-op — "no groups" is never
+  // confused with "groups not loaded". Legacy local merge stays in
+  // applyServerGroups/loadCanvasMeta and never runs on this path.
+  replaceServerGroups: (serverGroups) => {
+    const list = Array.isArray(serverGroups) ? serverGroups : serverGroups?.groups
+    if (!Array.isArray(list)) return
+    const { nodes, edges } = get()
+    const fresh = list
+      .filter((n) => n && n.id && n.type === 'group')
+      .map((n) => ({ ...n, draggable: true, zIndex: GROUP_Z_INDEX, dragHandle: `.${GROUP_DRAG_HANDLE}` }))
+    const collapsedIds = new Set()
+    fresh.forEach((n) => {
+      if (n.data?.collapsed) (n.data.nodeIds || []).forEach((m) => collapsedIds.add(m))
+    })
+    set({
+      nodes: [
+        ...nodes.filter((n) => n?.type !== 'group'),
+        ...fresh,
+      ].map((n) => {
+        if (n.type !== 'customBlock') return n
+        const hide = collapsedIds.has(n.id)
+        return hide === !!n.hidden ? n : { ...n, hidden: hide }
+      }),
+      edges: edges.map((e) => {
+        const src = e.source || e.sourceId
+        const tgt = e.target || e.targetId
+        const hide = collapsedIds.has(src) || collapsedIds.has(tgt)
+        return hide === !!e.hidden ? e : { ...e, hidden: hide }
       }),
     })
   },

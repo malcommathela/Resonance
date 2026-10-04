@@ -75,11 +75,12 @@ export function useCanvasPersistence({ designId, onRequireSaveAs, pushLog } = {}
           }))
 
           // Canvas-only objects (groups): server is authoritative (Phase 1).
-          // Local storage is a one-time migration source — applied only when
-          // the server has no groups, then uploaded by the next autosave.
-          // Never overwrite server groups with stale local data.
-          if (Array.isArray(design?.groups) && design.groups.length > 0) {
-            useCanvasStore.getState().applyServerGroups(design.groups)
+          // An explicit array — including [] (delete-all / never-grouped) —
+          // replaces local state; only a missing field falls back to the
+          // one-time localStorage migration, uploaded by the next autosave.
+          // Server groups are never overwritten with stale local data.
+          if (Array.isArray(design?.groups)) {
+            useCanvasStore.getState().replaceServerGroups(design.groups)
           } else {
             useCanvasStore.getState().loadCanvasMeta(designId)
           }

@@ -31,10 +31,11 @@ export function normalizeCanvasMeta(input) {
     const nodeIds = [...new Set((g.data?.nodeIds || []).filter((m) => typeof m === 'string'))]
       .slice(0, CANVAS_META_MAX_MEMBERS)
     // RF v12 streams resize dims into top-level width/height (+measured) and
-    // leaves style frozen at creation — prefer style, fall back to the live
-    // attrs, or a resize silently reverts on reload.
+    // leaves style frozen at creation — live attrs are the commit-time truth,
+    // style is only the hydrated/legacy fallback. Preferring style here would
+    // persist a stale creation size over the user's resize.
     const dim = (k) => {
-      for (const v of [g.style?.[k], g[k], g.measured?.[k]]) {
+      for (const v of [g[k], g.measured?.[k], g.style?.[k]]) {
         const n = Number(v)
         if (Number.isFinite(n)) return Math.min(Math.max(n, 0), 5000)
       }
@@ -46,6 +47,13 @@ export function normalizeCanvasMeta(input) {
       ...(width !== undefined ? { width } : {}),
       ...(height !== undefined ? { height } : {}),
     } : undefined
+    // Collapse stashes the pre-collapse size here so expand can restore it
+    // after a reload; unknown data keys are otherwise stripped below.
+    const exW = Number(g.data?.expandedStyle?.width)
+    const exH = Number(g.data?.expandedStyle?.height)
+    const expandedStyle = (Number.isFinite(exW) && exW > 0 && Number.isFinite(exH) && exH > 0)
+      ? { width: Math.min(exW, 5000), height: Math.min(exH, 5000) }
+      : undefined
     return {
       id: g.id,
       type: 'group',
@@ -56,6 +64,7 @@ export function normalizeCanvasMeta(input) {
         ...(typeof g.data?.color === 'string' ? { color: g.data.color.slice(0, 32) } : {}),
         nodeIds,
         ...(g.data?.collapsed != null ? { collapsed: !!g.data.collapsed } : {}),
+        ...(expandedStyle ? { expandedStyle } : {}),
       },
     }
   })

@@ -35,6 +35,9 @@ coverage/
 .cache/
 *.tsbuildinfo
 
+# Local-only docs — never push to GitHub
+docs/
+
 # Backup files — never commit database dumps
 backups/
 *.sql

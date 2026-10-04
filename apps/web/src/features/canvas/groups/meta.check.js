@@ -69,9 +69,11 @@ assert.deepEqual(byId.get('g').data.nodeIds, ['a', 'b']) // membership unchanged
 assert.deepEqual(shiftGroupNodes(graph, 'g', 0, 0).moved, false)
 assert.deepEqual(shiftGroupNodes(graph, 'nope', 100, 50).nodes, graph)
 
-// effective size: RF v12 writes resizes to width/measured, never style
-assert.deepEqual(groupSize({ style: { width: 400, height: 200 } }), { width: 400, height: 200 }) // style wins
-assert.deepEqual(groupSize({ style: { width: 400, height: 200 }, width: 600, height: 300 }), { width: 400, height: 200 })
+// effective size: RF v12 streams resizes into width/measured, style frozen at
+// creation — live attrs win, style is only the hydrated/legacy fallback
+assert.deepEqual(groupSize({ style: { width: 400, height: 200 } }), { width: 400, height: 200 }) // hydrated node, style only
+assert.deepEqual(groupSize({ style: { width: 400, height: 200 }, width: 600, height: 300 }), { width: 600, height: 300 }) // resized: live wins over stale creation style
+assert.deepEqual(groupSize({ style: { width: 400, height: 200 }, measured: { width: 640, height: 480 } }), { width: 640, height: 480 }) // measured beats stale style
 assert.deepEqual(groupSize({ width: 600, height: 300 }), { width: 600, height: 300 }) // creation-frozen style absent
 assert.deepEqual(groupSize({ measured: { width: 610, height: 310 } }), { width: 610, height: 310 })
 assert.deepEqual(groupSize({}), { width: undefined, height: undefined })
@@ -83,8 +85,8 @@ assert.deepEqual(
   null, // live attrs, no style — already fits, no clobber
 )
 assert.deepEqual(
-  expandGroupBox({ position: { x: 80, y: 56 }, style: { width: 400, height: 200 } }, members),
-  { x: 80, y: 56, width: 572, height: 252 }, // style wins when present, grows to fit
+  expandGroupBox({ position: { x: 80, y: 56 }, style: { width: 400, height: 200 }, width: 640, height: 480 }, members),
+  null, // live size already fits — stale creation style must not force a shrink
 )
 assert.equal(
   findGroupDropTarget(

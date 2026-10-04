@@ -8,9 +8,10 @@
 export const NODE_W = 232
 export const NODE_H = 88
 // RF v12 streams resize dims into node.width/height (+measured) and never
-// touches node.style — style is frozen at creation. Effective size prefers
-// style, then top-level attrs, then measured. Single funnel: every size reader
-// below goes through here or it silently uses the creation size.
+// touches node.style — style is frozen at creation. Live attrs are the
+// commit-time truth; style is only the hydrated/legacy fallback. Single
+// funnel: every size reader below goes through here or a resize silently
+// reverts to the creation size on save/reload.
 const numOrUndef = (v) => {
   const n = Number(v)
   return Number.isFinite(n) ? n : undefined
@@ -20,8 +21,8 @@ export function groupSize(node) {
   const style = node?.style || {}
   const measured = node?.measured || {}
   return {
-    width: numOrUndef(style.width) ?? numOrUndef(node?.width) ?? numOrUndef(measured.width),
-    height: numOrUndef(style.height) ?? numOrUndef(node?.height) ?? numOrUndef(measured.height),
+    width: numOrUndef(node?.width) ?? numOrUndef(measured.width) ?? numOrUndef(style.width),
+    height: numOrUndef(node?.height) ?? numOrUndef(measured.height) ?? numOrUndef(style.height),
   }
 }
 export const PAD_X = 20

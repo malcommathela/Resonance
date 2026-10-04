@@ -68,18 +68,63 @@ canvasCommands.deleteGroup(gB.id)
 assert.ok(!s().nodes.some((n) => n.id === gB.id))
 assert.equal(s().nodes.length, 2)
 
-// resize commit: keeps the user's size, single history entry, marks dirty
+// resize commit: no-op when the size did not change — no history, no revision
 s().setSelectedNodes([g1, g2].map((n) => n))
 const gC = canvasCommands.createGroup()
 const before = s().nodes.find((n) => n.id === gC.id)
-const startSize = { ...(before.style || {}), width: 50, height: 50 } // pre-gesture size
-canvasCommands.resizeGroup(gC.id, startSize)
+const histLen = s().history.length
+const revNoop = s().revision
+canvasCommands.resizeGroup(gC.id, { ...(before.style || {}) }) // pre-gesture == live size: nothing changed
 const after = s().nodes.find((n) => n.id === gC.id)
-assert.ok(after.style.width >= before.style.width) // user size kept, grown to fit members
+assert.deepEqual(after.style, before.style)
 assert.deepEqual(after.data.nodeIds.sort(), [g1.id, g2.id].sort())
+assert.equal(s().history.length, histLen) // no spurious history entry
+assert.equal(s().revision, revNoop)
+
+// resize commit reads RF live attrs, not the frozen creation style
+const rCreated = { ...s().nodes.find((n) => n.id === gC.id).style }
+// RF streams the resize into live attrs; style stays frozen until commit
+useCanvasStore.setState((st) => ({
+  nodes: st.nodes.map((n) => (n.id === gC.id
+    ? { ...n, width: rCreated.width + 200, height: rCreated.height + 100, measured: { width: rCreated.width + 200, height: rCreated.height + 100 } }
+    : n)),
+}))
+const revPreResize = s().revision
+canvasCommands.resizeGroup(gC.id, rCreated)
+const rCommitted = s().nodes.find((n) => n.id === gC.id)
+assert.equal(rCommitted.style.width, rCreated.width + 200) // live committed, stale creation size not kept
+assert.equal(rCommitted.style.height, rCreated.height + 100)
+assert.equal(s().revision, revPreResize + 1)
+assert.equal(s().isDirty, true)
 canvasCommands.undo()
-const undone = s().nodes.find((n) => n.id === gC.id)
-assert.equal(undone.style.width, 50) // one undo restores pre-resize size
+const rUndone = s().nodes.find((n) => n.id === gC.id)
+assert.equal(rUndone.style.width, rCreated.width) // one undo restores pre-resize style
+assert.equal(rUndone.width, rCreated.width) // ...and live attrs (live-first readers)
+
+// collapse stashes the expanded size; expand restores it, not the chip size
+canvasCommands.toggleGroupCollapse(gC.id)
+const rCollapsed = s().nodes.find((n) => n.id === gC.id)
+assert.equal(rCollapsed.data.collapsed, true)
+assert.deepEqual(rCollapsed.style, { width: 240, height: 44 })
+assert.deepEqual(rCollapsed.data.expandedStyle, { width: rCreated.width, height: rCreated.height })
+assert.equal(s().nodes.find((n) => n.id === g1.id).hidden, true)
+canvasCommands.toggleGroupCollapse(gC.id)
+const rExpanded = s().nodes.find((n) => n.id === gC.id)
+assert.equal(rExpanded.data.collapsed, false)
+assert.deepEqual(rExpanded.style, { width: rCreated.width, height: rCreated.height }) // chip size never becomes permanent
+assert.equal(s().nodes.find((n) => n.id === g1.id).hidden, false)
+
+// authoritative hydration: explicit [] clears stale groups, not-loaded is no-op
+s().replaceServerGroups([])
+assert.ok(!s().nodes.some((n) => n.type === 'group')) // stale cleared (design switch / delete-all)
+assert.equal(s().nodes.filter((n) => n.type === 'customBlock').length, 2) // members stay
+s().replaceServerGroups(undefined)
+assert.equal(s().nodes.filter((n) => n.type === 'customBlock').length, 2) // not-loaded ≠ empty
+s().replaceServerGroups([{ id: 'srv1', type: 'group', position: { x: 5, y: 5 }, style: { width: 500, height: 300 }, data: { label: 'S', nodeIds: [g1.id], collapsed: false } }])
+const srv = s().nodes.find((n) => n.id === 'srv1')
+assert.equal(srv.style.width, 500)
+assert.equal(srv.draggable, true)
+s().replaceServerGroups([]) // leave a clean document for the blocks below
 
 // --- selection authority ---
 canvasCommands.selectNode(g1.id)
