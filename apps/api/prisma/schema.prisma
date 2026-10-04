@@ -93,6 +93,8 @@ model Design {
   // Chat spec §21: every structural modification increments the version.
   // Version is the context-correctness mechanism for design-aware AI chat.
   version     Int      @default(1)
+  // Canvas-only presentation objects (background groups). Never simulation input.
+  canvasMeta  Json?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

@@ -74,9 +74,16 @@ export function useCanvasPersistence({ designId, onRequireSaveAs, pushLog } = {}
             edges: loadedEdges,
           }))
 
-          // Canvas-only objects (groups) rejoin from local storage,
-          // then the full canvas state becomes the clean baseline.
-          useCanvasStore.getState().loadCanvasMeta(designId)
+          // Canvas-only objects (groups): server is authoritative (Phase 1).
+          // An explicit array — including [] (delete-all / never-grouped) —
+          // replaces local state; only a missing field falls back to the
+          // one-time localStorage migration, uploaded by the next autosave.
+          // Server groups are never overwritten with stale local data.
+          if (Array.isArray(design?.groups)) {
+            useCanvasStore.getState().replaceServerGroups(design.groups)
+          } else {
+            useCanvasStore.getState().loadCanvasMeta(designId)
+          }
           const hydrated = useCanvasStore.getState()
 
           markHydrated(designId, hydrated.nodes, hydrated.edges, design?.version ?? null)

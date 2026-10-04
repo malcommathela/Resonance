@@ -1,7 +1,7 @@
 // Self-check for groups/meta.js (not bundled — never imported).
 // Run: node apps/web/src/features/canvas/groups/meta.check.js
 import assert from 'node:assert/strict'
-import { groupBox, expandGroupBox, shiftGroupNodes, pruneGroupMembers, extractMetaNodes, findGroupDropTarget, GROUP_Z_INDEX, NODE_Z_INDEX } from './meta.js'
+import { groupBox, expandGroupBox, shiftGroupNodes, pruneGroupMembers, extractMetaNodes, findGroupDropTarget, groupSize, GROUP_Z_INDEX, NODE_Z_INDEX } from './meta.js'
 
 // Layer invariant: explicit non-negative backdrop < architecture (manual zIndexMode)
 assert.ok(GROUP_Z_INDEX >= 0 && NODE_Z_INDEX >= 0)
@@ -10,8 +10,8 @@ assert.ok(GROUP_Z_INDEX < NODE_Z_INDEX)
 const box = groupBox([{ position: { x: 100, y: 100 } }, { position: { x: 400, y: 200 } }])
 assert.equal(box.x, 80)
 assert.equal(box.y, 56)
-assert.equal(box.width, 300 + 208 + 40)
-assert.equal(box.height, 100 + 72 + 44 + 20)
+assert.equal(box.width, 300 + 232 + 40)
+assert.equal(box.height, 100 + 88 + 44 + 20)
 assert.equal(groupBox([]), null)
 
 const groups = [
@@ -37,16 +37,16 @@ assert.deepEqual(meta.notes, []) // legacy notes ignored, never persisted
 // expand-only: manual whitespace survives, overflow grows, escape shifts
 const members = [{ position: { x: 100, y: 100 } }, { position: { x: 400, y: 200 } }]
 assert.equal(expandGroupBox({ position: { x: 80, y: 56 }, style: { width: 600, height: 300 } }, members), null)
-assert.equal(expandGroupBox({ position: { x: 80, y: 56 }, style: { width: 548, height: 236 } }, members), null)
+assert.equal(expandGroupBox({ position: { x: 80, y: 56 }, style: { width: 572, height: 252 } }, members), null)
 assert.deepEqual(
-  expandGroupBox({ position: { x: 80, y: 56 }, style: { width: 548, height: 236 } },
+  expandGroupBox({ position: { x: 80, y: 56 }, style: { width: 572, height: 252 } },
     [{ position: { x: 100, y: 100 } }, { position: { x: 500, y: 200 } }]),
-  { x: 80, y: 56, width: 648, height: 236 },
+  { x: 80, y: 56, width: 672, height: 252 },
 )
 assert.deepEqual(
-  expandGroupBox({ position: { x: 80, y: 56 }, style: { width: 548, height: 236 } },
+  expandGroupBox({ position: { x: 80, y: 56 }, style: { width: 572, height: 252 } },
     [{ position: { x: 0, y: 100 } }, { position: { x: 400, y: 200 } }]),
-  { x: -20, y: 56, width: 648, height: 236 },
+  { x: -20, y: 56, width: 672, height: 252 },
 )
 assert.equal(expandGroupBox({ position: { x: 0, y: 0 }, style: { width: 1, height: 1 } }, []), null)
 
@@ -68,6 +68,32 @@ assert.deepEqual(byId.get('c').position, { x: 900, y: 900 }) // outsider untouch
 assert.deepEqual(byId.get('g').data.nodeIds, ['a', 'b']) // membership unchanged
 assert.deepEqual(shiftGroupNodes(graph, 'g', 0, 0).moved, false)
 assert.deepEqual(shiftGroupNodes(graph, 'nope', 100, 50).nodes, graph)
+
+// effective size: RF v12 streams resizes into width/measured, style frozen at
+// creation — live attrs win, style is only the hydrated/legacy fallback
+assert.deepEqual(groupSize({ style: { width: 400, height: 200 } }), { width: 400, height: 200 }) // hydrated node, style only
+assert.deepEqual(groupSize({ style: { width: 400, height: 200 }, width: 600, height: 300 }), { width: 600, height: 300 }) // resized: live wins over stale creation style
+assert.deepEqual(groupSize({ style: { width: 400, height: 200 }, measured: { width: 640, height: 480 } }), { width: 640, height: 480 }) // measured beats stale style
+assert.deepEqual(groupSize({ width: 600, height: 300 }), { width: 600, height: 300 }) // creation-frozen style absent
+assert.deepEqual(groupSize({ measured: { width: 610, height: 310 } }), { width: 610, height: 310 })
+assert.deepEqual(groupSize({}), { width: undefined, height: undefined })
+assert.deepEqual(groupSize({ style: { width: 'nope' }, width: 500 }), { width: 500, height: undefined }) // non-numeric skipped
+
+// expand/drop math follows the live size, not the creation style
+assert.deepEqual(
+  expandGroupBox({ position: { x: 80, y: 56 }, width: 572, height: 252 }, members),
+  null, // live attrs, no style — already fits, no clobber
+)
+assert.deepEqual(
+  expandGroupBox({ position: { x: 80, y: 56 }, style: { width: 400, height: 200 }, width: 640, height: 480 }, members),
+  null, // live size already fits — stale creation style must not force a shrink
+)
+assert.equal(
+  findGroupDropTarget(
+    [{ id: 'g1', type: 'group', position: { x: 0, y: 0 }, width: 800, height: 600, data: {} }],
+    { id: 'a', type: 'customBlock', position: { x: 500, y: 400 } }),
+  'g1', // hit via live width attrs (a 100x100 style rect would miss)
+)
 
 // drop detection: center-in-rect, flat groups only, collapsed excluded
 const dropGroups = [

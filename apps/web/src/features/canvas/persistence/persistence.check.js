@@ -23,6 +23,7 @@ await saveCanvasDocument('d1', { nodes, edges: [{ id: 'e1' }], revision: 7 }, as
 assert.equal(seen.id, 'd1')
 assert.equal(seen.payload.revision, 7) // revision rides along for race protection
 assert.equal(seen.payload.nodes.length, 3) // API-side filtering stays in designStore (single funnel)
+assert.equal(seen.payload.nodes.filter((n) => n.type === 'group').length, 1) // groups ride the versioned server canvasMeta via designStore
 
 // Version lineage: our own race retries, foreign writers never retry
 assert.equal(serverVersionOrigin(999), null) // unknown → no retry

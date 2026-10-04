@@ -119,7 +119,7 @@ function calculateBlockUsages(blocks, blockMetrics, config) {
 
     const totalRequests = metrics.totalRequests || 0
     const throughputRps = metrics.throughputRps || 0
-    const currentReplicas = metrics.currentReplicas || scaling.minReplicas || 1
+    const currentReplicas = metrics.currentReplicas || rawConfig.replicas || scaling.minReplicas || 1
     const avgLatencyMs = metrics.avgLatencyMs || 0
 
     // Runtime hours = simulation duration scaled to month

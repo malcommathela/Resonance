@@ -1,11 +1,12 @@
-// Canvas persistence boundary (Phase 4).
-// One interface over two mechanisms: architecture blocks/edges go through the
-// API via designStore, group canvas objects ride in localStorage compat keys.
+// Canvas persistence boundary (Phase 4, server groups Phase 1).
+// Architecture blocks/edges AND group canvas objects go through the API via
+// designStore (Design.canvasMeta); the localStorage compat key is a one-time
+// migration source only, never authoritative.
 // Consumers call load/save — they never touch localStorage or decide what is
-// persisted. No DB migration: the Block/Edge contract only understands
-// simulating blocks (see document.js toPersistable).
+// persisted. Groups never enter the Block/Edge contract or simulation input
+// (see document.js toPersistable).
 // Covered by persistence.check.js (run: node persistence.check.js).
-import { persistCanvasMeta, readCanvasMeta } from '../groups/meta.js'
+import { persistCanvasMeta } from '../groups/meta.js'
 import { toPersistable, isGroupNode } from '../core/document.js'
 
 export function splitPersistable(nodes, edges) {
@@ -15,15 +16,6 @@ export function splitPersistable(nodes, edges) {
     edges: edges || [],
     groups: (nodes || []).filter(isGroupNode),
   }
-}
-
-export function loadCanvasPersistence(designId, getState) {
-  // Architecture comes from the caller (designStore/API); groups merge from
-  // localStorage compat. Returns group nodes to append, or [].
-  const meta = readCanvasMeta(designId)
-  if (!meta?.groups?.length) return []
-  const have = new Set((getState?.().nodes || []).map((n) => n.id))
-  return meta.groups.filter((n) => n && n.id && !have.has(n.id))
 }
 
 export function saveCanvasPersistence(designId, nodes, edges) {
@@ -93,9 +85,10 @@ export function freezeSaveSnapshot({ designId, nodes, edges, revision }) {
 }
 
 // Explicit persistence boundary (Phase 8). The UI decides WHEN to save;
-// this decides WHAT goes WHERE: groups → meta channel, blocks/edges → API
-// via saveFn (designStore.saveCanvas / autoSaveCanvas). Transient state
-// (selection, validation, sim metrics) is never passed in.
+// this decides WHAT goes WHERE: full node list (blocks + groups) → saveFn
+// (designStore.saveCanvas / autoSaveCanvas, which funnels groups into the
+// versioned server canvasMeta). Transient state (selection, validation, sim
+// metrics) is never passed in. The localStorage write is compat only.
 export function saveCanvasDocument(designId, { nodes, edges, revision, getVersion }, saveFn) {
   saveCanvasPersistence(designId, nodes, edges)
   return saveFn(designId, { nodes, edges, revision, getVersion })

@@ -30,6 +30,7 @@ import { categories, CONNECTION_TYPE_META, DATABASE_ENGINES, getBlockBehavioralM
 import { DECORATIVE_PROPS } from '@/stores/canvasStore'
 import { canvasCommands } from '@/features/canvas/core/canvasCommands'
 import { setBehavioralValue, setConfigValue } from '@/features/canvas/inspector/propertyResolver'
+import { getPropertyDefinition } from '@/features/canvas/inspector/propertyDefinitions'
 import { validateSingleProperty } from '@/lib/validation'
 
 // ============================================================================
@@ -275,7 +276,9 @@ export const PropertyPanel = forwardRef(({
   const handleAddConfigField = () => {
     if (!newConfigKey.trim()) return
     const key = newConfigKey.trim()
-    if (DECORATIVE_PROPS.has(key)) {
+    // Registry-owned keys already have an explicit field — a custom twin
+    // would shadow it with a confusing duplicate label. Edit it in place.
+    if (DECORATIVE_PROPS.has(key) || getPropertyDefinition(key)) {
       setNewConfigKey('')
       setNewConfigValue('')
       setShowAddConfig(false)
@@ -316,7 +319,7 @@ export const PropertyPanel = forwardRef(({
       {/* Title bar */}
       <div className="flex items-center justify-between p-3 border-b border-resonance-border shrink-0">
         <h3 className="text-sm font-semibold text-resonance-text-primary">
-          {propertyView === 'overview' ? (data.label || 'Service') : activeCategory?.label}
+          {propertyView === 'overview' ? 'Properties' : activeCategory?.label}
         </h3>
         <div className="flex items-center gap-1">
           <button
@@ -328,13 +331,9 @@ export const PropertyPanel = forwardRef(({
           </button>
         </div>
       </div>
-      {propertyView === 'overview' && (
-        <p className="px-3 pt-2 text-xs text-resonance-text-muted shrink-0">{data.type || 'service-node'}</p>
-      )}
-
-      {/* Block header */}
-      <div className="p-4 border-b border-resonance-border shrink-0">
-        <div className="flex items-center gap-3 mb-4">
+      {/* Block header (name + type live here; the title bar stays generic) */}
+      <div className="p-3 border-b border-resonance-border shrink-0">
+        <div className="flex items-center gap-3 mb-3">
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
             style={{ backgroundColor: `${data.color || '#8b5cf6'}15` }}
@@ -899,8 +898,9 @@ export const PropertyPanel = forwardRef(({
 
               {genericConfig.map(([key, value]) => (
                 <div key={key} className="group" data-property={key}>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs text-resonance-text-muted capitalize">{key.replace(/-/g, ' ')}</label>
+                  {/* Single label ownership: ConfigInput renders the label.
+                      A wrapper label here renders Port/Replicas twice. */}
+                  <div className="flex items-center justify-end mb-1">
                     <button
                       onClick={() => handleRemoveConfigField(key)}
                       className="opacity-0 group-hover:opacity-100 p-0.5 rounded-lg hover:bg-red-500/10 text-red-500 transition-all"
@@ -950,7 +950,7 @@ export const PropertyPanel = forwardRef(({
                   <div className="flex gap-1.5">
                     <button
                       onClick={handleAddConfigField}
-                      disabled={!newConfigKey.trim() || DECORATIVE_PROPS.has(newConfigKey.trim())}
+                      disabled={!newConfigKey.trim() || DECORATIVE_PROPS.has(newConfigKey.trim()) || !!getPropertyDefinition(newConfigKey.trim())}
                       className="flex-1 px-2 py-1 rounded-lg bg-resonance-accent text-resonance-neutral text-[10px] font-medium hover:bg-resonance-accent-hover disabled:opacity-40 transition-colors"
                     >
                       Add

@@ -4,6 +4,7 @@
  * Pre-flight validation + display helpers for architecture findings.
  * Mirrors server-side rules so invalid configs are caught before API call.
  */
+import { extractReplicaConfig, validateReplicaConfig } from '@shared/replicaValidation'
 
 // ============================================================================
 // SEVERITY CONSTANTS (mirrors server validation.js)
@@ -486,30 +487,42 @@ export function validateBlock(block) {
     }
   }
 
-  // maxReplicas
-  if (config.maxReplicas !== undefined) {
-    if (!isInteger(config.maxReplicas) || config.maxReplicas < 1) {
+  // Scaling bounds: flat config.* wins, behavioralModel.scalingBehavior fallback
+  // (shared contract — mirrors server validation.js).
+  const replicaConfig = extractReplicaConfig(config)
+  for (const issue of validateReplicaConfig(replicaConfig)) {
+    if (issue.code === 'replicas') continue // covered by the flat check above
+    if (issue.code === 'minReplicas') {
+      findings.push(makeFinding(
+        `cli-min-rep-${block.id}`, SEVERITY.WARNING, FINDING_TYPES.INVALID_MAX_REPLICAS,
+        `Block "${label}" has invalid minReplicas: ${issue.currentValue}.`,
+        { blockId: block.id, property: 'minReplicas', currentValue: issue.currentValue }
+      ))
+    } else if (issue.code === 'maxReplicas') {
       findings.push(makeFinding(
         `cli-max-rep-${block.id}`, SEVERITY.WARNING, FINDING_TYPES.INVALID_MAX_REPLICAS,
-        `Block "${label}" has invalid maxReplicas: ${config.maxReplicas}.`,
-        { blockId: block.id, property: 'maxReplicas', currentValue: config.maxReplicas }
+        `Block "${label}" has invalid maxReplicas: ${issue.currentValue}.`,
+        { blockId: block.id, property: 'maxReplicas', currentValue: issue.currentValue }
       ))
-    } else if (config.minReplicas !== undefined && config.maxReplicas < config.minReplicas) {
+    } else if (issue.code === 'range') {
       findings.push(makeFinding(
         `cli-max-lt-min-${block.id}`, SEVERITY.WARNING, FINDING_TYPES.INVALID_MAX_REPLICAS,
         `Block "${label}" maxReplicas < minReplicas.`,
-        { blockId: block.id, property: 'maxReplicas', currentValue: config.maxReplicas }
+        { blockId: block.id, property: 'maxReplicas', currentValue: issue.currentValue }
+      ))
+    } else if (issue.code === 'autoscaling') {
+      findings.push(makeFinding(
+        `cli-autoscale-${block.id}`, SEVERITY.WARNING, FINDING_TYPES.INVALID_AUTO_SCALING,
+        `Block "${label}" has autoScaling enabled but missing min/maxReplicas.`,
+        { blockId: block.id, property: 'autoScaling', currentValue: true }
+      ))
+    } else if (issue.code === 'bounds') {
+      findings.push(makeFinding(
+        `cli-replicas-bounds-${block.id}`, SEVERITY.CRITICAL, FINDING_TYPES.INVALID_REPLICAS,
+        `Block "${label}" replicas (${issue.currentValue}) outside autoscaling bounds.`,
+        { blockId: block.id, property: 'replicas', currentValue: issue.currentValue }
       ))
     }
-  }
-
-  // autoScaling
-  if (config.autoScaling === true && (config.maxReplicas === undefined || config.minReplicas === undefined)) {
-    findings.push(makeFinding(
-      `cli-autoscale-${block.id}`, SEVERITY.WARNING, FINDING_TYPES.INVALID_AUTO_SCALING,
-      `Block "${label}" has autoScaling enabled but missing min/maxReplicas.`,
-      { blockId: block.id, property: 'autoScaling', currentValue: true }
-    ))
   }
 
   // cost fields (info)

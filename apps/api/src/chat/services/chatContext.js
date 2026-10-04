@@ -13,6 +13,7 @@ import { withRetry, withTimeout } from '../../utils/retry.js'
 import { ERROR_CODES } from '../../utils/errors.js'
 import { getDesignContextCache, setDesignContextCache, acquireLock, releaseLock, chatKeys } from './cacheService.js'
 import { SYSTEM_PERSONA, buildDesignContextPrefix, PROMPT_VERSIONS } from '../prompts.js'
+import { shapeContextGroups } from '../../canvas/canvasGroups.js'
 
 // Context build budget. The build runs BEFORE the AI call; a slow-but-correct
 // context beats a fast blind answer. Cold builds (cache miss) query Postgres
@@ -37,6 +38,17 @@ function pickConfig(config) {
   for (const k of CONFIG_KEYS) {
     if (config[k] !== undefined && config[k] !== null) out[k] = config[k]
   }
+  return Object.keys(out).length ? out : undefined
+}
+
+// Nested autoscaling bounds the flat CONFIG_KEYS allowlist cannot see.
+// integers only; anything else is omitted, never coerced.
+function pickScaling(config) {
+  const scaling = config?.behavioralModel?.scalingBehavior
+  if (!scaling || typeof scaling !== 'object') return undefined
+  const out = {}
+  if (Number.isInteger(scaling.minReplicas)) out.minReplicas = scaling.minReplicas
+  if (Number.isInteger(scaling.maxReplicas)) out.maxReplicas = scaling.maxReplicas
   return Object.keys(out).length ? out : undefined
 }
 
@@ -99,6 +111,7 @@ export async function buildDesignContext(designId) {
 
   const contextRevision = hashParts(
     'chat-context-v2',
+    PROMPT_VERSIONS.designAnalysis,
     design.version,
     simId?.id, simId?.status, simId?.updatedAt?.toISOString(),
     repId?.id, repId?.generatedAt?.toISOString(),
@@ -119,7 +132,7 @@ export async function buildDesignContext(designId) {
     const buildStartedAt = Date.now()
     // Per-part resilience: a slow/failing sub-query must not blind the whole
     // context — components and connections are the core, the rest enrich.
-    const [blocksRes, edgesRes, simulationRes, reportRes, optimizationsRes] = await Promise.allSettled([
+    const [blocksRes, edgesRes, simulationRes, reportRes, optimizationsRes, canvasMetaRes] = await Promise.allSettled([
       prisma.block.findMany({
         where: { designId },
         select: { id: true, type: true, label: true, replicas: true, rateLimit: true, timeoutMs: true, config: true },
@@ -160,10 +173,14 @@ export async function buildDesignContext(designId) {
         take: 5,
         select: { id: true, ruleName: true, appliedAt: true, status: true },
       }),
+      prisma.design.findUnique({
+        where: { id: designId },
+        select: { canvasMeta: true },
+      }),
     ])
 
     const value = (res) => (res.status === 'fulfilled' ? res.value : null)
-    for (const res of [blocksRes, edgesRes, simulationRes, reportRes, optimizationsRes]) {
+    for (const res of [blocksRes, edgesRes, simulationRes, reportRes, optimizationsRes, canvasMetaRes]) {
       if (res.status === 'rejected') {
         logger.warn({ err: res.reason?.message, designId }, 'Design context sub-query failed')
       }
@@ -175,10 +192,21 @@ export async function buildDesignContext(designId) {
     const latestReport = value(reportRes)
     const recentOptimizations = value(optimizationsRes) || []
 
+    // Canvas groups: organizational metadata, never simulation input. A failed
+    // query or corrupt payload is 'unavailable' — never "no groups".
+    let groups = null
+    let groupsHealth = 'unavailable'
+    if (canvasMetaRes.status === 'fulfilled') {
+      const shaped = shapeContextGroups(value(canvasMetaRes)?.canvasMeta, blocks)
+      groups = shaped.groups
+      groupsHealth = shaped.health
+    }
+
     const contextHealth = {
       design: 'available',
       components: blocksRes.status === 'fulfilled' ? 'available' : 'unavailable',
       connections: edgesRes.status === 'fulfilled' ? 'available' : 'unavailable',
+      groups: groupsHealth,
       simulation: simulationRes.status === 'fulfilled' ? (latestSimulation ? 'available' : 'not_generated') : 'unavailable',
       report: reportRes.status === 'fulfilled' ? (latestReport ? 'available' : 'not_generated') : 'unavailable',
       optimizations: optimizationsRes.status === 'fulfilled' ? 'available' : 'unavailable',
@@ -199,7 +227,9 @@ export async function buildDesignContext(designId) {
         ...(b.rateLimit != null ? { rateLimitPerMinute: b.rateLimit } : {}),
         ...(b.timeoutMs != null ? { timeoutMs: b.timeoutMs } : {}),
         ...(pickConfig(b.config) ? { config: pickConfig(b.config) } : {}),
+        ...(pickScaling(b.config) ? { scaling: pickScaling(b.config) } : {}),
       })),
+      groups,
       connections: edges.slice(0, MAX_CONNECTIONS).map((e) => ({
         source: e.sourceId,
         target: e.targetId,

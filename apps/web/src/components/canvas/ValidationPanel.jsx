@@ -168,7 +168,7 @@ export const ValidationPanel = ({
   return (
     <div className="flex min-h-0 w-full flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-resonance-border">
+      <div className="flex items-center justify-between p-4 border-b border-resonance-border shrink-0">
         <div className="flex items-center gap-2">
           <BarChart3 size={16} className="text-resonance-accent" />
           <h3 className="text-sm font-semibold text-resonance-text-primary">Validation Results</h3>
@@ -193,7 +193,7 @@ export const ValidationPanel = ({
       </div>
 
       {/* Scores */}
-      <div className="grid grid-cols-2 gap-3 p-4 border-b border-resonance-border">
+      <div className="grid grid-cols-2 gap-3 p-4 border-b border-resonance-border shrink-0">
         <div className="bg-resonance-bg-tertiary rounded-xl p-3">
           <p className="text-xs text-resonance-text-muted mb-1">Topology Score</p>
           <p className={`text-lg font-bold ${
@@ -215,7 +215,7 @@ export const ValidationPanel = ({
       </div>
 
       {/* Status Banner */}
-      <div className={`px-4 py-2.5 border-b border-resonance-border flex items-center gap-2 ${
+      <div className={`px-4 py-2.5 border-b border-resonance-border flex items-center gap-2 shrink-0 ${
         validation.canSimulate
           ? validation.criticalCount === 0 && validation.warningCount === 0 && validation.riskCount === 0
             ? 'bg-green-500/5'
@@ -249,7 +249,7 @@ export const ValidationPanel = ({
 
       {/* Severity Filter Bar */}
       {hasFindings && (
-        <div className="px-4 py-2 border-b border-resonance-border flex items-center gap-2">
+        <div className="px-4 py-2 border-b border-resonance-border flex items-center gap-2 shrink-0">
           <Filter size={12} className="text-resonance-text-muted shrink-0" />
           <div className="flex items-center gap-1.5 flex-wrap">
             {severities.map(sev => {
@@ -283,7 +283,7 @@ export const ValidationPanel = ({
 
       {/* Search */}
       {hasFindings && (
-        <div className="px-4 py-2 border-b border-resonance-border">
+        <div className="px-4 py-2 border-b border-resonance-border shrink-0">
           <input
             type="text"
             placeholder="Search findings..."
