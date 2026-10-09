@@ -45,7 +45,9 @@ class ApiService {
     const safeEndpoint = endpoint?.startsWith('/') ? endpoint : `/${endpoint || ''}`
     const url = `${API_BASE}${safeEndpoint}`
     const isGet = !options.method || options.method === 'GET'
-    const dedupeKey = isGet ? `GET:${url}:${JSON.stringify(options)}` : null
+    const headers = { ...(await this.getHeaders()), ...options.headers }
+    const authKey = headers['Authorization'] ? String(headers['Authorization']).slice(-16) : 'anon'
+    const dedupeKey = isGet ? `GET:${url}:${JSON.stringify(options)}:${authKey}` : null
 
     if (dedupeKey && pending.has(dedupeKey)) {
       return pending.get(dedupeKey)
@@ -54,7 +56,7 @@ class ApiService {
     const promise = fetch(url, {
       ...options,
       credentials: 'include',
-      headers: { ...(await this.getHeaders()), ...options.headers },
+      headers,
     }).then(async (response) => {
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))

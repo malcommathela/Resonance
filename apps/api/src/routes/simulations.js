@@ -178,45 +178,55 @@ router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
       }
     })
 
-    await enqueueSimulation({
-      simId: simulation.id,
-      design: {
-        id: design.id,
-        name: design.name,
-        ownerId: design.ownerId,
-        blocks: design.blocks,
-        edges: design.edges,
-      },
-      config: {
-        seed,
-        trafficPattern,
-        rps,
-        duration,
-        scenario,
-        monteCarloPasses,
-        confidenceLevel,
-        growthScenario,
-        generateReport,
-        deterministicSeed,
-        targetBlockId,
-        targetEdgeId,
-        trafficParams,
-        validation,
-        startedAt: simulation.startedAt,
-        assumptions: {
-          queueModel: 'M/M/1 approximation with capacity limits',
-          networkModel: 'protocol-specific latency + jitter + packet loss',
-          failureModel: 'targeted per-block with cascading propagation',
-          scalingModel: 'instantaneous horizontal/vertical/auto-scaling',
-          latencyDecomposition: 'network + serialization + encryption + compression + processing + queue',
-          resourceModel: 'CPU + memory + thread pool + connection pool contention',
+    let enqueued = false
+    try {
+      await enqueueSimulation({
+        simId: simulation.id,
+        design: {
+          id: design.id,
+          name: design.name,
+          ownerId: design.ownerId,
+          blocks: design.blocks,
+          edges: design.edges,
         },
-      },
-      userId,
-      clientInfo: getClientInfo(req),
-    })
-
-    await lock.release()
+        config: {
+          seed,
+          trafficPattern,
+          rps,
+          duration,
+          scenario,
+          monteCarloPasses,
+          confidenceLevel,
+          growthScenario,
+          generateReport,
+          deterministicSeed,
+          targetBlockId,
+          targetEdgeId,
+          trafficParams,
+          validation,
+          startedAt: simulation.startedAt,
+          assumptions: {
+            queueModel: 'M/M/1 approximation with capacity limits',
+            networkModel: 'protocol-specific latency + jitter + packet loss',
+            failureModel: 'targeted per-block with cascading propagation',
+            scalingModel: 'instantaneous horizontal/vertical/auto-scaling',
+            latencyDecomposition: 'network + serialization + encryption + compression + processing + queue',
+            resourceModel: 'CPU + memory + thread pool + connection pool contention',
+          },
+        },
+        userId,
+        clientInfo: getClientInfo(req),
+      })
+      enqueued = true
+    } finally {
+      await lock.release().catch(() => {})
+      if (!enqueued) {
+        await prisma.simulation.update({
+          where: { id: simulation.id },
+          data: { status: 'failed', errorMessage: 'Failed to enqueue simulation job' },
+        }).catch(() => {})
+      }
+    }
 
     await logAuditEvent({
       userId,
@@ -321,9 +331,12 @@ router.get('/:id/stream', sseLimiter, async (req, res) => {
 
     const simulation = await prisma.simulation.findUnique({
       where: { id },
-      select: { designId: true },
+      select: {
+        designId: true, progress: true, status: true, metrics: true,
+        globalMetrics: true, currentRps: true, validationResult: true,
+        confidenceScore: true,
+      },
     })
-
     if (!simulation) return res.status(404).json({ error: 'Not found' })
     await assertDesignAccess(req, simulation.designId)
 

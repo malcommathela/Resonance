@@ -1160,12 +1160,6 @@ function handleRequestFailed(state, event) {
     return
   }
 
-  request.status = 'failed'
-  request.failureReason = reason
-  request.totalLatencyMs = (state.time - request.arrivalTime) * 1000
-  state.failedRequests.push(request)
-  state.logEvent(EVENT_TYPES.REQUEST_FAILED, { requestId, blockId, reason })
-
   if (edgeState) {
     const reliability = edgeState.model.reliability || {}
     if (reliability.maxRetries > 0 && (request.retryCount || 0) < reliability.maxRetries) {
@@ -1178,10 +1172,17 @@ function handleRequestFailed(state, event) {
         time: state.time + retryDelay,
         type: EVENT_TYPES.RETRY,
         requestId: request.id,
-        blockId: request.history[request.history.length - 2],
+        blockId,
       })
+      return
     }
   }
+
+  request.status = 'failed'
+  request.failureReason = reason
+  request.totalLatencyMs = (state.time - request.arrivalTime) * 1000
+  state.failedRequests.push(request)
+  state.logEvent(EVENT_TYPES.REQUEST_FAILED, { requestId, blockId, reason })
 }
 
 function handleQueueDequeue(state, event, duration) {

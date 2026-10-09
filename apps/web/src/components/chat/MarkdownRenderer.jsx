@@ -20,11 +20,14 @@ export const MarkdownRenderer = ({ content }) => (
       li: ({ children }) => <li className="leading-relaxed pl-1">{children}</li>,
       strong: ({ children }) => <strong className="font-semibold text-resonance-text-primary">{children}</strong>,
       em: ({ children }) => <em className="italic text-resonance-text-secondary">{children}</em>,
-      a: ({ children, href }) => (
-        <a href={href} target="_blank" rel="noreferrer" className="text-resonance-accent underline underline-offset-2">
-          {children}
-        </a>
-      ),
+      a: ({ children, href }) => {
+        if (!/^(https?:|mailto:)/i.test(href || '')) return <span>{children}</span>
+        return (
+          <a href={href} target="_blank" rel="noopener noreferrer" className="text-resonance-accent underline underline-offset-2">
+            {children}
+          </a>
+        )
+      },
       code: ({ className, children }) => {
         const isBlock = /language-/.test(className || '')
         if (isBlock) {

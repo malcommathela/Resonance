@@ -291,12 +291,14 @@ function generateCustomTraffic(baseRps, duration, params, rng) {
  * @param {DeterministicRNG} rng
  * @returns {Array<{time: number, requestId: string}>} Arrival events
  */
-export function generateArrivalEvents(trafficCurve, rng) {
+export function generateArrivalEvents(trafficCurve, rng, maxEvents = 500000) {
   const events = []
   let requestCounter = 0
+  let truncated = false
 
   for (const { time, rps } of trafficCurve) {
     if (rps <= 0) continue
+    if (events.length >= maxEvents) { truncated = true; break }
 
     // For high RPS, use Poisson distribution for count, then uniform spacing
     // For very high RPS, use deterministic spacing with small jitter
@@ -317,7 +319,10 @@ export function generateArrivalEvents(trafficCurve, rng) {
     } else {
       // High count: deterministic spacing with tiny jitter for realism
       const spacing = 1.0 / count
-      for (let i = 0; i < count; i++) {
+      const remaining = maxEvents - events.length
+      const n = Math.min(count, remaining)
+      if (n < count) truncated = true
+      for (let i = 0; i < n; i++) {
         const jitter = rng.nextRange(-spacing * 0.1, spacing * 0.1)
         const offset = (i * spacing) + jitter
         const clampedOffset = Math.max(0, Math.min(0.999, offset))
@@ -332,6 +337,15 @@ export function generateArrivalEvents(trafficCurve, rng) {
   // Sort by time (should already be mostly sorted, but jitter can cause minor disorder)
   events.sort((a, b) => a.time - b.time)
 
+  if (events.length > maxEvents) {
+    const stride = events.length / maxEvents
+    const sampled = []
+    for (let i = 0; i < maxEvents; i++) sampled.push(events[Math.floor(i * stride)])
+    sampled.truncated = true
+    return sampled
+  }
+
+  if (truncated) events.truncated = true
   return events
 }
 
@@ -339,11 +353,17 @@ export function generateArrivalEvents(trafficCurve, rng) {
  * Generate a traffic summary for reporting.
  */
 export function generateTrafficSummary(trafficCurve) {
+  let total = 0
+  let min = Infinity
+  let max = -Infinity
+  for (const p of trafficCurve) {
+    total += p.rps
+    if (p.rps < min) min = p.rps
+    if (p.rps > max) max = p.rps
+  }
+  if (!trafficCurve.length) { min = 0; max = 0 }
   const rpsValues = trafficCurve.map(p => p.rps)
-  const total = rpsValues.reduce((a, b) => a + b, 0)
-  const min = Math.min(...rpsValues)
-  const max = Math.max(...rpsValues)
-  const avg = total / rpsValues.length
+  const avg = trafficCurve.length ? total / trafficCurve.length : 0
 
   // Calculate percentiles
   const sorted = [...rpsValues].sort((a, b) => a - b)

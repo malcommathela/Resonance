@@ -83,6 +83,7 @@ export async function runSimulationProcessor(job) {
   const edges = design.edges || []
   const validationResult = validateSimulationInput(config, blocks, edges)
   if (!validationResult.canSimulate) {
+    clearInterval(stopCheckInterval)
     await prisma.simulation.update({
       where: { id: simId },
       data: {
@@ -116,7 +117,8 @@ export async function runSimulationProcessor(job) {
 
   async function publishProgress(data) {
     const now = Date.now()
-    if (now - lastRedisPublish < REDIS_PUBLISH_THROTTLE_MS) return
+    const isTerminal = data && ['completed', 'failed', 'stopped', 'rejected'].includes(data.status)
+    if (!isTerminal && now - lastRedisPublish < REDIS_PUBLISH_THROTTLE_MS) return
     lastRedisPublish = now
 
     try {
