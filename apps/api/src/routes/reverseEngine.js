@@ -3,6 +3,7 @@ import { requireAuth, getAuth, clerkClient } from '@clerk/express'
 import { prisma } from '../lib/db.js'
 import { cache } from '../lib/redis.js'
 import { generateArchitecture } from '../lib/gemini.js'
+import { validationLimiter } from '../middleware/rateLimit.js'
 
 const router = Router()
 
@@ -46,7 +47,8 @@ async function getDbUser(req) {
 // ============================================================
 
 // POST /analyze/public-repo — Import from public GitHub repo URL
-router.post('/public-repo', async (req, res) => {
+// Requires auth + rate limit: each call costs GitHub API quota + Gemini tokens.
+router.post('/public-repo', requireApiAuth, validationLimiter, async (req, res) => {
   try {
     const { repoUrl, designId } = req.body
     if (!repoUrl) return res.status(400).json({ error: 'repoUrl required' })
@@ -203,53 +205,55 @@ router.post('/public-repo', async (req, res) => {
         })
       }
 
-      // Save to DB
-      await prisma.edge.deleteMany({ where: { designId } })
-      await prisma.block.deleteMany({ where: { designId } })
+      // Save to DB — all-or-nothing so a crash cannot leave an empty design
+      await prisma.$transaction(async (tx) => {
+        await tx.edge.deleteMany({ where: { designId } })
+        await tx.block.deleteMany({ where: { designId } })
 
-      const blockMap = new Map()
-      for (const block of nodes) {
-        const created = await prisma.block.create({
+        const blockMap = new Map()
+        for (const block of nodes) {
+          const created = await tx.block.create({
+            data: {
+              designId,
+              type: block.data.type,
+              label: block.data.label,
+              x: block.position.x,
+              y: block.position.y,
+              color: block.data.color,
+              config: block.data.config || {},
+              metrics: null,
+            }
+          })
+          blockMap.set(block.id, created.id)
+        }
+
+        const edgesToCreate = []
+        for (const edge of edges) {
+          const srcPrisma = blockMap.get(edge.source)
+          const tgtPrisma = blockMap.get(edge.target)
+          if (srcPrisma && tgtPrisma) {
+            edgesToCreate.push({
+              designId,
+              sourceId: srcPrisma,
+              targetId: tgtPrisma,
+              connectionType: edge.data?.connectionType || 'http',
+              animated: true,
+            })
+          }
+        }
+
+        if (edgesToCreate.length > 0) {
+          await tx.edge.createMany({ data: edgesToCreate, skipDuplicates: true })
+        }
+
+        await tx.design.update({
+          where: { id: designId },
           data: {
-            designId,
-            type: block.data.type,
-            label: block.data.label,
-            x: block.position.x,
-            y: block.position.y,
-            color: block.data.color,
-            config: block.data.config || {},
-            metrics: null,
+            updatedAt: new Date(),
+            status: 'draft',
+            description: [design.description, `AI: ${result.metadata.description}`].filter(Boolean).join(' | ')
           }
         })
-        blockMap.set(block.id, created.id)
-      }
-
-      const edgesToCreate = []
-      for (const edge of edges) {
-        const srcPrisma = blockMap.get(edge.source)
-        const tgtPrisma = blockMap.get(edge.target)
-        if (srcPrisma && tgtPrisma) {
-          edgesToCreate.push({
-            designId,
-            sourceId: srcPrisma,
-            targetId: tgtPrisma,
-            connectionType: edge.data?.connectionType || 'http',
-            animated: true,
-          })
-        }
-      }
-
-      if (edgesToCreate.length > 0) {
-        await prisma.edge.createMany({ data: edgesToCreate, skipDuplicates: true })
-      }
-
-      await prisma.design.update({
-        where: { id: designId },
-        data: {
-          updatedAt: new Date(),
-          status: 'draft',
-          description: design.description + ` | AI: ${result.metadata.description}`
-        }
       })
 
       await cache.invalidatePattern(`designs:${user.id}*`)
@@ -412,16 +416,14 @@ router.post('/analyze-and-save/:designId', async (req, res) => {
       console.log('[FALLBACK] total edges:', edges.length)
     }
 
-    console.log('[DB] Starting verified batch save...')
+    // All-or-nothing: a crash cannot leave an empty design
+    const saveResult = await prisma.$transaction(async (tx) => {
+      await tx.edge.deleteMany({ where: { designId } })
+      await tx.block.deleteMany({ where: { designId } })
 
-    const deletedEdges = await prisma.edge.deleteMany({ where: { designId } })
-    const deletedBlocks = await prisma.block.deleteMany({ where: { designId } })
-    console.log(`[DB] Cleared ${deletedEdges.count} edges, ${deletedBlocks.count} blocks`)
-
-    const blockMap = new Map()
-    for (const block of nodes) {
-      try {
-        const created = await prisma.block.create({
+      const blockMap = new Map()
+      for (const block of nodes) {
+        const created = await tx.block.create({
           data: {
             designId,
             type: block.data.type,
@@ -434,85 +436,48 @@ router.post('/analyze-and-save/:designId', async (req, res) => {
           }
         })
         blockMap.set(block.id, created.id)
-        console.log(`[DB BLOCK] "${block.id}" -> ${created.id}`)
-      } catch (err) {
-        console.error(`[DB BLOCK ERROR] ${block.id}:`, err.message)
-      }
-    }
-
-    const edgesToCreate = []
-    for (const edge of edges) {
-      const srcPrisma = blockMap.get(edge.source)
-      const tgtPrisma = blockMap.get(edge.target)
-
-      if (!srcPrisma || !tgtPrisma) {
-        console.log(`[DB EDGE SKIP] ${edge.id}: missing mapping`)
-        continue
       }
 
-      edgesToCreate.push({
-        designId,
-        sourceId: srcPrisma,
-        targetId: tgtPrisma,
-        connectionType: edge.data?.connectionType || 'http',
-        animated: true,
-      })
-    }
+      const edgesToCreate = []
+      for (const edge of edges) {
+        const srcPrisma = blockMap.get(edge.source)
+        const tgtPrisma = blockMap.get(edge.target)
+        if (!srcPrisma || !tgtPrisma) continue
 
-    console.log(`[DB] Prepared ${edgesToCreate.length} edges for batch create`)
+        edgesToCreate.push({
+          designId,
+          sourceId: srcPrisma,
+          targetId: tgtPrisma,
+          connectionType: edge.data?.connectionType || 'http',
+          animated: true,
+        })
+      }
 
-    let savedCount = 0
-    if (edgesToCreate.length > 0) {
-      try {
-        const result = await prisma.edge.createMany({
+      let savedCount = 0
+      if (edgesToCreate.length > 0) {
+        const result = await tx.edge.createMany({
           data: edgesToCreate,
           skipDuplicates: true,
         })
         savedCount = result.count
-        console.log(`[DB EDGE BATCH] Created ${savedCount} edges`)
-      } catch (err) {
-        console.error(`[DB EDGE BATCH ERROR]`, err.message)
-        for (const edgeData of edgesToCreate) {
-          try {
-            await prisma.edge.create({ data: edgeData })
-            savedCount++
-          } catch (e) {
-            console.error(`[DB EDGE FALLBACK ERROR]`, e.message)
-          }
+      }
+
+      await tx.design.update({
+        where: { id: designId },
+        data: {
+          updatedAt: new Date(),
+          status: 'draft',
+          description: [design.description, `AI: ${result.metadata.description}`].filter(Boolean).join(' | ')
         }
-      }
-    }
-
-    const edgeCount = await prisma.edge.count({ where: { designId } })
-    console.log(`[DB VERIFY] ${edgeCount} edges in DB (expected ${edgesToCreate.length})`)
-
-    if (edgeCount < edgesToCreate.length && edgesToCreate.length > 0) {
-      console.log(`[DB RETRY] Missing ${edgesToCreate.length - edgeCount} edges, retrying...`)
-      await prisma.edge.createMany({
-        data: edgesToCreate,
-        skipDuplicates: true,
       })
-      const retryCount = await prisma.edge.count({ where: { designId } })
-      console.log(`[DB RETRY] ${retryCount} edges after retry`)
-    }
 
-    await prisma.design.update({
-      where: { id: designId },
-      data: {
-        updatedAt: new Date(),
-        status: 'draft',
-        description: design.description + ` | AI: ${result.metadata.description}`
-      }
+      return { blocksCreated: blockMap.size, edgesPrepared: edgesToCreate.length, edgesCreated: savedCount }
     })
 
     await cache.invalidatePattern(`designs:${user.id}*`)
     await cache.del(`design:${designId}`)
-    console.log('[CACHE] Invalidated')
-
-    await new Promise(r => setTimeout(r, 500))
 
     const finalEdgeCount = await prisma.edge.count({ where: { designId } })
-    console.log(`[DB FINAL] ${finalEdgeCount} edges persisted`)
 
     res.json({
       success: true,
@@ -520,9 +485,9 @@ router.post('/analyze-and-save/:designId', async (req, res) => {
       edges,
       metadata: result.metadata,
       _debug: {
-        blocksCreated: blockMap.size,
-        edgesPrepared: edgesToCreate.length,
-        edgesCreated: savedCount,
+        blocksCreated: saveResult.blocksCreated,
+        edgesPrepared: saveResult.edgesPrepared,
+        edgesCreated: saveResult.edgesCreated,
         edgesInDb: finalEdgeCount,
       }
     })

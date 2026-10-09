@@ -2,14 +2,18 @@ import { Router } from 'express'
 import { requireAuth, getAuth, clerkClient } from '@clerk/express'
 import { prisma } from '../lib/db.js'
 import { cache } from '../lib/redis.js'
-import { exec } from 'child_process'
+import { execFile } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs/promises'
 import path from 'path'
 import os from 'os'
 
 const router = Router()
-const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
+
+function redactUrl(url) {
+  return String(url || '').replace(/https:\/\/[^@]+@/, 'https://***@')
+}
 
 // ============================================================
 // Helper: Get or create DB user from Clerk auth
@@ -260,27 +264,38 @@ router.post('/clone', async (req, res) => {
   try {
     const { repoUrl, branch = 'main' } = req.body
     if (!repoUrl) return res.status(400).json({ error: 'repoUrl required' })
+    if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?\/?$/.test(repoUrl)) {
+      return res.status(400).json({ error: 'Invalid repoUrl' })
+    }
+    if (!/^[A-Za-z0-9_.\-/]+$/.test(branch) || branch.length > 100) {
+      return res.status(400).json({ error: 'Invalid branch' })
+    }
 
     const token = await getGitHubToken(req)
     if (!token) return res.status(401).json({ error: 'GitHub not connected', code: 'GITHUB_NOT_CONNECTED' })
 
     const tempDir = path.join(os.tmpdir(), `resonance-${user.clerkId}-${Date.now()}`)
-    await fs.mkdir(tempDir, { recursive: true })
+    try {
+      await fs.mkdir(tempDir, { recursive: true })
 
-    const authUrl = repoUrl.replace('https://github.com', `https://${token}@github.com`)
+      const authUrl = repoUrl.replace('https://github.com', `https://${token}@github.com`)
 
-    await execAsync(`git clone --depth 1 --branch ${branch} ${authUrl} ${tempDir}`, {
-      timeout: 60000,
-      maxBuffer: 1024 * 1024 * 10,
-    })
+      await execFileAsync('git', ['clone', '--depth', '1', '--branch', branch, authUrl, tempDir], {
+        timeout: 60000,
+        maxBuffer: 1024 * 1024 * 10,
+      })
 
-    await fs.rm(path.join(tempDir, '.git'), { recursive: true, force: true })
-    await cache.set(`clone:${user.clerkId}`, { path: tempDir, repoUrl, branch, createdAt: Date.now() }, 3600)
+      await fs.rm(path.join(tempDir, '.git'), { recursive: true, force: true })
+      await cache.set(`clone:${user.clerkId}`, { path: tempDir, repoUrl, branch, createdAt: Date.now() }, 3600)
 
-    res.json({ success: true, tempDir, message: 'Repository cloned successfully' })
+      res.json({ success: true, tempDir, message: 'Repository cloned successfully' })
+    } catch (err) {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+      throw err
+    }
   } catch (err) {
-    console.error('Clone error:', err)
-    res.status(500).json({ error: err.message })
+    console.error('Clone error:', redactUrl(err.message))
+    res.status(500).json({ error: redactUrl(err.message) })
   }
 })
 

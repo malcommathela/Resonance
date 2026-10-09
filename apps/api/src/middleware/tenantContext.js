@@ -8,22 +8,10 @@ const USER_CACHE_TTL = 300 // 5 minutes
 export async function tenantContext(req, res, next) {
   try {
     const auth = getAuth(req)
-    const authHeader = req.headers.authorization
     let clerkId = null
 
     if (auth?.userId) {
       clerkId = auth.userId
-    } else if (authHeader?.startsWith('Bearer ')) {
-      try {
-        const token = authHeader.slice(7)
-        const parts = token.split('.')
-        if (parts.length === 3) {
-          const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString())
-          if (payload?.sub) clerkId = payload.sub
-        }
-      } catch (err) {
-        logger.warn({ err: err.message }, 'Bearer token decode failed')
-      }
     }
 
     if (!clerkId) return res.status(401).json({ error: 'Unauthorized' })

@@ -17,20 +17,6 @@ router.use(async (req, res, next) => {
     return next()
   }
 
-  const authHeader = req.headers.authorization
-  if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.slice(7)
-    try {
-      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
-      if (payload?.sub) {
-        req.userId = payload.sub
-        return next()
-      }
-    } catch (err) {
-      console.error('[VALIDATION] Bearer token decode failed:', err.message)
-    }
-  }
-
   return res.status(401).json({ error: 'Unauthorized' })
 })
 

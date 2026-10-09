@@ -116,11 +116,16 @@ export async function getLatestReport(designId) {
 
 const REPORT_CACHE = new Map()
 const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
+const REPORT_CACHE_MAX = 100
 
 /**
  * Cache a report with TTL.
  */
 export function cacheReport(reportId, report) {
+  if (REPORT_CACHE.size >= REPORT_CACHE_MAX && !REPORT_CACHE.has(reportId)) {
+    const oldest = REPORT_CACHE.keys().next().value
+    REPORT_CACHE.delete(oldest)
+  }
   REPORT_CACHE.set(reportId, {
     data: report,
     timestamp: Date.now(),

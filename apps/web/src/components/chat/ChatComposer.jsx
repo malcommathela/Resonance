@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { ArrowUp, ChevronDown, Layers, Plus, Square } from 'lucide-react'
+import { ArrowUp, ChevronDown, Plus, Square } from 'lucide-react'
 import { useChatStore } from '@/stores/chatStore'
 
 const MODELS = [
@@ -15,7 +15,6 @@ const MODELS = [
  */
 export const ChatComposer = ({ variant = 'compact', autoFocus = false }) => {
   const [value, setValue] = useState('')
-  const [useDesignSystem, setUseDesignSystem] = useState(true)
   const [model, setModel] = useState(MODELS[0])
   const [modelOpen, setModelOpen] = useState(false)
   const isStreaming = useChatStore((s) => s.isStreaming)
@@ -56,7 +55,7 @@ export const ChatComposer = ({ variant = 'compact', autoFocus = false }) => {
 
   const submit = () => {
     if (!value.trim() || isStreaming) return
-    sendMessage(value, { useDesignSystem })
+    sendMessage(value, { useDesignSystem: true })
     setValue('')
   }
 
@@ -134,27 +133,6 @@ export const ChatComposer = ({ variant = 'compact', autoFocus = false }) => {
           </div>
 
           <div className="flex items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => setUseDesignSystem((v) => !v)}
-              title={useDesignSystem ? 'Constrain to the Resonance block library' : 'General architecture advice'}
-              className="flex items-center gap-2 text-xs font-medium text-resonance-text-secondary hover:text-resonance-text-primary transition-colors"
-            >
-              <Layers size={13} />
-              <span className="hidden md:inline">Use Design System</span>
-              <span
-                className={`relative w-8 h-[18px] rounded-full transition-colors ${
-                  useDesignSystem ? 'bg-resonance-accent' : 'bg-resonance-bg-hover border border-resonance-border'
-                }`}
-              >
-                <span
-                  className={`absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white shadow transition-transform ${
-                    useDesignSystem ? 'translate-x-[14px]' : 'translate-x-0'
-                  }`}
-                />
-              </span>
-            </button>
-
             {isStreaming ? (
               <button
                 type="button"

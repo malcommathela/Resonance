@@ -280,7 +280,7 @@ router.get('/:id/invites', async (req, res) => {
       const rawInvites = await prisma.teamInvite.findMany({
         where: { teamId },
         orderBy: { createdAt: 'desc' },
-        select: { id: true, email: true, role: true, token: true, expiresAt: true, createdAt: true, invitedBy: true },
+        select: { id: true, email: true, role: true, expiresAt: true, createdAt: true, invitedBy: true },
       })
 
       const inviterIds = [...new Set(rawInvites.map((i) => i.invitedBy).filter(Boolean))]
@@ -297,7 +297,6 @@ router.get('/:id/invites', async (req, res) => {
         id: i.id,
         email: i.email,
         role: i.role,
-        token: i.token,
         expiresAt: i.expiresAt,
         createdAt: i.createdAt,
         invitedBy: i.invitedBy,

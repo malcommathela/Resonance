@@ -317,13 +317,17 @@ async function syncCanvasData(
     /*
      * Optimistic concurrency protection.
      *
-     * An autosave based on an old canvas snapshot must never overwrite
-     * a newer snapshot.
+     * Version is required: a save without it is a stale client that must
+     * never wipe or overwrite a newer canvas (empty [] with no version
+     * used to delete everything).
      */
-    if (
-      expectedVersion != null &&
-      design.version !== expectedVersion
-    ) {
+    if (expectedVersion == null) {
+      const err = new Error('Missing version: reload the design and retry')
+      err.status = 400
+      err.code = 'DESIGN_VERSION_REQUIRED'
+      throw err
+    }
+    if (design.version !== expectedVersion) {
       const err = new Error(
         `Design has changed since this canvas was loaded. ` +
         `Expected version ${expectedVersion}, current version ${design.version}.`
@@ -341,6 +345,33 @@ async function syncCanvasData(
 
     const nodeIds = safeNodes.map((n) => n.id).filter(Boolean)
     const edgeIds = safeEdges.map((e) => e.id).filter(Boolean)
+
+    // Reject client-supplied IDs that belong to another design. Without
+    // this, upsert by id overwrites another user's blocks/edges.
+    if (nodeIds.length > 0) {
+      const foreign = await tx.block.findFirst({
+        where: { id: { in: nodeIds }, designId: { not: designId } },
+        select: { id: true },
+      })
+      if (foreign) {
+        const err = new Error('Block belongs to another design')
+        err.status = 403
+        err.code = 'BLOCK_DESIGN_MISMATCH'
+        throw err
+      }
+    }
+    if (edgeIds.length > 0) {
+      const foreign = await tx.edge.findFirst({
+        where: { id: { in: edgeIds }, designId: { not: designId } },
+        select: { id: true },
+      })
+      if (foreign) {
+        const err = new Error('Edge belongs to another design')
+        err.status = 403
+        err.code = 'EDGE_DESIGN_MISMATCH'
+        throw err
+      }
+    }
 
     // Canvas groups reference block ids; prune stale members deterministically
     // against the blocks saved in THIS request — never fail the whole save.
@@ -496,18 +527,35 @@ async function syncCanvasData(
     /*
      * Version increments atomically with the canvas mutation — including
      * group-only edits, so AI context caches keyed on version invalidate.
+     * Conditional on expectedVersion so two concurrent saves cannot both
+     * win: the loser gets 409 and must reload.
      */
-    const updatedDesign = await tx.design.update({
+    const bumped = await tx.design.updateMany({
       where: {
         id: designId,
+        version: expectedVersion,
       },
 
       data: {
-        version: {
-          increment: 1,
-        },
+        version: expectedVersion + 1,
         canvasMeta: meta,
         updatedAt: new Date(),
+      },
+    })
+
+    if (bumped.count === 0) {
+      const err = new Error(
+        `Design has changed since this canvas was loaded. ` +
+        `Expected version ${expectedVersion}.`
+      )
+      err.status = 409
+      err.code = 'DESIGN_VERSION_CONFLICT'
+      throw err
+    }
+
+    const updatedDesign = await tx.design.findUnique({
+      where: {
+        id: designId,
       },
 
       select: {
