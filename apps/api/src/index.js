@@ -25,6 +25,7 @@ import githubRoutes from './routes/github.js'
 import teamRoutes from './routes/team.js'
 import reverseEngineRoutes from './routes/reverseEngine.js'
 import chatRoutes from './routes/chat.js'
+import webhookRoutes from './routes/webhooks.js'
 import { generationQueue, createGenerationWorker, runGenerationRecoverySweep } from './chat/workers/generationWorker.js'
 
 // ============================================================================
@@ -57,6 +58,11 @@ app.use(cors({
   credentials: true,
 }))
 app.use(compression())
+
+// Clerk webhooks need the raw body for svix signature verification, so they
+// must be mounted before express.json().
+app.use('/webhooks', webhookRoutes)
+
 app.use(express.json({ limit: '10mb' }))
 app.use(sanitizeInput)
 

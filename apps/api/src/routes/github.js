@@ -286,6 +286,9 @@ router.post('/clone', async (req, res) => {
       })
 
       await fs.rm(path.join(tempDir, '.git'), { recursive: true, force: true })
+      // Replace the previous clone for this user instead of orphaning it.
+      const previous = await cache.get(`clone:${user.clerkId}`)
+      if (previous?.path) await fs.rm(previous.path, { recursive: true, force: true }).catch(() => {})
       await cache.set(`clone:${user.clerkId}`, { path: tempDir, repoUrl, branch, createdAt: Date.now() }, 3600)
 
       res.json({ success: true, tempDir, message: 'Repository cloned successfully' })
@@ -356,7 +359,8 @@ router.get('/clone/file', async (req, res) => {
     if (!filePath) return res.status(400).json({ error: 'path required' })
 
     const fullPath = path.resolve(tempDir, filePath)
-    if (!fullPath.startsWith(tempDir)) return res.status(403).json({ error: 'Invalid path' })
+    // Trailing separator: a sibling dir sharing the prefix is not inside it.
+    if (!fullPath.startsWith(path.resolve(tempDir) + path.sep)) return res.status(403).json({ error: 'Invalid path' })
 
     const content = await fs.readFile(fullPath, 'utf-8')
     res.json({ path: filePath, content })
