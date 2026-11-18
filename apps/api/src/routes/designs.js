@@ -22,7 +22,7 @@ function getClientInfo(req) {
   }
 }
 
-async function invalidateDesignCache(ownerId, designId) {
+export async function invalidateDesignCache(ownerId, designId) {
   await cache.del(`designs:list:${ownerId}`)
   await cache.invalidatePattern(`design:${designId}:*`)
   await cache.invalidatePattern(`design:overview:${designId}:*`)
@@ -155,7 +155,7 @@ router.get('/', async (req, res) => {
     res.json(transformed)
   } catch (err) {
     logger.error({ err: err.message, userId: req.dbUser.id }, 'Failed to list designs')
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 
@@ -221,7 +221,7 @@ router.get('/:id', async (req, res) => {
     res.json({ ...design, nodes, edges, groups, version: design.version })
   } catch (err) {
     logger.error({ err: err.message, designId: req.params.id }, 'Failed to get design')
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 
@@ -256,7 +256,7 @@ router.post('/', async (req, res) => {
     res.status(201).json(design)
   } catch (err) {
     logger.error({ err: err.message }, 'Failed to create design')
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 
@@ -790,7 +790,7 @@ router.get('/:id/overview', async (req, res) => {
     res.json(result)
   } catch (err) {
     logger.error({ err: err.message, designId: req.params.id }, 'Failed to get design overview')
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 
@@ -847,7 +847,7 @@ router.get('/:id/reports', async (req, res) => {
     res.json(transformed)
   } catch (err) {
     logger.error({ err: err.message, designId: req.params.id }, 'Failed to list reports')
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 
@@ -917,7 +917,7 @@ router.get('/reports/by-simulation/:simId', async (req, res) => {
     })
   } catch (err) {
     logger.error({ err: err.message, simId: req.params.simId }, 'Failed to get report by simulation')
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 

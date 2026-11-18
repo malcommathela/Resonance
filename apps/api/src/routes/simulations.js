@@ -144,39 +144,47 @@ router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
       edges: design.edges,
     }
 
-    const simulation = await prisma.simulation.create({
-      data: {
-        designId,
-        userId,
-        status: 'pending',
-        progress: 0,
-        trafficPattern,
-        rps,
-        duration,
-        scenario: scenario === 'none' ? null : scenario,
-        monteCarloPasses,
-        confidenceLevel,
-        growthScenario,
-        generateReport,
-        deterministicSeed: seed,
-        engineVersion: SIMULATION_ENGINE_VERSION,
-        reportVersion: REPORT_SCHEMA_VERSION,
-        inputSnapshot,
-        assumptions: {
+    // Release the design lock if the DB write fails, otherwise it stays until
+    // TTL and every retry gets 423 for 10 minutes.
+    let simulation
+    try {
+      simulation = await prisma.simulation.create({
+        data: {
+          designId,
+          userId,
+          status: 'pending',
+          progress: 0,
+          trafficPattern,
+          rps,
+          duration,
+          scenario: scenario === 'none' ? null : scenario,
+          monteCarloPasses,
+          confidenceLevel,
+          growthScenario,
+          generateReport,
+          deterministicSeed: seed,
           engineVersion: SIMULATION_ENGINE_VERSION,
-          modelVersion: CANONICAL_MODEL_VERSION,
-          reportSchemaVersion: REPORT_SCHEMA_VERSION,
-          queueModel: 'M/M/1 approximation with capacity limits',
-          networkModel: 'protocol-specific latency + jitter + packet loss',
-          failureModel: 'targeted per-block with cascading propagation',
-          scalingModel: 'instantaneous horizontal/vertical/auto-scaling',
-          latencyDecomposition: 'network + serialization + encryption + compression + processing + queue',
-          resourceModel: 'CPU + memory + thread pool + connection pool contention',
-        },
-        validationResult: validation,
-        confidenceScore: validation.confidenceScore,
-      }
-    })
+          reportVersion: REPORT_SCHEMA_VERSION,
+          inputSnapshot,
+          assumptions: {
+            engineVersion: SIMULATION_ENGINE_VERSION,
+            modelVersion: CANONICAL_MODEL_VERSION,
+            reportSchemaVersion: REPORT_SCHEMA_VERSION,
+            queueModel: 'M/M/1 approximation with capacity limits',
+            networkModel: 'protocol-specific latency + jitter + packet loss',
+            failureModel: 'targeted per-block with cascading propagation',
+            scalingModel: 'instantaneous horizontal/vertical/auto-scaling',
+            latencyDecomposition: 'network + serialization + encryption + compression + processing + queue',
+            resourceModel: 'CPU + memory + thread pool + connection pool contention',
+          },
+          validationResult: validation,
+          confidenceScore: validation.confidenceScore,
+        }
+      })
+    } catch (err) {
+      await lock.release().catch(() => {})
+      throw err
+    }
 
     let enqueued = false
     try {
@@ -256,7 +264,7 @@ router.post('/:designId/run', simulationCreateLimiter, async (req, res) => {
     })
   } catch (err) {
     console.error('[SIMULATION] Run error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 
@@ -290,7 +298,7 @@ router.get('/:id/status', async (req, res) => {
       completedAt: cached.completedAt,
     })
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 
@@ -395,7 +403,7 @@ router.get('/:id/stream', sseLimiter, async (req, res) => {
   } catch (err) {
     console.error('[SSE] Stream error:', err.message)
     if (!res.headersSent) {
-      res.status(500).json({ error: err.message })
+      res.status(err.status || 500).json({ error: err.message })
     } else {
       res.end()
     }
@@ -438,7 +446,7 @@ router.post('/:id/stop', async (req, res) => {
 
     res.json({ success: true })
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 
@@ -480,7 +488,7 @@ router.get('/:id/report', reportLimiter, async (req, res) => {
 
     res.json(buildSimulationReportDTO(report, simulation))
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 
@@ -509,7 +517,7 @@ router.get('/design/:designId/list', async (req, res) => {
       pagination: { limit, offset, designId },
     })
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 
@@ -540,7 +548,7 @@ router.get('/:id/audit', async (req, res) => {
       events: auditTrail,
     })
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 
@@ -568,7 +576,7 @@ router.get('/:id/job-state', async (req, res) => {
       queueStatus: jobState,
     })
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 
