@@ -16,10 +16,6 @@ const RETRYABLE_PATTERNS = [
   'ENOTFOUND',
   'ECONNABORTED',
   'socket hang up',
-  '502',
-  '503',
-  '504',
-  '429',
   'RESOURCE_EXHAUSTED',
   'UNAVAILABLE',
   'overloaded',
@@ -29,11 +25,6 @@ const RETRYABLE_PATTERNS = [
 
 // Client errors — do not blindly retry (spec §49).
 const NON_RETRYABLE_PATTERNS = [
-  '400',
-  '401',
-  '403',
-  '404',
-  '422',
   'INVALID_ARGUMENT',
   'PERMISSION_DENIED',
   'NOT_FOUND',
@@ -41,6 +32,16 @@ const NON_RETRYABLE_PATTERNS = [
   'SAFETY',
   'RECITATION',
 ]
+
+// HTTP statuses seen only in the message (the error has no `status` field).
+// These must be matched as whole numbers: a plain substring test treats
+// "timeout after 4000ms" as HTTP 400 and stops retrying a transient failure.
+const RETRYABLE_STATUSES = [429, 502, 503, 504]
+const NON_RETRYABLE_STATUSES = [400, 401, 403, 404, 422]
+
+function messageStatuses(msg) {
+  return [...msg.matchAll(/\b\d{3}\b/g)].map(([match]) => Number(match))
+}
 
 /**
  * Classify a network/provider failure as retryable or not.
@@ -57,10 +58,14 @@ export function isRetryableError(err) {
   }
 
   const msg = String(err.message || '')
+  const lowerMsg = msg.toLowerCase()
+  const statuses = messageStatuses(msg)
   // Non-retryable patterns take precedence — a message like "HTTP 404 after
   // 502 retry" must not slip through on the retryable match.
-  if (NON_RETRYABLE_PATTERNS.some((p) => msg.includes(p))) return false
-  return RETRYABLE_PATTERNS.some((p) => msg.toLowerCase().includes(p.toLowerCase()))
+  if (statuses.some((s) => NON_RETRYABLE_STATUSES.includes(s))) return false
+  if (NON_RETRYABLE_PATTERNS.some((p) => lowerMsg.includes(p.toLowerCase()))) return false
+  if (statuses.some((s) => RETRYABLE_STATUSES.includes(s))) return true
+  return RETRYABLE_PATTERNS.some((p) => lowerMsg.includes(p.toLowerCase()))
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
