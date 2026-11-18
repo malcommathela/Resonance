@@ -15,8 +15,6 @@ import {
   Pencil,
   ArrowRight,
   Filter,
-  Server,
-  Wifi,
   ShieldCheck,
 } from 'lucide-react'
 import {
@@ -37,12 +35,6 @@ const SEVERITY_ICONS = {
   [SEVERITY.INFO]: Info,
 }
 
-const PROPERTY_ICON_MAP = {
-  block: Target,
-  edge: Wifi,
-  simulation: Server,
-}
-
 /**
  * ValidationPanel — Displays architecture validation findings
  *
@@ -59,7 +51,6 @@ export const ValidationPanel = ({
   validation,
   onClose,
   onHighlightFinding,
-  onClearHighlight,
   onRunValidation,
   onJumpToProperty,
   isValidating,

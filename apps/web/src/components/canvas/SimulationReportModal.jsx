@@ -1432,11 +1432,9 @@ export const SimulationReportModal = ({ isOpen, onClose, report, isLoading = fal
     setTimeout(() => setCopiedJson(false), 2000)
   }, [report])
 
-  // Batch 5 (E3): useMemo dep is report?.overallScore, not the whole report object
-  const overallGrade = useMemo(() => {
-    if (!report || report.overallScore == null) return getGradeFromScore(null)
-    return getGradeFromScore(report.overallScore)
-  }, [report?.overallScore])
+  // Batch 5 (E3): depend on the score primitive, not the whole report object
+  const overallScore = report?.overallScore ?? null
+  const overallGrade = useMemo(() => getGradeFromScore(overallScore), [overallScore])
 
   const footer = (
     <div className="flex items-center justify-between w-full report-footer">
