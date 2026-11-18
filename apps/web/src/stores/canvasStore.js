@@ -235,8 +235,6 @@ export const useCanvasStore = create((set, get) => ({
 
   createEmptyGroup: (position) => {
     get().saveHistory()
-    const { nodes } = get()
-    const existing = nodes.filter((n) => n.type === 'group').length
     const at = position || { x: 0, y: 0 }
     const node = {
       id: `group-${Date.now()}`,
