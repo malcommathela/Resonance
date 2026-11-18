@@ -19,7 +19,6 @@ import { sendAlert, trackErrorForAlert } from './lib/alerting.js'
 
 import simulationRoutes from './routes/simulations.js'
 import designRoutes from './routes/designs.js'
-import authRoutes from './routes/auth.js'
 import validationRoutes from './routes/validation.js'
 import statusRoutes from './routes/status.js'
 import githubRoutes from './routes/github.js'
@@ -158,7 +157,6 @@ app.get('/health', asyncHandler(async (req, res) => {
 // ============================================================================
 app.use('/simulations', asyncHandler(tenantContext), simulationRoutes)
 app.use('/designs', asyncHandler(tenantContext), designRoutes)
-app.use('/auth', asyncHandler(tenantContext), authRoutes)
 app.use('/validation', asyncHandler(tenantContext), validationRoutes)
 app.use('/github', asyncHandler(tenantContext), githubRoutes)
 app.use('/team', asyncHandler(tenantContext), teamRoutes)
