@@ -3,6 +3,7 @@ import { requireAuth, getAuth, clerkClient } from '@clerk/express'
 import { prisma } from '../lib/db.js'
 import { cache } from '../lib/redis.js'
 import { generateArchitecture } from '../lib/gemini.js'
+import { invalidateDesignCache } from './designs.js'
 import { validationLimiter } from '../middleware/rateLimit.js'
 
 const router = Router()
@@ -251,13 +252,13 @@ router.post('/public-repo', requireApiAuth, validationLimiter, async (req, res) 
           data: {
             updatedAt: new Date(),
             status: 'draft',
+            version: { increment: 1 },
             description: [design.description, `AI: ${result.metadata.description}`].filter(Boolean).join(' | ')
           }
         })
       })
 
-      await cache.invalidatePattern(`designs:${user.id}*`)
-      await cache.del(`design:${designId}`)
+      await invalidateDesignCache(user.id, designId)
 
       res.json({
         success: true,
@@ -467,6 +468,7 @@ router.post('/analyze-and-save/:designId', async (req, res) => {
         data: {
           updatedAt: new Date(),
           status: 'draft',
+          version: { increment: 1 },
           description: [design.description, `AI: ${result.metadata.description}`].filter(Boolean).join(' | ')
         }
       })
@@ -474,8 +476,7 @@ router.post('/analyze-and-save/:designId', async (req, res) => {
       return { blocksCreated: blockMap.size, edgesPrepared: edgesToCreate.length, edgesCreated: savedCount }
     })
 
-    await cache.invalidatePattern(`designs:${user.id}*`)
-    await cache.del(`design:${designId}`)
+    await invalidateDesignCache(user.id, designId)
 
     const finalEdgeCount = await prisma.edge.count({ where: { designId } })
 
