@@ -66,6 +66,11 @@ class ApiService {
         error.data = data
         throw error
       }
+      // 204 (e.g. chat session deletion) and other bodyless responses have no
+      // JSON to parse; treating them as an error resurrects deleted sessions.
+      if (response.status === 204 || !response.headers.get('content-type')?.includes('json')) {
+        return null
+      }
       return response.json()
     })
 
