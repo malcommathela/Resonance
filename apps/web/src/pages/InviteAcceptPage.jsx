@@ -246,7 +246,7 @@ export const InviteAcceptPage = () => {
           </div>
           <div className="space-y-2">
             <h2 className="text-lg font-semibold text-resonance-text-primary">
-              You're In!
+              You&apos;re In!
             </h2>
             <p className="text-sm text-resonance-text-secondary">
               Your invitation has been accepted successfully.

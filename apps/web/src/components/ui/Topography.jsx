@@ -352,7 +352,9 @@ const Topography = ({
       ctxMap.delete(container);
       try {
         container.removeChild(canvas);
-      } catch {}
+      } catch {
+        // already detached
+      }
       gl.getExtension('WEBGL_lose_context')?.loseContext();
     };
   }, []);

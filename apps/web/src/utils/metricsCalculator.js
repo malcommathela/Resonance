@@ -37,10 +37,11 @@ export function formatMetric(value, unit, options = {}) {
     case 'rps':
       if (compact && value >= 1000) return `${(value / 1000).toFixed(1)}k RPS`
       return `${Math.round(value)} RPS`
-    case 'percent':
+    case 'percent': {
       // C2: Detect if value is already in percentage form (>= 1) or decimal (0-1)
       const normalizedValue = value > 1 ? value / 100 : value
       return `${(normalizedValue * 100).toFixed(decimals)}%`
+    }
     case 'bytes':
       if (value < 1024) return `${value.toFixed(0)} B`
       if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`

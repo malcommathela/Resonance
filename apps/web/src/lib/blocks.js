@@ -1,4 +1,12 @@
 // Re-export everything from shared constants so consumers only need one import
+import {
+  BLOCK_TYPES,
+  CONNECTION_TYPE_META,
+  TRAFFIC_PATTERNS,
+  SCENARIOS,
+  GROWTH_SCENARIOS,
+} from '@shared/constants'
+
 export {
   BLOCK_TYPES,
   categories,
@@ -22,10 +30,6 @@ export {
 } from '@shared/constants'
 
 // UI helpers
-export const getBlockIcon = (iconName) => {
-  return iconName
-}
-
 export const getBlockColor = (type) => {
   const block = BLOCK_TYPES.find(b => b.id === type)
   return block?.color || '#8b5cf6'

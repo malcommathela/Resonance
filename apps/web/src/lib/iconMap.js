@@ -152,18 +152,3 @@ export const libraryIconMap = {
 export const getBlockIcon = (iconName) => {
   return blockIconMap[iconName] || blockIconMap['Server']
 }
-
-export const getBlockColor = (type) => {
-  const block = BLOCK_TYPES.find(b => b.id === type)
-  return block?.color || '#8b5cf6'
-}
-
-export const getBlockLabel = (type) => {
-  const block = BLOCK_TYPES.find(b => b.id === type)
-  return block?.label || type
-}
-
-export const getBlockCategory = (type) => {
-  const block = BLOCK_TYPES.find(b => b.id === type)
-  return block?.category || 'other'
-}

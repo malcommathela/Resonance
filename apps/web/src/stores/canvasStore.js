@@ -21,6 +21,7 @@ import {
   expandGroupBox,
   groupSize,
   pruneGroupMembers,
+  shiftGroupNodes,
   readCanvasMeta,
 } from '@/features/canvas/groups/meta'
 import { pruneFindings } from '@/features/canvas/validation/validationAdapter'

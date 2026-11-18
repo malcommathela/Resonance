@@ -39,7 +39,7 @@ export const NotFound = () => {
           Page not found
         </h2>
         <p className="text-resonance-text-secondary mb-8">
-          The page you're looking for doesn't exist or has been moved.
+          The page you&apos;re looking for doesn&apos;t exist or has been moved.
         </p>
 
         <div className="flex items-center justify-center gap-3">
