@@ -171,6 +171,9 @@ async function runTextChat({ request, session, userMessage, useDesignSystem, loc
 
     // Context (versioned + cached; degrades gracefully, spec §68/§70).
     const history = await loadRecentHistory(session.id)
+    // The current message is persisted before we get here and the provider
+    // appends it again — drop the duplicate so the model sees one user turn.
+    if (history.at(-1)?.role === 'user' && history.at(-1).content === userMessage.content) history.pop()
     const context = await buildChatContext({ session, history, userMessage: userMessage.content, designSystemEnabled: useDesignSystem })
     designVersion = context.versions.designVersion
 
