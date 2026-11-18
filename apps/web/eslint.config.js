@@ -26,8 +26,10 @@ export default [
     rules: {
       ...js.configs.recommended.rules,
       ...react.configs.recommended.rules,
-      ...react.configs['jsx-runtime'].rules,
       ...reactHooks.configs.recommended.rules,
+      // React 17+ automatic JSX runtime (config not shipped by eslint-plugin-react 7.22)
+      'react/react-in-jsx-scope': 'off',
+      'react/jsx-uses-react': 'off',
       'react/jsx-no-target-blank': 'off',
       'react-refresh/only-export-components': [
         'warn',

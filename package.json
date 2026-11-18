@@ -6,7 +6,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "test": "node --test \"**/*.check.js\"",
+    "test": "node --import ./apps/web/register-aliases.mjs --test \"**/*.check.js\"",
     "lint": "echo \"lint: no linter configured\""
   },
   "devDependencies": {

@@ -31,6 +31,11 @@ yarn-error.log*
 # Testing
 coverage/
 
+# Tool caches / local output
+.turbo/
+.zcode/
+brag-output/
+
 # Cache
 .cache/
 *.tsbuildinfo
