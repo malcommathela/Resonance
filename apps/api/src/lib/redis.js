@@ -38,35 +38,71 @@ export const redisSubscriber = new Redis({ ...redisOptions })
 const upstashRedis = new UpstashRedis({
   url: process.env.UPSTASH_REDIS_REST_URL || 'https://your-db.upstash.io',
   token: process.env.UPSTASH_REDIS_REST_TOKEN || 'your-token',
+  // SDK default is 5 retries with exponential backoff. A cache outage should
+  // not stall every request for seconds before we fall back to the DB.
+  retry: { retries: 1 },
 })
+
+// The cache is an optimisation, not a dependency. A failed read must fall
+// through to the DB, and a failed write/invalidation must not turn an already
+// committed request into a 500. Log each operation's first failure only.
+const warnedCacheFailures = new Set()
+function cacheFailure(operation, err) {
+  if (!warnedCacheFailures.has(operation)) {
+    warnedCacheFailures.add(operation)
+    console.error(`[CACHE] ${operation} failed: ${err.message} (further failures suppressed)`)
+  }
+}
 
 export const cache = {
   async get(key) {
-    const data = await upstashRedis.get(key)
-    if (data == null) return null
-    if (typeof data === 'string') {
-      try { return JSON.parse(data) } catch { return data }
+    try {
+      const data = await upstashRedis.get(key)
+      if (data == null) return null
+      if (typeof data === 'string') {
+        try { return JSON.parse(data) } catch { return data }
+      }
+      return data
+    } catch (err) {
+      cacheFailure('get', err)
+      return null
     }
-    return data
   },
 
   async set(key, value, ttl = 3600) {
-    await upstashRedis.set(key, JSON.stringify(value), { ex: ttl })
+    try {
+      await upstashRedis.set(key, JSON.stringify(value), { ex: ttl })
+    } catch (err) {
+      cacheFailure('set', err)
+    }
   },
 
   async del(key) {
-    await upstashRedis.del(key)
+    try {
+      await upstashRedis.del(key)
+    } catch (err) {
+      cacheFailure('del', err)
+    }
   },
 
   async keys(pattern) {
-    const keys = await upstashRedis.keys(pattern)
-    return keys || []
+    try {
+      const keys = await upstashRedis.keys(pattern)
+      return keys || []
+    } catch (err) {
+      cacheFailure('keys', err)
+      return []
+    }
   },
 
   async invalidatePattern(pattern) {
-    const keys = await upstashRedis.keys(pattern)
-    if (keys && keys.length > 0) {
-      await upstashRedis.del(...keys)
+    try {
+      const keys = await upstashRedis.keys(pattern)
+      if (keys && keys.length > 0) {
+        await upstashRedis.del(...keys)
+      }
+    } catch (err) {
+      cacheFailure('invalidatePattern', err)
     }
   },
 }

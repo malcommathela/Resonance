@@ -1015,7 +1015,7 @@ export const DesignDetail = () => {
               </div>
             ) : teams.length === 0 ? (
               <p className="text-resonance-text-secondary">
-                You don't have any teams yet.{' '}
+                You don&apos;t have any teams yet.{' '}
                 <button
                   onClick={() => {
                     setShowAddToTeamModal(false)

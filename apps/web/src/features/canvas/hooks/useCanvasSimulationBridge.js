@@ -35,6 +35,7 @@ export function useCanvasSimulationBridge({ designId, onValidationBlocked, onReq
 
     let report = null
     let attempts = 0
+    let failureMessage = null
     const maxAttempts = 12 // ~2 min total with backoff
 
     while (!report && attempts < maxAttempts) {
@@ -43,15 +44,18 @@ export function useCanvasSimulationBridge({ designId, onValidationBlocked, onReq
         report = await fetchSimulationReport(simId)
         if (report?.error) report = null
       } catch (err) {
-        // 404 while worker is still writing — check status
+        // 404 while worker is still writing — check status. Do not throw here:
+        // the catch below would swallow it and we would poll for a report that
+        // a failed simulation will never produce.
         try {
           const statusRes = await api.getSimulationStatus(simId)
           if (statusRes.status === 'failed') {
-            throw new Error('Simulation failed')
+            failureMessage = statusRes.errorMessage || 'Simulation failed'
+            break
           }
           // If still running, keep waiting
         } catch (statusErr) {
-          // ignore
+          // Status check itself failed; keep waiting for the report.
         }
       }
 
@@ -60,6 +64,14 @@ export function useCanvasSimulationBridge({ designId, onValidationBlocked, onReq
         await new Promise(r => setTimeout(r, delay))
       }
       attempts++
+    }
+
+    if (failureMessage) {
+      useCanvasStore.getState().setSimulationFailed(failureMessage)
+      pushLog?.({ type: 'error', message: `Simulation failed: ${failureMessage}` })
+      setShowReportModal(false)
+      setReportLoading(false)
+      return
     }
 
     if (report) {

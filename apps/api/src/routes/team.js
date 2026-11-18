@@ -34,13 +34,14 @@ function transformTeam(team, currentUserId) {
 
 async function getCached(key, fetcher, ttl = CACHE_TTL) {
   try {
+    // cache.get already parses; cache.set takes (key, value, ttlSeconds).
     const cached = await cache.get(key)
-    if (cached) return JSON.parse(cached)
+    if (cached) return cached
   } catch (e) { /* ignore */ }
 
   const data = await fetcher()
   try {
-    await cache.set(key, JSON.stringify(data), 'EX', ttl)
+    await cache.set(key, data, ttl)
   } catch (e) { /* ignore */ }
   return data
 }

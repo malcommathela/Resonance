@@ -15,8 +15,6 @@ import {
   Pencil,
   ArrowRight,
   Filter,
-  Server,
-  Wifi,
   ShieldCheck,
 } from 'lucide-react'
 import {
@@ -37,12 +35,6 @@ const SEVERITY_ICONS = {
   [SEVERITY.INFO]: Info,
 }
 
-const PROPERTY_ICON_MAP = {
-  block: Target,
-  edge: Wifi,
-  simulation: Server,
-}
-
 /**
  * ValidationPanel — Displays architecture validation findings
  *
@@ -59,7 +51,6 @@ export const ValidationPanel = ({
   validation,
   onClose,
   onHighlightFinding,
-  onClearHighlight,
   onRunValidation,
   onJumpToProperty,
   isValidating,
@@ -72,6 +63,25 @@ export const ValidationPanel = ({
   })
   const [activeFilter, setActiveFilter] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
+
+  // Filtered findings based on search + active filter. Runs before the empty
+  // state return so the hook order never changes.
+  const filteredFindings = useMemo(() => {
+    let findings = validation?.findings || []
+    if (activeFilter) {
+      findings = findings.filter(f => f.severity === activeFilter)
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      findings = findings.filter(f =>
+        (f.message || '').toLowerCase().includes(q) ||
+        (f.recommendation || '').toLowerCase().includes(q) ||
+        (f.property || '').toLowerCase().includes(q) ||
+        (f.type || '').toLowerCase().includes(q)
+      )
+    }
+    return groupFindingsBySeverity(findings)
+  }, [validation?.findings, activeFilter, searchQuery])
 
 
   // === EMPTY STATE (no validation run yet) ===
@@ -121,24 +131,6 @@ export const ValidationPanel = ({
   const toggleSection = (severity) => {
     setExpandedSections(prev => ({ ...prev, [severity]: !prev[severity] }))
   }
-
-  // Filtered findings based on search + active filter
-  const filteredFindings = useMemo(() => {
-    let findings = validation.findings
-    if (activeFilter) {
-      findings = findings.filter(f => f.severity === activeFilter)
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
-      findings = findings.filter(f =>
-        (f.message || '').toLowerCase().includes(q) ||
-        (f.recommendation || '').toLowerCase().includes(q) ||
-        (f.property || '').toLowerCase().includes(q) ||
-        (f.type || '').toLowerCase().includes(q)
-      )
-    }
-    return groupFindingsBySeverity(findings)
-  }, [validation.findings, activeFilter, searchQuery])
 
   const handleFindingClick = (finding) => {
     // BATCH 3: Use canonical elementId/elementType if available, fallback to legacy blockId/edgeId

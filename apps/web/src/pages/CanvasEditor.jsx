@@ -227,7 +227,7 @@ function CanvasEditorInner() {
     setPendingConnection(params)
     setShowEdgeTypeMenu(true)
     markDirty()
-  }, [])
+  }, [markDirty])
 
   // Single edge-creation path: store owns the document, RF mirrors it.
   const handleCreateEdge = useCallback((type) => {
@@ -621,13 +621,12 @@ function CanvasEditorInner() {
               <InspectorShell
                 label="Validation"
                 size="sm"
-              onClose={() => { setActivePanel(null); setShowValidationPanel(false) }}
+              onClose={() => { setActivePanel(null); setShowValidationPanel(false); canvasCommands.clearEmphasis() }}
             >
               <ValidationPanel
                 validation={validationResult}
-                onClose={() => { setActivePanel(null); setShowValidationPanel(false) }}
+                onClose={() => { setActivePanel(null); setShowValidationPanel(false); canvasCommands.clearEmphasis() }}
                 onHighlightFinding={handleFindingClick}
-                onClearHighlight={() => canvasCommands.clearEmphasis()}
                 onRunValidation={() => handleRunValidation(true)}
                 isValidating={isValidating}
                 onJumpToProperty={handleJumpToProperty}

@@ -1366,6 +1366,11 @@ const SelectField = ({ label, value, options, onChange, dataProperty, validation
 }
 
 const ConfigInput = ({ value, onChange, dataProperty, validationResult, onValidate }) => {
+  // Hooks must run for every value type: config values can switch between
+  // boolean and number when the selected node changes.
+  const [localValue, setLocalValue] = useState(value)
+  useEffect(() => setLocalValue(value), [value])
+
   if (typeof value === 'boolean') {
     return (
       <div data-property={dataProperty} className="flex items-center justify-between">
@@ -1389,9 +1394,6 @@ const ConfigInput = ({ value, onChange, dataProperty, validationResult, onValida
   }
 
   if (typeof value === 'number') {
-    const [localValue, setLocalValue] = useState(value)
-    useEffect(() => setLocalValue(value), [value])
-
     const borderClass = validationResult
       ? validationResult.valid
         ? 'border-green-500/50 focus:border-green-500 focus:ring-green-500/20'

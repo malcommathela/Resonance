@@ -19,13 +19,13 @@ import { sendAlert, trackErrorForAlert } from './lib/alerting.js'
 
 import simulationRoutes from './routes/simulations.js'
 import designRoutes from './routes/designs.js'
-import authRoutes from './routes/auth.js'
 import validationRoutes from './routes/validation.js'
 import statusRoutes from './routes/status.js'
 import githubRoutes from './routes/github.js'
 import teamRoutes from './routes/team.js'
 import reverseEngineRoutes from './routes/reverseEngine.js'
 import chatRoutes from './routes/chat.js'
+import webhookRoutes from './routes/webhooks.js'
 import { generationQueue, createGenerationWorker, runGenerationRecoverySweep } from './chat/workers/generationWorker.js'
 
 // ============================================================================
@@ -58,6 +58,11 @@ app.use(cors({
   credentials: true,
 }))
 app.use(compression())
+
+// Clerk webhooks need the raw body for svix signature verification, so they
+// must be mounted before express.json().
+app.use('/webhooks', webhookRoutes)
+
 app.use(express.json({ limit: '10mb' }))
 app.use(sanitizeInput)
 
@@ -158,7 +163,6 @@ app.get('/health', asyncHandler(async (req, res) => {
 // ============================================================================
 app.use('/simulations', asyncHandler(tenantContext), simulationRoutes)
 app.use('/designs', asyncHandler(tenantContext), designRoutes)
-app.use('/auth', asyncHandler(tenantContext), authRoutes)
 app.use('/validation', asyncHandler(tenantContext), validationRoutes)
 app.use('/github', asyncHandler(tenantContext), githubRoutes)
 app.use('/team', asyncHandler(tenantContext), teamRoutes)

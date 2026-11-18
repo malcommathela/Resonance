@@ -83,7 +83,6 @@ export async function runSimulationProcessor(job) {
   const edges = design.edges || []
   const validationResult = validateSimulationInput(config, blocks, edges)
   if (!validationResult.canSimulate) {
-    clearInterval(stopCheckInterval)
     await prisma.simulation.update({
       where: { id: simId },
       data: {

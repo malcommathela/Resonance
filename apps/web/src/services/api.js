@@ -66,6 +66,11 @@ class ApiService {
         error.data = data
         throw error
       }
+      // 204 (e.g. chat session deletion) and other bodyless responses have no
+      // JSON to parse; treating them as an error resurrects deleted sessions.
+      if (response.status === 204 || !response.headers.get('content-type')?.includes('json')) {
+        return null
+      }
       return response.json()
     })
 
@@ -102,9 +107,6 @@ class ApiService {
     return this.request(`/validation/${designId}/validate`, { method: 'POST' })
   }
 
-  // Auth
-  async getCurrentUser() { return this.request('/auth/me') }
-
   // Design Overview
   async getDesignOverview(id) { return this.request(`/designs/${id}/overview`) }
   async getDesignReports(id) { return this.request(`/designs/${id}/reports`) }
@@ -138,13 +140,6 @@ class ApiService {
   async createTeamDesign(teamId, data) { return this.request(`/team/${teamId}/designs`, { method: 'POST', body: JSON.stringify(data) }) }
   async importDesignToTeam(teamId, designId) { return this.request(`/team/${teamId}/designs/import`, { method: 'POST', body: JSON.stringify({ designId }) }) }
   async removeDesignFromTeam(teamId, designId) { return this.request(`/team/${teamId}/designs/${designId}`, { method: 'DELETE' }) }
-
-  // Legacy — kept for backward compatibility
-  async inviteMember(data) { return this.request('/team/invite', { method: 'POST', body: JSON.stringify(data) }) }
-  async removeMember(id) { return this.request(`/team/members/${id}`, { method: 'DELETE' }) }
-  async updateMemberRole(id, role) { return this.request(`/team/members/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }) }
-
-  async logout() { return this.request('/auth/logout', { method: 'POST' }) }
 }
 
 export const api = new ApiService()

@@ -262,13 +262,17 @@ router.get('/sessions/:id/messages', responder(async (req, res) => {
     beforeSequence = anchor.sequence
   }
 
-  const messages = await prisma.chatMessage.findMany({
+  // Newest-first window, then reverse for chronological display: the client
+  // always needs the latest messages and `nextBefore` must be the oldest id
+  // in the window it received.
+  const rows = await prisma.chatMessage.findMany({
     where: { sessionId: session.id, ...(beforeSequence ? { sequence: { lt: beforeSequence } } : {}) },
-    orderBy: { sequence: 'asc' },
+    orderBy: { sequence: 'desc' },
     take: limit,
   })
+  const messages = rows.reverse()
 
-  const hasMore = messages.length === limit
+  const hasMore = rows.length === limit
   res.json({
     messages,
     hasMore,

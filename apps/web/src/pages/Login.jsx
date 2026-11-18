@@ -84,7 +84,7 @@ export const Login = ({ mode = 'signIn' }) => {
 
           {/* Footer */}
           <p className="mt-6 text-center text-xs text-[#6B7280] fade-in-up stagger-5">
-            By continuing, you agree to Resonance's{' '}
+            By continuing, you agree to Resonance&apos;s{' '}
             <a href="#" className="text-[#9CA3AF] hover:text-white transition-colors underline underline-offset-2">
               privacy policy
             </a>
@@ -141,7 +141,7 @@ export const Login = ({ mode = 'signIn' }) => {
               </div>
 
               <blockquote className="text-white text-base leading-relaxed mb-4 font-normal">
-                "Resonance is why I still have hair. No more worrying about system architecture at 3am."
+                “Resonance is why I still have hair. No more worrying about system architecture at 3am.”
               </blockquote>
 
               <div className="flex items-center gap-3">

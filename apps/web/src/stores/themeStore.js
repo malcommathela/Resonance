@@ -52,8 +52,12 @@ export const useThemeStore = create((set, get) => ({
 
   init: () => {
     const saved = localStorage.getItem('resonance-theme') || 'dark'
+    // A stale/unknown value (old 'system', typos) must not leave the app with
+    // no theme variables applied.
     const validTheme = THEMES[saved] ? saved : 'dark'
-    document.documentElement.classList.toggle('dark', saved === 'dark')
+    if (validTheme !== saved) localStorage.setItem('resonance-theme', validTheme)
+    document.documentElement.classList.toggle('dark', validTheme === 'dark')
+    set({ theme: validTheme })
     get().applyTheme()
   },
 }))

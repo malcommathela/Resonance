@@ -1,4 +1,5 @@
 import rateLimit from 'express-rate-limit'
+import { getAuth } from '@clerk/express'
 import { redisConnection } from '../lib/redis.js'
 
 // ============================================================================
@@ -79,7 +80,9 @@ function getClientKey(req) {
   // Prefer authenticated user ID, fall back to IP.
   // req.ip is ONLY accurate because app.set('trust proxy') is configured
   // in index.js. Without trust proxy, req.ip = load balancer IP = useless.
-  return req.userId || req.ip || 'unknown'
+  // getAuth works here because clerkMiddleware runs before every limiter;
+  // req.userId is only set later, per route, by tenantContext.
+  return getAuth(req)?.userId || req.userId || req.ip || 'unknown'
 }
 
 // ============================================================================

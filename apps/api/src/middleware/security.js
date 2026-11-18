@@ -67,8 +67,10 @@ export const securityHeaders = helmet({
 // This is a defense-in-depth layer — frontend should also sanitize.
 // ============================================================================
 
-const XSS_SCRIPT_PATTERN = /<script[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi
-const XSS_EVENT_PATTERN = /\s*on\w+\s*=\s*["']?[^"'>]*["']?/gi
+const XSS_SCRIPT_PATTERN = /<script\b[^>]*>[\s\S]*?<\/script\s*>/gi
+// Require whitespace before the handler name: without it, words such as
+// "options=fast" or "maxConnections=5" were silently rewritten.
+const XSS_EVENT_PATTERN = /(\s)on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi
 const XSS_JS_URL_PATTERN = /javascript:/gi
 
 function sanitizeString(str) {

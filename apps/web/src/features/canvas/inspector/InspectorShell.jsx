@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useCallback, useEffect } from 'react'
 
 // Shared floating inspector slot: viewport-centered dialog (Modal convention,
 // no backdrop so the canvas stays interactive). One shell owns width/height;
@@ -17,10 +17,10 @@ const SIZES = {
 
 export function InspectorShell({ onClose, children, label = 'Inspector', size = 'md' }) {
   // Close returns focus to the canvas so shortcuts work immediately (Phase 17).
-  const close = () => {
+  const close = useCallback(() => {
     onClose()
     requestAnimationFrame(() => document.querySelector('[data-canvas-container]')?.focus())
-  }
+  }, [onClose])
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') {
@@ -30,7 +30,7 @@ export function InspectorShell({ onClose, children, label = 'Inspector', size = 
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [close])
 
   return (
     <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-4">
