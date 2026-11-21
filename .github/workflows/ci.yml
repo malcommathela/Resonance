@@ -1,8 +1,8 @@
 name: CI
 
 on:
+  # Every branch push runs CI; PRs are limited to the long-lived branches.
   push:
-    branches: [master, main, dev, develop]
   pull_request:
     branches: [master, main, dev, develop]
 
