@@ -15,8 +15,8 @@ RUN npm ci
 # Copy source
 COPY . .
 
-# Build
-RUN npm run build
+# Build (web only — `npm run build` also runs the API's prisma migrate deploy)
+RUN npm --workspace @resonance/web run build
 
 # Production stage
 FROM nginx:alpine
