@@ -90,7 +90,7 @@ export const MessageContent = ({ children, className }) => (
 export const MessageActions = ({ children, className }) => (
   <div
     className={cn(
-      'flex items-center gap-1 opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100',
+      'flex items-center gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/message:opacity-100 focus-within:opacity-100',
       className
     )}
   >
@@ -316,7 +316,7 @@ export const CodeBlock = ({ code, children }) => {
         size="icon"
         onClick={copy}
         title="Copy code"
-        className="absolute right-2 top-2 h-7 w-7 opacity-0 transition-opacity group-hover/code:opacity-100 focus:opacity-100"
+        className="absolute right-2 top-2 h-7 w-7 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/code:opacity-100 focus:opacity-100"
       >
         {copied ? <Check size={13} className="text-primary" /> : <Copy size={13} />}
       </Button>

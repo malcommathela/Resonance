@@ -56,7 +56,7 @@ export const LandingView = () => {
 
   return (
     <div className="w-full">
-      <section className="relative flex flex-col items-center overflow-hidden px-4 pb-12 pt-16 text-center">
+      <section className="relative flex flex-col items-center overflow-hidden px-4 pb-12 pt-24 text-center md:pt-16">
         <div aria-hidden className="absolute inset-0">
           <Topography
             lowColor={theme === 'dark' ? '#3f3f46' : '#e4e4e7'}
@@ -86,7 +86,7 @@ export const LandingView = () => {
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-44 bg-gradient-to-b from-transparent to-background" />
         </div>
 
-        <h1 className="animate-fade-in-up relative z-10 text-4xl font-bold tracking-tight text-foreground md:text-5xl">
+        <h1 className="animate-fade-in-up relative z-10 text-[32px] font-bold leading-tight tracking-tight text-foreground sm:text-4xl md:text-5xl">
           Prompt it. <span style={{ color: heroAccent }}>Resonate</span> it.
         </h1>
         <p className="animate-fade-in-up stagger-1 relative z-10 mt-4 max-w-xl text-base text-muted-foreground md:text-lg">

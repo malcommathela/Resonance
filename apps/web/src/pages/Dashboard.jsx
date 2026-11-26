@@ -409,37 +409,36 @@ export const Dashboard = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-5 gap-3 animate-[fadeIn_400ms_ease-out_100ms_forwards] opacity-0">
           <div className="flex gap-1 bg-resonance-bg-secondary border border-resonance-border rounded-xl p-1 overflow-x-auto">
             {filterTabs.map((tab) => (
-              <button
+              <Button
                 key={tab.id}
+                type="button"
+                variant={activeFilter === tab.id ? 'secondary' : 'ghost'}
+                size="sm"
                 onClick={() => setActiveFilter(tab.id)}
-                className={`px-3.5 py-1.5 rounded-lg text-[13px] font-medium whitespace-nowrap transition-all duration-150 ${
-                  activeFilter === tab.id
-                    ? 'bg-resonance-text-primary text-resonance-bg-secondary'
-                    : 'text-resonance-text-secondary hover:text-resonance-text-primary'
-                }`}
+                className="shrink-0 text-[13px] text-muted-foreground hover:text-foreground"
               >
                 {tab.label}
-              </button>
+              </Button>
             ))}
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-resonance-text-muted" />
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-0 flex-1 sm:flex-none">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <input
                 type="text"
                 placeholder="Search designs..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 pr-4 py-1.5 w-56 bg-resonance-bg-secondary border border-resonance-border rounded-lg text-xs text-resonance-text-primary placeholder:text-resonance-text-muted outline-none focus:border-resonance-text-primary transition-colors"
+                className="h-9 w-full rounded-lg border border-input bg-background pl-9 pr-4 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-ring sm:w-56"
               />
             </div>
-            <button className="inline-flex items-center gap-2 px-3 py-1.5 bg-resonance-bg-secondary border border-resonance-border rounded-lg text-xs font-medium text-resonance-text-primary hover:bg-resonance-bg-hover transition-all">
+            <Button type="button" variant="outline" size="sm" className="gap-2 text-xs">
               <Clock size={14} /> Sort
-            </button>
-            <button className="inline-flex items-center gap-2 px-3 py-1.5 bg-resonance-bg-secondary border border-resonance-border rounded-lg text-xs font-medium text-resonance-text-primary hover:bg-resonance-bg-hover transition-all">
+            </Button>
+            <Button type="button" variant="outline" size="sm" className="gap-2 text-xs">
               <GitBranch size={14} /> Filter
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -597,7 +596,7 @@ export const Dashboard = () => {
           {toasts.map(toast => (
             <div
               key={toast.id}
-              className={`px-4 py-3 rounded-xl shadow-lg border flex items-center gap-2 min-w-[300px] animate-slide-up ${
+              className={`w-[calc(100vw-2rem)] max-w-sm rounded-xl border px-4 py-3 shadow-lg sm:w-auto sm:min-w-[300px] animate-slide-up ${
                 toast.type === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-400' :
                 toast.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
                 'bg-resonance-bg-secondary border-resonance-border text-resonance-text-primary'

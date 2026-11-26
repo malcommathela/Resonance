@@ -40,10 +40,10 @@ const ROLES = {
 const TabButton = ({ active, onClick, children, badge }) => (
   <button
     onClick={onClick}
-    className={`px-4 py-2 font-medium border-b-2 transition-colors flex items-center ${
+    className={`flex shrink-0 items-center whitespace-nowrap border-b-2 px-4 py-2 font-medium transition-colors ${
       active
-        ? 'border-resonance-accent text-resonance-accent'
-        : 'border-transparent text-resonance-text-muted hover:text-resonance-text-primary'
+        ? 'border-primary text-foreground'
+        : 'border-transparent text-muted-foreground hover:text-foreground'
     }`}
   >
     {children}
@@ -456,12 +456,12 @@ const TeamOverviewComponent = () => {
           Back to teams
         </button>
 
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-semibold text-resonance-text-primary">{team.name}</h1>
-            <p className="text-resonance-text-secondary mt-1">{team.description}</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 break-words">
+            <h1 className="text-3xl font-semibold text-foreground">{team.name}</h1>
+            <p className="mt-1 text-muted-foreground">{team.description}</p>
           </div>
-          <Badge variant={ROLES[team.myRole]?.badge || 'default'}>
+          <Badge variant={ROLES[team.myRole]?.badge || 'default'} className="shrink-0">
             <span className="flex items-center gap-1">
               {React.createElement(ROLES[team.myRole]?.icon || User, { size: 10 })}
               {ROLES[team.myRole]?.label}
@@ -549,7 +549,7 @@ const TeamOverviewComponent = () => {
                           e.stopPropagation()
                           handleRemoveDesign(design.id)
                         }}
-                        className="absolute top-3 right-3 p-1.5 text-resonance-text-muted hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity rounded-md hover:bg-red-500/10"
+                        className="absolute right-3 top-3 rounded-md p-1.5 text-muted-foreground opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100"
                         title="Remove from team"
                       >
                         <Trash2 size={14} />
@@ -872,7 +872,7 @@ const TeamOverviewComponent = () => {
                       type="text"
                       value={team.id}
                       readOnly
-                      className="flex-1 bg-resonance-bg-tertiary border border-resonance-border rounded-lg px-3 py-2 text-resonance-text-muted text-sm font-mono select-all"
+                      className="min-w-0 flex-1 rounded-lg border border-input bg-muted px-3 py-2 font-mono text-sm text-muted-foreground select-all"
                     />
                     <button
                       onClick={handleCopyTeamId}

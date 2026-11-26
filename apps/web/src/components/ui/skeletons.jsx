@@ -108,8 +108,8 @@ export function DashboardSkeleton() {
             <ShimmerBar key={i} className="h-8 w-24 rounded-lg" />
           ))}
         </div>
-        <div className="flex items-center gap-2">
-          <ShimmerBar className="h-8 w-56 rounded-lg" />
+        <div className="flex flex-wrap items-center gap-2">
+          <ShimmerBar className="h-8 w-full rounded-lg sm:w-56" />
           <ShimmerBar className="h-8 w-20 rounded-lg" />
           <ShimmerBar className="h-8 w-20 rounded-lg" />
         </div>
@@ -234,9 +234,9 @@ export function SettingsSkeleton() {
         <ShimmerBar className="h-8 w-32" />
         <ShimmerBar className="h-4 w-64" />
       </div>
-      <div className="flex gap-8">
+      <div className="flex flex-col gap-6 md:flex-row md:gap-8">
         {/* Sidebar */}
-        <div className="w-64 shrink-0 space-y-1">
+        <div className="w-full shrink-0 space-y-1 md:w-64">
           {[...Array(6)].map((_, i) => (
             <ShimmerBar key={i} className="h-10 w-full rounded-lg" />
           ))}

@@ -92,7 +92,7 @@ const ConversationItem = ({ session, active, onOpen, onRename, onDelete }) => {
             variant="ghost"
             size="icon"
             title="More options"
-            className={`absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus:opacity-100 ${
+            className={`absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 ${
               active
                 ? 'text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground'
                 : 'text-muted-foreground'
@@ -138,7 +138,7 @@ const ConversationListSkeleton = () => (
   </div>
 )
 
-export const ChatSidebar = () => {
+export const ChatSidebar = ({ onNavigate, mobile = false }) => {
   const sessions = useChatStore((s) => s.sessions)
   const sessionsLoaded = useChatStore((s) => s.sessionsLoaded)
   const activeSessionId = useChatStore((s) => s.activeSessionId)
@@ -154,7 +154,7 @@ export const ChatSidebar = () => {
     loadSessions()
   }, [loadSessions])
 
-  const [collapsed, setCollapsed] = useState(() => {
+  const [collapsedState, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem(COLLAPSE_KEY) === '1'
     } catch {
@@ -164,7 +164,10 @@ export const ChatSidebar = () => {
   const [query, setQuery] = useState('')
   const searchRef = useRef(null)
 
+  const collapsed = mobile ? false : collapsedState
+
   const toggleCollapsed = () => {
+    if (mobile) return
     setCollapsed((v) => {
       const next = !v
       try {
@@ -178,6 +181,7 @@ export const ChatSidebar = () => {
 
   const expandAndSearch = () => {
     setCollapsed(false)
+    onNavigate?.()
     requestAnimationFrame(() => searchRef.current?.focus())
   }
 
@@ -201,7 +205,7 @@ export const ChatSidebar = () => {
         <Button variant="ghost" size="icon" onClick={toggleCollapsed} title="Expand sidebar">
           <PanelLeftOpen size={18} />
         </Button>
-        <Button size="icon" onClick={() => createSession()} title="New conversation">
+        <Button size="icon" onClick={() => { createSession(); onNavigate?.() }} title="New conversation">
           <Plus size={18} />
         </Button>
         <Button variant="ghost" size="icon" onClick={expandAndSearch} title="Search conversations">
@@ -216,11 +220,11 @@ export const ChatSidebar = () => {
   }
 
   return (
-    <aside className="flex h-full w-[264px] shrink-0 flex-col border-r bg-card transition-[width] duration-200">
+    <aside className={`flex h-full shrink-0 flex-col border-r bg-card transition-[width] duration-200 ${mobile ? 'w-full border-r-0' : 'w-[264px]'}`}>
       <div className="flex items-center justify-between px-3 pb-2 pt-3">
         <button
           type="button"
-          onClick={returnToLanding}
+          onClick={() => { returnToLanding(); onNavigate?.() }}
           className="flex items-center gap-2 rounded-md px-1 py-1 transition-colors hover:bg-accent"
           title="Back to Home"
         >
@@ -233,13 +237,13 @@ export const ChatSidebar = () => {
             Resonance
           </span>
         </button>
-        <Button variant="ghost" size="icon" onClick={toggleCollapsed} title="Collapse sidebar" className="h-8 w-8">
+        <Button variant="ghost" size="icon" onClick={toggleCollapsed} title="Collapse sidebar" className={`h-8 w-8 ${mobile ? 'hidden' : ''}`}>
           <PanelLeftClose size={16} />
         </Button>
       </div>
 
       <div className="space-y-2.5 px-3">
-        <Button onClick={() => createSession()} className="w-full gap-2">
+        <Button onClick={() => { createSession(); onNavigate?.() }} className="w-full gap-2">
           <Plus size={16} />
           New conversation
         </Button>
@@ -276,7 +280,7 @@ export const ChatSidebar = () => {
                       key={session.id}
                       session={session}
                       active={session.id === activeSessionId}
-                      onOpen={() => loadSession(session.id)}
+                      onOpen={() => { loadSession(session.id); onNavigate?.() }}
                       onRename={(title) => renameSession(session.id, title)}
                       onDelete={() => deleteSession(session.id)}
                     />

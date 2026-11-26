@@ -23,6 +23,10 @@ import { useThemeStore } from '@/stores/themeStore'
 import { animations } from '@/lib/anime'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
+import { Switch } from '@/components/ui/switch'
+import { Input } from '@/components/ui/Input'
+import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { SettingsSkeleton } from '@/components/ui/skeletons'
 import { api } from '@/services/api'
@@ -76,21 +80,21 @@ export const Settings = () => {
         <h1 className="text-2xl font-bold text-resonance-text-primary">Settings</h1>
         <p className="text-resonance-text-secondary">Manage your account and preferences</p>
       </div>
-      <div className="flex gap-8">
-        <div className="w-64 shrink-0">
-          <nav className="space-y-1">
+      <div className="flex flex-col gap-6 md:flex-row md:gap-8">
+        <div className="w-full shrink-0 md:w-64">
+          <nav className="flex gap-1 overflow-x-auto md:block md:space-y-1">
             {tabs.map(tab => {
               const Icon = tab.icon
               const isActive = activeTab === tab.id
               return (
-                <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${isActive ? 'bg-resonance-accent/10 text-resonance-accent' : 'text-resonance-text-secondary hover:bg-resonance-bg-hover hover:text-resonance-text-primary'}`}>
-                  <Icon size={18} />{tab.label}<ChevronRight size={14} className={`ml-auto transition-transform ${isActive ? 'rotate-90 text-resonance-accent' : 'text-resonance-text-muted'}`} />
+                <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id)} className={`flex shrink-0 items-center gap-3 whitespace-nowrap rounded-lg px-3 py-2.5 text-sm font-medium transition-colors md:w-full ${isActive ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}`}>
+                  <Icon size={18} />{tab.label}<ChevronRight size={14} className={`ml-auto transition-transform ${isActive ? 'rotate-90' : 'text-muted-foreground'}`} />
                 </button>
               )
             })}
           </nav>
           <div className="mt-6 pt-6 border-t border-resonance-border">
-            <button onClick={logout} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-red-500 hover:bg-red-500/10 transition-all">
+            <button type="button" onClick={logout} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10">
               <LogOut size={18} />Sign Out
             </button>
           </div>
@@ -102,7 +106,8 @@ export const Settings = () => {
 }
 
 const ProfileSettings = ({ user, updateUser }) => {
-  const [name, setName] = useState(user?.name || '')
+  const [firstName, setFirstName] = useState((user?.name || '').split(' ')[0] || '')
+  const [lastName, setLastName] = useState((user?.name || '').split(' ').slice(1).join(' '))
   const [email, setEmail] = useState(user?.email || '')
   const [bio, setBio] = useState('')
 
@@ -113,24 +118,24 @@ const ProfileSettings = ({ user, updateUser }) => {
         <p className="text-sm text-resonance-text-secondary">Update your personal information</p>
       </div>
       <Card className="p-6">
-        <div className="flex items-start gap-6 mb-6">
+        <div className="mb-6 flex flex-wrap items-start gap-4 sm:gap-6">
           <div className="relative">
             <img src={user?.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=default'} alt={user?.name} className="w-20 h-20 rounded-full border-2 border-resonance-border" />
-            <button className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-resonance-accent text-white flex items-center justify-center shadow-lg hover:bg-resonance-accent-hover transition-colors"><Camera size={14} /></button>
+            <Button type="button" size="icon" variant="secondary" className="absolute -bottom-1 -right-1 h-8 w-8 rounded-full border-2 border-background"><Camera size={14} /></Button>
           </div>
           <div className="flex-1">
             <p className="text-sm text-resonance-text-muted mb-2">We support PNGs, JPEGs and GIFs under 2MB</p>
             <div className="flex gap-2"><Button size="sm">Change Image</Button><Button variant="ghost" size="sm">Remove Image</Button></div>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div><label className="block text-sm font-medium text-resonance-text-secondary mb-1.5">First Name</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} className="input-field" /></div>
-          <div><label className="block text-sm font-medium text-resonance-text-secondary mb-1.5">Last Name</label><input type="text" value={name.split(' ')[1] || ''} className="input-field" /></div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5"><Label>First Name</Label><Input value={firstName} onChange={(e) => setFirstName(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Last Name</Label><Input value={lastName} onChange={(e) => setLastName(e.target.value)} /></div>
         </div>
-        <div className="mt-4"><label className="block text-sm font-medium text-resonance-text-secondary mb-1.5">Email Address</label><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="input-field" /></div>
-        <div className="mt-4"><label className="block text-sm font-medium text-resonance-text-secondary mb-1.5">Bio</label><textarea value={bio} onChange={(e) => setBio(e.target.value)} placeholder="Tell us about yourself..." rows={3} className="input-field resize-none" /></div>
+        <div className="mt-4 space-y-1.5"><Label>Email Address</Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
+        <div className="mt-4 space-y-1.5"><Label>Bio</Label><Textarea value={bio} onChange={(e) => setBio(e.target.value)} placeholder="Tell us about yourself..." rows={3} /></div>
       </Card>
-      <div className="flex justify-end gap-3"><Button variant="ghost">Cancel</Button><Button onClick={() => updateUser({ name, email })}>Save Changes</Button></div>
+      <div className="flex justify-end gap-3"><Button variant="ghost">Cancel</Button><Button onClick={() => updateUser({ name: `${firstName} ${lastName}`.trim(), email })}>Save Changes</Button></div>
     </div>
   )
 }
@@ -140,14 +145,14 @@ const AppearanceSettings = ({ theme, setTheme, animationsEnabled, setAnimationsE
     <div><h2 className="text-lg font-semibold text-resonance-text-primary mb-1">Appearance</h2><p className="text-sm text-resonance-text-secondary">Customize how Resonance looks and feels</p></div>
     <Card className="p-6">
       <h3 className="text-sm font-semibold text-resonance-text-primary mb-4">Theme</h3>
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
         {[{ id: 'light', label: 'Light Mode', icon: Sun }, { id: 'dark', label: 'Dark Mode', icon: Moon }, { id: 'system', label: 'System', icon: Monitor }].map(t => {
           const Icon = t.icon, isActive = theme === t.id
           return (
-            <button key={t.id} onClick={() => setTheme(t.id)} className={`relative p-4 rounded-xl border-2 transition-all text-center ${isActive ? 'border-resonance-accent bg-resonance-accent/5' : 'border-resonance-border hover:border-resonance-accent/30'}`}>
-              {isActive && <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-resonance-accent flex items-center justify-center"><Check size={12} className="text-white" /></div>}
-              <Icon size={24} className={`mx-auto mb-2 ${isActive ? 'text-resonance-accent' : 'text-resonance-text-muted'}`} />
-              <p className={`text-sm font-medium ${isActive ? 'text-resonance-accent' : 'text-resonance-text-primary'}`}>{t.label}</p>
+            <button key={t.id} type="button" onClick={() => setTheme(t.id)} className={`relative rounded-xl border-2 p-4 text-center transition-colors ${isActive ? 'border-primary bg-accent' : 'border-border hover:border-primary/40'}`}>
+              {isActive && <div className="absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-primary"><Check size={12} className="text-primary-foreground" /></div>}
+              <Icon size={24} className={`mx-auto mb-2 ${isActive ? 'text-primary' : 'text-muted-foreground'}`} />
+              <p className={`text-sm font-medium ${isActive ? 'text-foreground' : 'text-muted-foreground'}`}>{t.label}</p>
             </button>
           )
         })}
@@ -155,10 +160,8 @@ const AppearanceSettings = ({ theme, setTheme, animationsEnabled, setAnimationsE
     </Card>
     <Card className="p-6">
       <div className="flex items-center justify-between">
-        <div><h3 className="text-sm font-semibold text-resonance-text-primary">Show Animations</h3><p className="text-xs text-resonance-text-muted mt-0.5">Enable or disable UI animations</p></div>
-        <button onClick={() => setAnimationsEnabled(!animationsEnabled)} className={`relative w-12 h-6 rounded-full transition-colors ${animationsEnabled ? 'bg-resonance-accent' : 'bg-resonance-bg-tertiary border border-resonance-border'}`}>
-          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${animationsEnabled ? 'translate-x-6' : 'translate-x-0.5'}`} />
-        </button>
+        <div className="min-w-0"><h3 className="text-sm font-semibold text-foreground">Show Animations</h3><p className="mt-0.5 text-xs text-muted-foreground">Enable or disable UI animations</p></div>
+        <Switch checked={animationsEnabled} onCheckedChange={setAnimationsEnabled} aria-label="Show animations" />
       </div>
     </Card>
   </div>
@@ -180,10 +183,8 @@ const NotificationSettings = () => {
       <Card className="p-6 space-y-4">
         {items.map(item => (
           <div key={item.key} className="flex items-center justify-between py-2">
-            <div><p className="text-sm font-medium text-resonance-text-primary">{item.label}</p><p className="text-xs text-resonance-text-muted">{item.desc}</p></div>
-            <button onClick={() => toggle(item.key)} className={`relative w-12 h-6 rounded-full transition-colors ${settings[item.key] ? 'bg-resonance-accent' : 'bg-resonance-bg-tertiary border border-resonance-border'}`}>
-              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${settings[item.key] ? 'translate-x-6' : 'translate-x-0.5'}`} />
-            </button>
+            <div className="min-w-0"><p className="text-sm font-medium text-foreground">{item.label}</p><p className="text-xs text-muted-foreground">{item.desc}</p></div>
+            <Switch checked={settings[item.key]} onCheckedChange={() => toggle(item.key)} aria-label={item.label} />
           </div>
         ))}
       </Card>
@@ -241,8 +242,8 @@ const IntegrationSettings = () => {
       </div>
 
       <Card className="p-6">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-resonance-bg-tertiary flex items-center justify-center">
               <Github size={24} className="text-resonance-text-primary" />
             </div>
@@ -278,13 +279,12 @@ const IntegrationSettings = () => {
                 <Check size={14} />Active
               </span>
             ) : (
-              <a
-                href="/login"
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-resonance-accent text-white rounded-lg text-sm font-medium hover:bg-resonance-accent/90 transition-all"
-              >
-                <Github size={16} />
-                Connect with GitHub
-              </a>
+              <Button asChild className="gap-1.5">
+                <a href="/login">
+                  <Github size={16} />
+                  Connect with GitHub
+                </a>
+              </Button>
             )}
           </div>
         </div>

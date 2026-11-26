@@ -416,7 +416,7 @@ export const DesignDetail = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5 flex-shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="secondary"
               onClick={async () => {
@@ -462,7 +462,7 @@ export const DesignDetail = () => {
         </header>
 
         {/* ---------- Tabs ---------- */}
-        <nav className="flex gap-1 border-b border-resonance-border mb-6 sticky top-0 bg-resonance-bg-primary z-10 pt-2">
+        <nav className="sticky top-0 z-10 mb-6 flex gap-1 overflow-x-auto border-b border-border bg-background pt-2">
           {TABS.map((tab) => {
             const Icon = tab.icon
             const count = tab.countKey ? counts[tab.countKey] : null
@@ -471,10 +471,10 @@ export const DesignDetail = () => {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-all duration-150 -mb-px ${
+                className={`flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
                   isActive
-                    ? 'border-resonance-text-primary text-resonance-text-primary'
-                    : 'border-transparent text-resonance-text-secondary hover:text-resonance-text-primary'
+                    ? 'border-primary text-foreground'
+                    : 'border-transparent text-muted-foreground hover:text-foreground'
                 }`}
               >
                 <Icon size={16} />
@@ -614,7 +614,7 @@ export const DesignDetail = () => {
                 <div className="p-6">
                   {latestReport ? (
                     <>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-5">
+                      <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4 md:gap-6">
                         {[
                           { label: 'Scenario', value: latestSim?.scenario || '—' },
                           { label: 'Traffic Pattern', value: latestSim?.trafficPattern === 'spike' ? 'Spike → Steady → Ramp Down' : (latestSim?.trafficPattern || '—') },
@@ -736,7 +736,7 @@ export const DesignDetail = () => {
                     reports.map((report) => (
                       <div
                         key={report.id}
-                        className="grid grid-cols-[48px_1fr_auto_auto] items-center gap-4 px-6 py-4 hover:bg-resonance-bg-hover transition-colors cursor-pointer group"
+                        className="grid cursor-pointer grid-cols-[40px_minmax(0,1fr)] items-center gap-3 px-4 py-4 transition-colors hover:bg-accent sm:grid-cols-[48px_minmax(0,1fr)_auto_auto] sm:gap-4 sm:px-6"
                       >
                         <div className="w-10 h-10 rounded-xl bg-resonance-accent/10 flex items-center justify-center text-resonance-accent">
                           <FileText size={18} />
@@ -749,7 +749,7 @@ export const DesignDetail = () => {
                             {new Date(report.generatedAt).toLocaleDateString()} • {report.duration ? `${Math.floor(report.duration / 60)}m ${report.duration % 60}s` : '0s'} • Monte Carlo: {report.monteCarloPasses || 1} passes
                           </p>
                         </div>
-                        <div className="flex gap-4">
+                        <div className="hidden gap-4 sm:flex">
                           {[
                             { val: report.overallScore, lbl: 'Overall' },
                             { val: report.architectureScore, lbl: 'Arch' },
@@ -764,7 +764,7 @@ export const DesignDetail = () => {
                             </div>
                           ))}
                         </div>
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
                           <Button variant="secondary" size="sm" className="text-xs">View</Button>
                         </div>
                       </div>
@@ -825,8 +825,8 @@ export const DesignDetail = () => {
                         <div className="flex justify-center">
                           <AuditDot action={log.action} />
                         </div>
-                        <div>
-                          <h4 className="text-sm font-medium text-resonance-text-primary">
+                        <div className="min-w-0 break-words">
+                          <h4 className="text-sm font-medium text-foreground">
                             {log.action.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                             {log.simulationScenario && ` — ${log.simulationScenario}`}
                           </h4>
@@ -936,7 +936,7 @@ export const DesignDetail = () => {
                   <span className="text-base font-semibold text-resonance-text-primary">Simulation Defaults</span>
                 </div>
                 <div className="p-6">
-                  <div className="grid grid-cols-3 gap-4 mb-4">
+                  <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div>
                       <label className="block text-sm font-medium text-resonance-text-primary mb-2">Default RPS</label>
                       <input

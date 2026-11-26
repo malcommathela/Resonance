@@ -10,7 +10,7 @@ import { TopNav } from '@/components/layout/TopNav'
  */
 export const AppShell = () => {
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-resonance-bg-primary">
+    <div className="flex h-[100dvh] flex-col overflow-hidden bg-background">
       <TopNav />
       <main className="flex-1 overflow-auto">
         <Outlet />
