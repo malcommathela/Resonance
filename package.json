@@ -10,6 +10,6 @@
     "lint": "npm --workspace @resonance/web run lint"
   },
   "devDependencies": {
-    "turbo": "^2.0.0"
+    "turbo": "^2.11.13"
   }
 }
