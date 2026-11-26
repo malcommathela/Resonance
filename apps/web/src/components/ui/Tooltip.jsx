@@ -1,27 +1,31 @@
-import React, { useState } from 'react'
+import * as React from 'react'
+import * as TooltipPrimitive from '@radix-ui/react-tooltip'
+import { cn } from '@/lib/utils'
 
-export const Tooltip = ({ children, content, position = 'top' }) => {
-  const [isVisible, setIsVisible] = useState(false)
+export const TooltipProvider = TooltipPrimitive.Provider
 
-  const positions = {
-    top: 'bottom-full left-1/2 -translate-x-1/2 mb-2',
-    bottom: 'top-full left-1/2 -translate-x-1/2 mt-2',
-    left: 'right-full top-1/2 -translate-y-1/2 mr-2',
-    right: 'left-full top-1/2 -translate-y-1/2 ml-2',
-  }
+export const Tooltip = ({ children, content, position = 'top', sideOffset = 6, className }) => {
+  const trigger = React.isValidElement(children) ? children : <span>{children}</span>
 
   return (
-    <div
-      className="relative inline-flex"
-      onMouseEnter={() => setIsVisible(true)}
-      onMouseLeave={() => setIsVisible(false)}
-    >
-      {children}
-      {isVisible && (
-        <div className={`absolute ${positions[position]} z-50 px-3 py-1.5 bg-resonance-bg-elevated text-resonance-text-secondary text-xs rounded-lg border border-resonance-border shadow-lg whitespace-nowrap`}>
-          {content}
-        </div>
-      )}
-    </div>
+    <TooltipPrimitive.Provider delayDuration={200}>
+      <TooltipPrimitive.Root>
+        <TooltipPrimitive.Trigger asChild>{trigger}</TooltipPrimitive.Trigger>
+        {content ? (
+          <TooltipPrimitive.Portal>
+            <TooltipPrimitive.Content
+              side={position}
+              sideOffset={sideOffset}
+              className={cn(
+                'z-50 overflow-hidden rounded-md border bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-md animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
+                className
+              )}
+            >
+              {content}
+            </TooltipPrimitive.Content>
+          </TooltipPrimitive.Portal>
+        ) : null}
+      </TooltipPrimitive.Root>
+    </TooltipPrimitive.Provider>
   )
 }

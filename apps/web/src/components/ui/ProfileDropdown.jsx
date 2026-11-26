@@ -1,7 +1,6 @@
 import * as React from 'react'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, FileText, LogOut, Settings, User, Users } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { FileText, LogOut, Settings, User, Users } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,157 +32,78 @@ export function ProfileDropdown({ user, onSignOut, className, compact = false, a
   return (
     <div className={cn('relative w-full', className)}>
       <DropdownMenu onOpenChange={setIsOpen}>
-        <div className="group relative w-full">
-          <DropdownMenuTrigger asChild>
-            {avatarOnly ? (
-              <button
-                type="button"
-                title={profile.name}
-                aria-label="Open profile menu"
-                className="mx-auto flex h-9 w-9 items-center justify-center rounded-full bg-resonance-accent p-0.5 transition-opacity hover:opacity-90 focus:outline-none"
-              >
-                <img
-                  alt={profile.name}
-                  className="h-full w-full rounded-full object-cover bg-resonance-bg-secondary"
-                  src={profile.avatar}
-                />
-              </button>
-            ) : compact ? (
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 rounded-xl border border-resonance-border bg-resonance-bg-secondary px-1.5 py-1.5 text-left transition-all duration-200 hover:bg-resonance-bg-hover focus:outline-none"
-              >
-                <div className="h-7 w-7 shrink-0 rounded-full bg-resonance-accent p-0.5">
-                  <div className="h-full w-full overflow-hidden rounded-full bg-resonance-bg-secondary">
-                    <img
-                      alt={profile.name}
-                      className="h-full w-full rounded-full object-cover"
-                      src={profile.avatar}
-                    />
-                  </div>
-                </div>
-                <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-tight tracking-tight text-resonance-text-primary">
-                  {profile.name}
-                </span>
-                <ChevronDown
-                  className={cn(
-                    'h-3.5 w-3.5 shrink-0 text-resonance-text-muted transition-transform duration-200',
-                    isOpen && 'rotate-180'
-                  )}
-                />
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="flex w-full items-center gap-3 rounded-2xl border border-resonance-border bg-resonance-bg-secondary p-3 text-left transition-all duration-200 hover:bg-resonance-bg-hover hover:shadow-sm focus:outline-none"
-              >
-                <div className="relative shrink-0">
-                  <div className="h-10 w-10 rounded-full bg-resonance-accent p-0.5">
-                    <div className="h-full w-full overflow-hidden rounded-full bg-resonance-bg-secondary">
-                      <img
-                        alt={profile.name}
-                        className="h-full w-full rounded-full object-cover"
-                        src={profile.avatar}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="min-w-0 flex-1 text-left">
-                  <div className="truncate text-sm font-medium leading-tight tracking-tight text-resonance-text-primary">
-                    {profile.name}
-                  </div>
-                  <div className="truncate text-xs leading-tight tracking-tight text-resonance-text-muted">
-                    {profile.email}
-                  </div>
-                </div>
-              </button>
-            )}
-          </DropdownMenuTrigger>
-
-          {!compact && !avatarOnly && (
-            <div
-              className={cn(
-                'absolute top-1/2 -right-2 -translate-y-1/2 transition-all duration-200',
-                isOpen ? 'opacity-100' : 'opacity-60 group-hover:opacity-100'
-              )}
+        <DropdownMenuTrigger asChild>
+          {avatarOnly ? (
+            <button
+              type="button"
+              title={profile.name}
+              aria-label="Open profile menu"
+              className="mx-auto flex h-9 w-9 items-center justify-center overflow-hidden rounded-full ring-2 ring-border focus:outline-none"
             >
-              <svg
-                aria-hidden="true"
+              <img alt={profile.name} className="h-full w-full object-cover" src={profile.avatar} />
+            </button>
+          ) : compact ? (
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-md border bg-background px-2 py-1.5 text-left transition-colors hover:bg-accent focus:outline-none"
+            >
+              <img alt={profile.name} className="h-6 w-6 shrink-0 rounded-full object-cover" src={profile.avatar} />
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                {profile.name}
+              </span>
+              <ChevronDown
                 className={cn(
-                  'transition-all duration-200',
-                  isOpen ? 'scale-110 text-resonance-text-primary' : 'text-resonance-text-muted group-hover:text-resonance-text-secondary'
+                  'h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200',
+                  isOpen && 'rotate-180'
                 )}
-                fill="none"
-                height="24"
-                viewBox="0 0 12 24"
-                width="12"
-              >
-                <path
-                  d="M2 4C6 8 6 16 2 20"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeLinecap="round"
-                  strokeWidth="1.5"
-                />
-              </svg>
-            </div>
+              />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="flex w-full items-center gap-3 rounded-lg border bg-background p-3 text-left transition-colors hover:bg-accent focus:outline-none"
+            >
+              <img alt={profile.name} className="h-10 w-10 shrink-0 rounded-full object-cover" src={profile.avatar} />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-foreground">{profile.name}</div>
+                <div className="truncate text-xs text-muted-foreground">{profile.email}</div>
+              </div>
+            </button>
           )}
+        </DropdownMenuTrigger>
 
-          <DropdownMenuContent
-            align="end"
-            side={avatarOnly ? 'right' : compact ? 'bottom' : 'top'}
-            sideOffset={8}
-            className="w-64 origin-bottom-right rounded-2xl border border-resonance-border bg-resonance-bg-elevated/95 p-2 shadow-xl backdrop-blur-sm"
-          >
-            <div className="space-y-1">
-              {menuItems.map((item) => (
-                <DropdownMenuItem asChild key={item.label}>
-                  {item.external ? (
-                    <a
-                      href={item.href}
-                      className="group flex cursor-pointer items-center rounded-xl border border-transparent p-3 transition-all duration-200 hover:border-resonance-border hover:bg-resonance-bg-hover hover:shadow-sm"
-                    >
-                      <div className="flex flex-1 items-center gap-2 text-resonance-text-secondary">
-                        {item.icon}
-                        <span className="whitespace-nowrap text-sm font-medium leading-tight tracking-tight text-resonance-text-primary">
-                          {item.label}
-                        </span>
-                      </div>
-                    </a>
-                  ) : (
-                    <Link
-                      to={item.href}
-                      className="group flex cursor-pointer items-center rounded-xl border border-transparent p-3 transition-all duration-200 hover:border-resonance-border hover:bg-resonance-bg-hover hover:shadow-sm"
-                    >
-                      <div className="flex flex-1 items-center gap-2 text-resonance-text-secondary">
-                        {item.icon}
-                        <span className="whitespace-nowrap text-sm font-medium leading-tight tracking-tight text-resonance-text-primary">
-                          {item.label}
-                        </span>
-                      </div>
-                    </Link>
-                  )}
-                </DropdownMenuItem>
-              ))}
-            </div>
-
-            <DropdownMenuSeparator className="my-3 bg-gradient-to-r from-transparent via-resonance-border to-transparent" />
-
-            <DropdownMenuItem asChild>
-              <button
-                type="button"
-                onClick={onSignOut}
-                className="group flex w-full cursor-pointer items-center gap-3 rounded-xl border border-transparent bg-red-500/10 p-3 transition-all duration-200 hover:border-red-500/30 hover:bg-red-500/20 hover:shadow-sm"
-              >
-                <LogOut className="h-4 w-4 text-red-500 group-hover:text-red-600" />
-                <span className="text-sm font-medium text-red-500 group-hover:text-red-600">
-                  Sign Out
-                </span>
-              </button>
+        <DropdownMenuContent
+          align="end"
+          side={avatarOnly ? 'right' : compact ? 'bottom' : 'top'}
+          sideOffset={8}
+          className="w-60"
+        >
+          {menuItems.map((item) => (
+            <DropdownMenuItem asChild key={item.label}>
+              {item.external ? (
+                <a href={item.href} className="flex w-full cursor-pointer items-center gap-2">
+                  {item.icon}
+                  <span>{item.label}</span>
+                </a>
+              ) : (
+                <Link to={item.href} className="flex w-full cursor-pointer items-center gap-2">
+                  {item.icon}
+                  <span>{item.label}</span>
+                </Link>
+              )}
             </DropdownMenuItem>
-          </DropdownMenuContent>
-        </div>
+          ))}
+
+          <DropdownMenuSeparator />
+
+          <DropdownMenuItem
+            onSelect={onSignOut}
+            className="gap-2 text-destructive focus:bg-destructive/10 focus:text-destructive"
+          >
+            <LogOut className="h-4 w-4" />
+            Sign Out
+          </DropdownMenuItem>
+        </DropdownMenuContent>
       </DropdownMenu>
     </div>
   )

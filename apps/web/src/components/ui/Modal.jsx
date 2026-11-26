@@ -1,80 +1,43 @@
-import React, { useEffect, useRef } from 'react'
+import * as React from 'react'
+import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
-import { animations } from '@/lib/anime'
+import { cn } from '@/lib/utils'
 
-export const Modal = ({ isOpen, onClose, title, children, size = 'md', footer = null }) => {
-  const contentRef = useRef(null)
-  const backdropRef = useRef(null)
-
-  useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden'
-      requestAnimationFrame(() => {
-        if (backdropRef.current) animations.backdropFade(backdropRef.current)
-        if (contentRef.current) animations.modalEnter(contentRef.current)
-      })
-    } else {
-      document.body.style.overflow = ''
-    }
-    return () => {
-      document.body.style.overflow = ''
-    }
-  }, [isOpen])
-
-  // Escape key handler
-  useEffect(() => {
-    const handleEscape = (e) => {
-      if (e.key === 'Escape' && isOpen) {
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', handleEscape)
-    return () => window.removeEventListener('keydown', handleEscape)
-  }, [isOpen, onClose])
-
-  if (!isOpen) return null
-
-  const sizes = {
-    sm: 'max-w-md',
-    md: 'max-w-lg',
-    lg: 'max-w-2xl',
-    xl: 'max-w-4xl',
-    full: 'max-w-full mx-4',
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
-        ref={backdropRef}
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={onClose}
-      />
-      <div
-        ref={contentRef}
-        className={`relative w-full ${sizes[size]} bg-resonance-bg-elevated rounded-2xl border border-resonance-border shadow-2xl max-h-[90vh] overflow-hidden flex flex-col`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {title && (
-          <div className="flex items-center justify-between px-6 py-4 border-b border-resonance-border shrink-0">
-            <h3 className="text-lg font-semibold text-resonance-text-primary">{title}</h3>
-            <button
-              onClick={onClose}
-              className="p-1 rounded-lg hover:bg-resonance-bg-hover transition-colors"
-              aria-label="Close modal"
-            >
-              <X size={20} className="text-resonance-text-muted" />
-            </button>
-          </div>
-        )}
-        <div className="flex-1 overflow-y-auto p-6">
-          {children}
-        </div>
-        {footer && (
-          <div className="px-6 py-4 border-t border-resonance-border shrink-0">
-            {footer}
-          </div>
-        )}
-      </div>
-    </div>
-  )
+const sizes = {
+  sm: 'max-w-md',
+  md: 'max-w-lg',
+  lg: 'max-w-2xl',
+  xl: 'max-w-4xl',
+  full: 'max-w-full mx-4',
 }
+
+export const Modal = ({ isOpen, onClose, title, children, size = 'md', footer = null }) => (
+  <DialogPrimitive.Root open={isOpen} onOpenChange={(open) => !open && onClose()}>
+    <DialogPrimitive.Portal>
+      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+      <DialogPrimitive.Content
+        aria-describedby={undefined}
+        className={cn(
+          'fixed left-[50%] top-[50%] z-50 flex max-h-[90vh] w-full translate-x-[-50%] translate-y-[-50%] flex-col overflow-hidden rounded-lg border bg-background shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
+          sizes[size] || sizes.md
+        )}
+      >
+        {title ? (
+          <div className="flex shrink-0 items-center justify-between border-b px-6 py-4">
+            <DialogPrimitive.Title asChild>
+              <h3 className="text-lg font-semibold text-foreground">{title}</h3>
+            </DialogPrimitive.Title>
+            <DialogPrimitive.Close className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2">
+              <X className="h-4 w-4" />
+              <span className="sr-only">Close</span>
+            </DialogPrimitive.Close>
+          </div>
+        ) : (
+          <DialogPrimitive.Title className="sr-only">Dialog</DialogPrimitive.Title>
+        )}
+        <div className="flex-1 overflow-y-auto p-6">{children}</div>
+        {footer && <div className="shrink-0 border-t px-6 py-4">{footer}</div>}
+      </DialogPrimitive.Content>
+    </DialogPrimitive.Portal>
+  </DialogPrimitive.Root>
+)
