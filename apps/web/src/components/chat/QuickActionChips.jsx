@@ -1,12 +1,7 @@
 import React from 'react'
 import { BookOpen, DollarSign, Scale, Search, ShieldAlert, Sparkles, TrendingUp } from 'lucide-react'
+import { Button } from '@/components/ui/Button'
 import { useChatStore } from '@/stores/chatStore'
-
-/*
- * variant="landing" — teaching chips under the hero composer; they prefill it.
- * variant="thread"  — empty-thread suggestions; they send immediately.
- * variant="design"  — design-aware follow-ups under assistant answers; send.
- */
 
 const LANDING_CHIPS = [
   { icon: Sparkles, label: 'Design a real-time notification system', prompt: 'Design a real-time notification system' },
@@ -34,7 +29,6 @@ export const QuickActionChips = ({ variant = 'landing' }) => {
 
   const onClick = (prompt) => {
     if (variant === 'landing') {
-      // Fill the hero composer so the user can edit before sending
       window.dispatchEvent(new CustomEvent('resonance:chat-prefill', { detail: prompt }))
     } else {
       sendMessage(prompt)
@@ -44,15 +38,17 @@ export const QuickActionChips = ({ variant = 'landing' }) => {
   return (
     <div className={`flex flex-wrap gap-2 ${variant === 'landing' ? 'justify-center' : ''}`}>
       {CHIPS[variant].map(({ icon: Icon, label, prompt }) => (
-        <button
+        <Button
           key={label}
           type="button"
+          variant="outline"
+          size="sm"
           onClick={() => onClick(prompt)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-resonance-border bg-resonance-bg-secondary text-[13px] text-resonance-text-secondary hover:text-resonance-text-primary hover:border-resonance-accent/40 hover:bg-resonance-bg-hover transition-all active:scale-95"
+          className="gap-1.5 rounded-full text-[13px] font-normal text-muted-foreground hover:text-foreground"
         >
-          <Icon size={13} className="text-resonance-accent" />
+          <Icon size={13} className="text-primary" />
           {label}
-        </button>
+        </Button>
       ))}
     </div>
   )

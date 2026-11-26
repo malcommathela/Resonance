@@ -10,7 +10,6 @@ const NAV_ITEMS = [
   { label: 'Teams', icon: Users, path: '/team' },
 ]
 
-/* Landing-mode top navigation (matches the vision layout; no left sidebar) */
 export const TopNav = () => {
   const navigate = useNavigate()
   const { user } = useAuthStore()
@@ -22,24 +21,24 @@ export const TopNav = () => {
     .toUpperCase()
 
   return (
-    <header className="h-14 shrink-0 border-b border-resonance-border bg-resonance-bg-secondary/80 backdrop-blur flex items-center justify-between px-4 sticky top-0 z-30">
+    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between border-b bg-background/80 px-4 backdrop-blur">
       <div className="flex items-center gap-2.5">
-        <div className="w-8 h-8 rounded-lg bg-resonance-accent flex items-center justify-center">
-          <Zap size={16} className="text-resonance-neutral" strokeWidth={2.5} />
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
+          <Zap size={16} className="text-primary-foreground" strokeWidth={2.5} />
         </div>
-        <span className="text-lg font-bold tracking-tight text-resonance-text-primary">Resonance</span>
+        <span className="text-lg font-bold tracking-tight text-foreground">Resonance</span>
       </div>
 
-      <nav className="hidden md:flex items-center gap-1 bg-resonance-bg-tertiary border border-resonance-border rounded-xl p-1">
+      <nav className="hidden items-center gap-1 rounded-xl border bg-muted p-1 md:flex">
         {NAV_ITEMS.map(({ label, icon: Icon, path, current }) => (
           <button
             key={label}
             type="button"
             onClick={() => !current && navigate(path)}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all duration-150 ${
+            className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-colors ${
               current
-                ? 'bg-resonance-bg-elevated text-resonance-text-primary shadow-sm'
-                : 'text-resonance-text-secondary hover:text-resonance-text-primary'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             <Icon size={14} />
@@ -53,13 +52,13 @@ export const TopNav = () => {
         <button
           type="button"
           title="Notifications"
-          className="relative p-2 rounded-lg text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
+          className="relative rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <Bell size={17} />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 border-2 border-resonance-bg-secondary" />
+          <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full border-2 border-background bg-destructive" />
         </button>
         <div
-          className="w-8 h-8 rounded-full bg-resonance-accent flex items-center justify-center text-xs font-bold text-resonance-neutral cursor-pointer"
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground"
           title={user?.name || 'Profile'}
         >
           {initials}

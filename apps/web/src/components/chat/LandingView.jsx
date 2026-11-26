@@ -17,7 +17,6 @@ const formatRelativeTime = (date) => {
   return `${Math.floor(diff / 604800)}w ago`
 }
 
-/* Hero + recent designs — the landing (`landing` mode) view of Home */
 export const LandingView = () => {
   const designs = useDesignStore((s) => s.designs)
   const isLoading = useDesignStore((s) => s.isLoading)
@@ -25,6 +24,7 @@ export const LandingView = () => {
   const startDesignChat = useChatStore((s) => s.startDesignChat)
   const theme = useThemeStore((s) => s.theme)
   const accentColor = useThemeStore((s) => s.accentColor)
+  const heroAccent = theme === 'dark' ? accentColor : '#4d7c0f'
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -56,13 +56,11 @@ export const LandingView = () => {
 
   return (
     <div className="w-full">
-      {/* Hero */}
-      <section className="relative flex flex-col items-center text-center px-4 pt-16 pb-12 overflow-hidden">
-        {/* Topographic contour background (mouse-reactive; light scrim keeps text readable) */}
+      <section className="relative flex flex-col items-center overflow-hidden px-4 pb-12 pt-16 text-center">
         <div aria-hidden className="absolute inset-0">
           <Topography
             lowColor={theme === 'dark' ? '#3f3f46' : '#e4e4e7'}
-            midColor={accentColor}
+            midColor={heroAccent}
             highColor={theme === 'dark' ? '#f1f1f4' : '#18181b'}
             speed={0.35}
             morphAmount={3}
@@ -76,51 +74,51 @@ export const LandingView = () => {
             contrast={3}
             brightness={1}
             fillBands={false}
-            opacity={1}
+            opacity={theme === 'dark' ? 0.85 : 0.5}
             grain
             grainIntensity={0.05}
             mouseInteraction
             mouseRadius={0.3}
             mouseStrength={0.4}
           />
-          <div className="absolute inset-0 bg-resonance-bg-primary/30 pointer-events-none" />
-          <div className="absolute inset-x-0 bottom-0 h-44 bg-gradient-to-b from-transparent to-resonance-bg-primary pointer-events-none" />
+          <div className="pointer-events-none absolute inset-0 bg-background/40" />
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_55%_45%_at_50%_38%,hsl(var(--background))_0%,hsl(var(--background)/0.85)_38%,transparent_72%)]" />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-44 bg-gradient-to-b from-transparent to-background" />
         </div>
 
-        <h1 className="relative z-10 text-4xl md:text-5xl font-bold tracking-tight text-resonance-text-primary animate-fade-in-up">
-          Prompt it. <span className="text-resonance-accent">Resonate</span> it.
+        <h1 className="animate-fade-in-up relative z-10 text-4xl font-bold tracking-tight text-foreground md:text-5xl">
+          Prompt it. <span style={{ color: heroAccent }}>Resonate</span> it.
         </h1>
-        <p className="relative z-10 mt-4 text-base md:text-lg text-resonance-text-secondary max-w-xl animate-fade-in-up stagger-1">
+        <p className="animate-fade-in-up stagger-1 relative z-10 mt-4 max-w-xl text-base text-muted-foreground md:text-lg">
           Ask a question, explore a trade-off, or describe a system.
           <br className="hidden md:block" /> Resonance only creates a design when you ask it to.
         </p>
 
-        <div className="relative z-10 mt-8 w-full max-w-3xl animate-fade-in-up stagger-2">
+        <div className="animate-fade-in-up stagger-2 relative z-10 mt-8 w-full max-w-3xl">
           <ChatComposer variant="hero" autoFocus />
         </div>
 
-        <div className="relative z-10 mt-5 animate-fade-in-up stagger-3">
+        <div className="animate-fade-in-up stagger-3 relative z-10 mt-5">
           <QuickActionChips variant="landing" />
         </div>
       </section>
 
-      {/* Recent designs */}
-      <section className="max-w-6xl mx-auto px-6 pb-16 w-full">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-resonance-text-primary">Recent Designs</h2>
+      <section className="mx-auto w-full max-w-6xl px-6 pb-16">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-foreground">Recent Designs</h2>
           <button
             type="button"
             onClick={() => navigate('/dashboard')}
-            className="text-[13px] font-medium text-resonance-text-secondary hover:text-resonance-text-primary transition-colors"
+            className="text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground"
           >
             View all
           </button>
         </div>
 
         {isLoading && designs.length === 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="rounded-xl border border-resonance-border p-4 space-y-3">
+              <div key={i} className="space-y-3 rounded-xl border bg-card p-4">
                 <div className="skeleton-shimmer h-9 w-full rounded-lg" />
                 <div className="skeleton-shimmer h-4 w-2/3 rounded" />
                 <div className="skeleton-shimmer h-4 w-1/3 rounded" />
@@ -134,18 +132,18 @@ export const LandingView = () => {
             ))}
           </div>
         ) : recent.length === 0 ? (
-          <div className="text-center py-14 rounded-xl border border-dashed border-resonance-border">
-            <Layers size={32} className="mx-auto text-resonance-text-muted mb-3" />
-            <p className="text-sm text-resonance-text-secondary">
+          <div className="rounded-xl border border-dashed py-14 text-center">
+            <Layers size={32} className="mx-auto mb-3 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
               No designs yet — describe one above, or{' '}
-              <button onClick={() => navigate('/dashboard')} className="text-resonance-accent hover:underline">
+              <button onClick={() => navigate('/dashboard')} className="text-primary hover:underline">
                 open the dashboard
               </button>{' '}
               to import from GitHub.
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {recent.map((design) => (
               <DesignCard key={design.id} design={design} onChat={handleChat} />
             ))}

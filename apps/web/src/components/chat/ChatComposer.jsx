@@ -1,5 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { ArrowUp, ChevronDown, Plus, Square } from 'lucide-react'
+import { Button } from '@/components/ui/Button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useChatStore } from '@/stores/chatStore'
 
 const MODELS = [
@@ -7,21 +14,13 @@ const MODELS = [
   { id: 'resonance-pro', name: 'Resonance Pro', badge: 'Soon', disabled: true },
 ]
 
-/*
- * Shared composer for both layouts:
- *  - variant="hero"    → landing hero (large, centered)
- *  - variant="compact" → docked at the bottom of the active thread
- * Chips prefill it via the 'resonance:chat-prefill' CustomEvent.
- */
 export const ChatComposer = ({ variant = 'compact', autoFocus = false }) => {
   const [value, setValue] = useState('')
   const [model, setModel] = useState(MODELS[0])
-  const [modelOpen, setModelOpen] = useState(false)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const stopStreaming = useChatStore((s) => s.stopStreaming)
   const textareaRef = useRef(null)
-  const modelMenuRef = useRef(null)
   const isHero = variant === 'hero'
 
   const autoResize = () => {
@@ -44,15 +43,6 @@ export const ChatComposer = ({ variant = 'compact', autoFocus = false }) => {
     return () => window.removeEventListener('resonance:chat-prefill', prefill)
   }, [])
 
-  useEffect(() => {
-    if (!modelOpen) return
-    const onOutside = (e) => {
-      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target)) setModelOpen(false)
-    }
-    document.addEventListener('mousedown', onOutside)
-    return () => document.removeEventListener('mousedown', onOutside)
-  }, [modelOpen])
-
   const submit = () => {
     if (!value.trim() || isStreaming) return
     sendMessage(value, { useDesignSystem: true })
@@ -68,7 +58,7 @@ export const ChatComposer = ({ variant = 'compact', autoFocus = false }) => {
 
   return (
     <div className="w-full">
-      <div className="rounded-2xl border border-resonance-border bg-resonance-bg-elevated shadow-[0_8px_30px_rgba(0,0,0,0.12)] transition-colors focus-within:border-resonance-text-muted/50">
+      <div className="rounded-2xl border bg-card text-card-foreground shadow-sm transition-colors focus-within:border-ring/60">
         <textarea
           ref={textareaRef}
           value={value}
@@ -77,81 +67,79 @@ export const ChatComposer = ({ variant = 'compact', autoFocus = false }) => {
           rows={isHero ? 2 : 1}
           autoFocus={autoFocus}
           placeholder={isHero ? 'Describe what you want to create…' : 'Ask Resonance anything…'}
-          className="w-full bg-transparent resize-none outline-none text-[15px] leading-relaxed text-resonance-text-primary placeholder:text-resonance-text-muted px-4 pt-4 pb-1"
+          className="w-full resize-none bg-transparent px-4 pb-1 pt-4 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
         />
         <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
           <div className="flex items-center gap-1.5">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
               title="Attach context (coming soon)"
-              className="p-2 rounded-lg text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
             >
-              <Plus size={16} />
-            </button>
+              <Plus className="h-4 w-4" />
+            </Button>
 
-            <div className="relative" ref={modelMenuRef}>
-              <button
-                type="button"
-                onClick={() => setModelOpen((v) => !v)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-resonance-accent" />
-                {model.name}
-                <ChevronDown size={12} />
-              </button>
-              {modelOpen && (
-                <div className="absolute bottom-full mb-2 left-0 w-56 rounded-xl border border-resonance-border bg-resonance-bg-elevated shadow-xl p-1 z-30 animate-scale-in">
-                  {MODELS.map((m) => (
-                    <button
-                      key={m.id}
-                      type="button"
-                      disabled={m.disabled}
-                      onClick={() => {
-                        setModel(m)
-                        setModelOpen(false)
-                      }}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-[13px] transition-colors ${
-                        m.disabled
-                          ? 'text-resonance-text-muted cursor-not-allowed'
-                          : 'text-resonance-text-primary hover:bg-resonance-bg-hover'
-                      }`}
-                    >
-                      <span className="flex items-center gap-2">
-                        {m.id === model.id && <span className="w-1.5 h-1.5 rounded-full bg-resonance-accent" />}
-                        {m.name}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                  {model.name}
+                  <ChevronDown className="h-3 w-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="top" className="w-56">
+                {MODELS.map((m) => (
+                  <DropdownMenuItem
+                    key={m.id}
+                    disabled={m.disabled}
+                    onSelect={() => setModel(m)}
+                    className="justify-between"
+                  >
+                    <span className="flex items-center gap-2">
+                      {m.id === model.id && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
+                      {m.name}
+                    </span>
+                    {m.badge && (
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground">
+                        {m.badge}
                       </span>
-                      {m.badge && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-resonance-bg-tertiary text-resonance-text-muted">
-                          {m.badge}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
           <div className="flex items-center gap-2.5">
             {isStreaming ? (
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="icon"
                 onClick={stopStreaming}
                 title="Stop generating"
-                className="w-9 h-9 rounded-xl bg-resonance-bg-tertiary border border-resonance-border flex items-center justify-center text-resonance-text-primary hover:bg-resonance-bg-hover transition-all active:scale-95"
+                className="h-9 w-9 rounded-xl"
               >
                 <Square size={12} fill="currentColor" />
-              </button>
+              </Button>
             ) : (
-              <button
+              <Button
                 type="button"
+                size="icon"
                 onClick={submit}
                 disabled={!value.trim()}
                 title="Send (Enter)"
-                className="w-9 h-9 rounded-xl bg-resonance-accent text-resonance-neutral flex items-center justify-center hover:bg-resonance-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-95"
+                className="h-9 w-9 rounded-xl"
               >
                 <ArrowUp size={17} strokeWidth={2.5} />
-              </button>
+              </Button>
             )}
           </div>
         </div>

@@ -3,10 +3,18 @@ import {
   MoreHorizontal, Network, PanelLeftClose, PanelLeftOpen,
   Pencil, Plus, Search, Trash2,
 } from 'lucide-react'
-import { useChatStore } from '@/stores/chatStore'
-import { useAuthStore } from '@/stores/authStore'
+import { Button } from '@/components/ui/Button'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { ProfileDropdown } from '@/components/ui/ProfileDropdown'
 import { ShimmerBar } from '@/components/ui/skeletons'
+import { useChatStore } from '@/stores/chatStore'
+import { useAuthStore } from '@/stores/authStore'
 
 const DAY_MS = 86400000
 const COLLAPSE_KEY = 'resonance-chat-sidebar-collapsed'
@@ -20,9 +28,7 @@ const groupLabel = (updatedAt) => {
   return 'Older'
 }
 
-/* One conversation row — hover "…" menu with Rename (inline) + Delete */
 const ConversationItem = ({ session, active, onOpen, onRename, onDelete }) => {
-  const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(session.title)
   const inputRef = useRef(null)
@@ -33,7 +39,6 @@ const ConversationItem = ({ session, active, onOpen, onRename, onDelete }) => {
 
   const startRename = () => {
     setDraft(session.title)
-    setMenuOpen(false)
     setEditing(true)
   }
 
@@ -54,80 +59,68 @@ const ConversationItem = ({ session, active, onOpen, onRename, onDelete }) => {
           if (e.key === 'Enter') commitRename()
           if (e.key === 'Escape') setEditing(false)
         }}
-        className="w-full px-3 py-2 rounded-lg text-[13px] font-medium bg-resonance-bg-tertiary border border-resonance-accent/60 text-resonance-text-primary outline-none"
+        className="w-full rounded-md border border-ring bg-background px-3 py-2 text-[13px] font-medium text-foreground outline-none"
         onClick={(e) => e.stopPropagation()}
       />
     )
   }
 
   return (
-    <div className="relative group">
+    <div className="group relative">
       <button
         type="button"
         onClick={onOpen}
         title={session.title}
-        className={`w-full flex items-center gap-2.5 pl-3 pr-8 py-2 rounded-lg text-left transition-all duration-150 ${
+        className={`flex w-full items-center gap-2.5 rounded-md py-2 pl-3 pr-8 text-left transition-colors ${
           active
-            ? 'bg-resonance-accent text-resonance-neutral'
-            : 'text-resonance-text-secondary hover:bg-resonance-bg-hover hover:text-resonance-text-primary'
+            ? 'bg-primary text-primary-foreground'
+            : 'text-muted-foreground hover:bg-accent hover:text-foreground'
         }`}
       >
         {session.designId && (
           <Network
             size={13}
-            className={`shrink-0 ${active ? 'text-resonance-neutral' : 'text-resonance-accent'}`}
+            className={`shrink-0 ${active ? 'text-primary-foreground' : 'text-primary'}`}
           />
         )}
-        <span className="flex-1 text-[13px] font-medium truncate">{session.title}</span>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{session.title}</span>
       </button>
 
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          setMenuOpen((v) => !v)
-        }}
-        title="More options"
-        className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-md transition-all ${
-          active
-            ? 'opacity-0 group-hover:opacity-100 text-resonance-neutral hover:bg-black/10'
-            : 'opacity-0 group-hover:opacity-100 text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-tertiary'
-        } ${menuOpen ? 'opacity-100' : ''}`}
-      >
-        <MoreHorizontal size={14} />
-      </button>
-
-      {menuOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-          <div className="absolute right-1 top-full mt-1 z-50 w-40 rounded-xl border border-resonance-border bg-resonance-bg-elevated shadow-xl p-1 animate-scale-in">
-            <button
-              type="button"
-              onClick={startRename}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-resonance-text-primary hover:bg-resonance-bg-hover transition-colors"
-            >
-              <Pencil size={13} />
-              Rename
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMenuOpen(false)
-                if (window.confirm(`Delete "${session.title}"?`)) onDelete()
-              }}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-red-500 hover:bg-red-500/10 transition-colors"
-            >
-              <Trash2 size={13} />
-              Delete
-            </button>
-          </div>
-        </>
-      )}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            title="More options"
+            className={`absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus:opacity-100 ${
+              active
+                ? 'text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground'
+                : 'text-muted-foreground'
+            }`}
+          >
+            <MoreHorizontal size={14} />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40">
+          <DropdownMenuItem onSelect={startRename} className="gap-2 text-[13px]">
+            <Pencil size={13} />
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => {
+              if (window.confirm(`Delete "${session.title}"?`)) onDelete()
+            }}
+            className="gap-2 text-[13px] text-destructive focus:bg-destructive/10 focus:text-destructive"
+          >
+            <Trash2 size={13} />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }
 
-/* Skeleton rows mirroring ConversationItem geometry — ShimmerBar only */
 const SKELETON_WIDTHS = ['w-4/5', 'w-3/5', 'w-11/12', 'w-2/3', 'w-3/4', 'w-1/2']
 
 const ConversationListSkeleton = () => (
@@ -137,7 +130,7 @@ const ConversationListSkeleton = () => (
     </div>
     <div className="space-y-0.5">
       {SKELETON_WIDTHS.map((w) => (
-        <div key={w} className="flex items-center gap-2.5 pl-3 pr-8 py-2">
+        <div key={w} className="flex items-center gap-2.5 py-2 pl-3 pr-8">
           <ShimmerBar className={`h-[13px] ${w}`} />
         </div>
       ))}
@@ -145,10 +138,6 @@ const ConversationListSkeleton = () => (
   </div>
 )
 
-/*
- * Conversations sidebar (ChatGPT/Claude conventions) — only rendered inside
- * active chat sessions. Collapses to an icon rail; collapse state persists.
- */
 export const ChatSidebar = () => {
   const sessions = useChatStore((s) => s.sessions)
   const sessionsLoaded = useChatStore((s) => s.sessionsLoaded)
@@ -206,127 +195,100 @@ export const ChatSidebar = () => {
     return Array.from(map.entries())
   }, [sessions, query])
 
-  const railButton =
-    'w-9 h-9 rounded-lg flex items-center justify-center text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all'
-
-  /* ---------- Collapsed icon rail ---------- */
   if (collapsed) {
     return (
-      <aside className="w-[60px] shrink-0 border-r border-resonance-border bg-resonance-bg-secondary flex flex-col items-center py-3 gap-1.5 h-full transition-[width] duration-200">
-        <button type="button" onClick={toggleCollapsed} title="Expand sidebar" className={railButton}>
+      <aside className="flex h-full w-[60px] shrink-0 flex-col items-center gap-1.5 border-r bg-card py-3 transition-[width] duration-200">
+        <Button variant="ghost" size="icon" onClick={toggleCollapsed} title="Expand sidebar">
           <PanelLeftOpen size={18} />
-        </button>
-        <button type="button" onClick={() => createSession()} title="New conversation" className={`${railButton} bg-resonance-accent text-resonance-neutral hover:bg-resonance-accent-hover`}>
+        </Button>
+        <Button size="icon" onClick={() => createSession()} title="New conversation">
           <Plus size={18} />
-        </button>
-        <button type="button" onClick={expandAndSearch} title="Search conversations" className={railButton}>
+        </Button>
+        <Button variant="ghost" size="icon" onClick={expandAndSearch} title="Search conversations">
           <Search size={17} />
-        </button>
+        </Button>
 
         <div className="flex-1" />
 
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          title={user?.name || 'Profile'}
-          className="w-9 h-9 rounded-full bg-resonance-accent p-0.5 hover:opacity-90 transition-opacity"
-        >
-          <img
-            src={user?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(user?.email || user?.name || 'resonance-user')}`}
-            alt={user?.name || 'Profile'}
-            className="h-full w-full rounded-full object-cover bg-resonance-bg-secondary"
-          />
-        </button>
+        <ProfileDropdown user={user} onSignOut={logout} avatarOnly />
       </aside>
     )
   }
 
-  /* ---------- Expanded sidebar ---------- */
   return (
-    <aside className="w-[264px] shrink-0 border-r border-resonance-border bg-resonance-bg-secondary flex flex-col h-full transition-[width] duration-200">
-      {/* Header: brand (back to landing) + collapse */}
-      <div className="flex items-center justify-between px-3 pt-3 pb-2">
+    <aside className="flex h-full w-[264px] shrink-0 flex-col border-r bg-card transition-[width] duration-200">
+      <div className="flex items-center justify-between px-3 pb-2 pt-3">
         <button
           type="button"
           onClick={returnToLanding}
-          className="flex items-center gap-2 rounded-lg px-1 py-1 hover:opacity-90 transition-opacity"
+          className="flex items-center gap-2 rounded-md px-1 py-1 transition-colors hover:bg-accent"
           title="Back to Home"
         >
           <img
             src="/logo.png"
             alt="Resonance logo"
-            className="w-7 h-7 rounded-lg object-cover"
+            className="h-7 w-7 rounded-lg object-cover"
           />
-          <span className="text-[15px] font-bold tracking-tight text-resonance-text-primary">
+          <span className="text-[15px] font-bold tracking-tight text-foreground">
             Resonance
           </span>
         </button>
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          title="Collapse sidebar"
-          className="p-2 rounded-lg text-resonance-text-secondary hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
-        >
+        <Button variant="ghost" size="icon" onClick={toggleCollapsed} title="Collapse sidebar" className="h-8 w-8">
           <PanelLeftClose size={16} />
-        </button>
+        </Button>
       </div>
 
-      {/* New chat + search */}
-      <div className="px-3 space-y-2.5">
-        <button
-          type="button"
-          onClick={() => createSession()}
-          className="w-full btn-primary flex items-center justify-center gap-2 text-sm"
-        >
+      <div className="space-y-2.5 px-3">
+        <Button onClick={() => createSession()} className="w-full gap-2">
           <Plus size={16} />
           New conversation
-        </button>
+        </Button>
         <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-resonance-text-muted" />
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
             ref={searchRef}
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search conversations"
-            className="w-full pl-8 pr-3 py-2 text-[13px] rounded-lg bg-resonance-bg-tertiary border border-resonance-border text-resonance-text-primary placeholder:text-resonance-text-muted outline-none focus:border-resonance-accent/50 transition-colors"
+            className="h-9 w-full rounded-md border border-input bg-background pl-8 pr-3 text-[13px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background"
           />
         </div>
       </div>
 
-      {/* Conversation list */}
-      <div className="flex-1 overflow-y-auto px-2 pt-3 pb-2 min-h-0" aria-busy={!sessionsLoaded}>
-        {!sessionsLoaded && sessions.length === 0 ? (
-          <ConversationListSkeleton />
-        ) : groups.length === 0 ? (
-          <p className="text-xs text-resonance-text-muted text-center px-3 py-8">
-            {query ? 'No conversations match your search' : 'No conversations yet'}
-          </p>
-        ) : (
-          groups.map(([label, items]) => (
-            <div key={label} className="mb-3">
-              <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-resonance-text-muted">
-                {label}
+      <ScrollArea className="min-h-0 flex-1" aria-busy={!sessionsLoaded}>
+        <div className="px-2 pb-2 pt-3">
+          {!sessionsLoaded && sessions.length === 0 ? (
+            <ConversationListSkeleton />
+          ) : groups.length === 0 ? (
+            <p className="px-3 py-8 text-center text-xs text-muted-foreground">
+              {query ? 'No conversations match your search' : 'No conversations yet'}
+            </p>
+          ) : (
+            groups.map(([label, items]) => (
+              <div key={label} className="mb-3">
+                <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {label}
+                </div>
+                <div className="space-y-0.5">
+                  {items.map((session) => (
+                    <ConversationItem
+                      key={session.id}
+                      session={session}
+                      active={session.id === activeSessionId}
+                      onOpen={() => loadSession(session.id)}
+                      onRename={(title) => renameSession(session.id, title)}
+                      onDelete={() => deleteSession(session.id)}
+                    />
+                  ))}
+                </div>
               </div>
-              <div className="space-y-0.5">
-                {items.map((session) => (
-                  <ConversationItem
-                    key={session.id}
-                    session={session}
-                    active={session.id === activeSessionId}
-                    onOpen={() => loadSession(session.id)}
-                    onRename={(title) => renameSession(session.id, title)}
-                    onDelete={() => deleteSession(session.id)}
-                  />
-                ))}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
+            ))
+          )}
+        </div>
+      </ScrollArea>
 
-      {/* Account */}
-      <div className="border-t border-resonance-border p-3">
+      <div className="border-t p-3">
         <ProfileDropdown user={user} onSignOut={logout} />
       </div>
     </aside>

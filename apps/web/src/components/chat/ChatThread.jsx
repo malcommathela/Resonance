@@ -6,14 +6,11 @@ import { ShimmerBar } from '@/components/ui/skeletons'
 
 const NO_MESSAGES = []
 
-/* Scrollable conversation body with bottom-sticky auto-scroll */
 export const ChatThread = () => {
   const activeSessionId = useChatStore((s) => s.activeSessionId)
   const messages = useChatStore((s) =>
     s.activeSessionId ? s.messagesBySession[s.activeSessionId] : NO_MESSAGES
   ) || NO_MESSAGES
-  // Loading only when the active conversation has nothing cached yet —
-  // cached sessions swap instantly without a skeleton flash.
   const isLoadingSession = useChatStore((s) =>
     !!s._loadingSession && !(s.messagesBySession[s.activeSessionId]?.length > 0)
   )
@@ -38,8 +35,8 @@ export const ChatThread = () => {
     !!designContext && messages.length > 0 && !isStreamingMessage(lastMessage)
 
   return (
-    <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto min-h-0">
-      <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+    <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
         {isLoadingSession ? (
           <LoadingThread />
         ) : messages.length === 0 ? (
@@ -56,10 +53,9 @@ export const ChatThread = () => {
   )
 }
 
-/* Message-bubble skeleton shown while an uncached conversation loads */
 function LoadingThread() {
   return (
-    <div className="space-y-6 pt-2 animate-fade-in">
+    <div className="animate-fade-in space-y-6 pt-2">
       <div className="flex justify-end">
         <ShimmerBar className="h-10 w-2/5" />
       </div>
@@ -80,15 +76,17 @@ const isStreamingMessage = (m) => !!m?.streaming || !!m?.thinking
 
 function EmptyThread() {
   return (
-    <div className="flex flex-col items-center text-center pt-[min(18vh,9rem)] pb-12 animate-fade-in">
+    <div className="flex animate-fade-in flex-col items-center pb-12 pt-[min(18vh,9rem)] text-center">
       <img
         src="/logo.png"
         alt="Resonance logo"
-        className="w-12 h-12 rounded-2xl object-cover mb-5"
+        className="mb-5 h-12 w-12 rounded-2xl object-cover"
       />
-      <p className="text-[11px] font-semibold tracking-[0.16em] uppercase text-resonance-text-muted">Resonance workspace</p>
-      <h2 className="mt-3 text-2xl font-semibold tracking-tight text-resonance-text-primary">Design with clarity.</h2>
-      <p className="mt-2 text-sm leading-6 text-resonance-text-secondary max-w-md">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        Resonance workspace
+      </p>
+      <h2 className="mt-3 text-2xl font-semibold tracking-tight text-foreground">Design with clarity.</h2>
+      <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
         Explore architecture trade-offs, inspect an existing design, or describe a system to create a focused starting point.
       </p>
       <div className="mt-6">

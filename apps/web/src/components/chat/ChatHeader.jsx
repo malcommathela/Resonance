@@ -5,35 +5,34 @@ import { Button } from '@/components/ui/Button'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { useChatStore } from '@/stores/chatStore'
 
-/* Slim header for the active conversation (brand + collapse live in ChatSidebar) */
 export const ChatHeader = () => {
   const navigate = useNavigate()
   const session = useChatStore((s) => s.sessions.find((x) => x.id === s.activeSessionId))
   const designContext = useChatStore((s) => s.designContext)
 
   return (
-    <header className="h-14 shrink-0 border-b border-resonance-border flex items-center justify-between px-5 gap-3">
-      <div className="flex items-center gap-3 min-w-0">
+    <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b px-5">
+      <div className="flex min-w-0 items-center gap-3">
         <div className="min-w-0">
-          <h1 className="text-sm font-semibold text-resonance-text-primary truncate">
+          <h1 className="truncate text-sm font-semibold text-foreground">
             {session?.title || 'New Chat'}
           </h1>
           {designContext && (
-            <p className="text-[11px] text-resonance-text-muted flex items-center gap-1 truncate">
-              <Network size={10} className="text-resonance-accent" />
+            <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground">
+              <Network size={10} className="text-primary" />
               Discussing {designContext.name}
             </p>
           )}
         </div>
       </div>
 
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex shrink-0 items-center gap-2">
         {designContext && (
           <Button
             size="sm"
             variant="secondary"
             onClick={() => navigate(`/designs/${designContext.id}`)}
-            className="text-xs gap-1.5 hidden sm:inline-flex"
+            className="hidden gap-1.5 text-xs sm:inline-flex"
           >
             <ExternalLink size={12} />
             View design

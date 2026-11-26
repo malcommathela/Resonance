@@ -1,25 +1,20 @@
 import React, { useState } from 'react'
 import { AlertCircle, Check, Copy, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
+import { Badge } from '@/components/ui/Badge'
 import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer'
 import { ThinkingIndicator } from '@/components/chat/ThinkingIndicator'
 import { GenerationCard } from '@/components/chat/GenerationCard'
 import { useChatStore } from '@/stores/chatStore'
 
-/*
- * Claude-style message rendering:
- *  - user: right-aligned accent bubble
- *  - assistant: full-width, content-first markdown with hover actions
- *  - type="error": red panel with retry
- */
 export const ChatMessage = ({ message }) => {
   const regenerate = useChatStore((s) => s.regenerate)
   const [copied, setCopied] = useState(false)
 
   if (message.role === 'user') {
     return (
-      <div className="flex justify-end animate-fade-in">
-        <div className="max-w-[75%] rounded-2xl rounded-br-md bg-resonance-accent text-resonance-neutral px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words">
+      <div className="flex animate-fade-in justify-end">
+        <div className="max-w-[75%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[15px] leading-relaxed text-primary-foreground">
           {message.content}
         </div>
       </div>
@@ -40,16 +35,21 @@ export const ChatMessage = ({ message }) => {
     <div className="group animate-fade-in pl-0 sm:pl-1">
       <div className="min-w-0 max-w-none">
         {message.stopped && (
-          <span className="mb-2 inline-flex text-[11px] px-1.5 py-0.5 rounded bg-resonance-bg-tertiary text-resonance-text-muted">
+          <Badge variant="secondary" className="mb-2 text-[11px] font-normal">
             Generation stopped
-          </span>
+          </Badge>
         )}
 
         {message.type === 'error' ? (
-          <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 flex items-start gap-2.5 max-w-xl">
-            <AlertCircle size={16} className="text-red-500 mt-0.5 shrink-0" />
-            <p className="flex-1 text-sm text-red-500 leading-relaxed">{message.content}</p>
-            <Button size="sm" variant="secondary" onClick={() => regenerate(message.id)} className="text-xs shrink-0 gap-1.5">
+          <div className="flex max-w-xl items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3">
+            <AlertCircle size={16} className="mt-0.5 shrink-0 text-destructive" />
+            <p className="flex-1 text-sm leading-relaxed text-destructive">{message.content}</p>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => regenerate(message.id)}
+              className="shrink-0 gap-1.5 text-xs"
+            >
               <RefreshCw size={12} />
               Retry
             </Button>
@@ -61,7 +61,7 @@ export const ChatMessage = ({ message }) => {
             )}
 
             {message.content && (
-              <div className="text-resonance-text-primary">
+              <div className="text-foreground">
                 <MarkdownRenderer
                   content={message.content + (message.streaming && !message.thinking ? ' ▍' : '')}
                 />
@@ -71,23 +71,27 @@ export const ChatMessage = ({ message }) => {
             {message.generation && <GenerationCard generation={message.generation} messageId={message.id} />}
 
             {!message.streaming && message.content && (
-              <div className="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
+              <div className="mt-2 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon"
                   onClick={copy}
                   title="Copy"
-                  className="p-1.5 rounded-md text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
+                  className="h-7 w-7"
                 >
-                  {copied ? <Check size={14} className="text-resonance-accent" /> : <Copy size={14} />}
-                </button>
-                <button
+                  {copied ? <Check size={14} className="text-primary" /> : <Copy size={14} />}
+                </Button>
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon"
                   onClick={() => regenerate(message.id)}
                   title="Regenerate"
-                  className="p-1.5 rounded-md text-resonance-text-muted hover:text-resonance-text-primary hover:bg-resonance-bg-hover transition-all"
+                  className="h-7 w-7"
                 >
                   <RefreshCw size={14} />
-                </button>
+                </Button>
               </div>
             )}
           </>
