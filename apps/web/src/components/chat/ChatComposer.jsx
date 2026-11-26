@@ -1,18 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { ArrowUp, ChevronDown, Plus, Square } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+  ModelSelector, MODELS, PromptInput, PromptInputSubmit, PromptInputToolbar,
+} from '@/components/ai-elements'
 import { useChatStore } from '@/stores/chatStore'
-
-const MODELS = [
-  { id: 'resonance-1', name: 'Resonance 1.0', disabled: false },
-  { id: 'resonance-pro', name: 'Resonance Pro', badge: 'Soon', disabled: true },
-]
 
 export const ChatComposer = ({ variant = 'compact', autoFocus = false }) => {
   const [value, setValue] = useState('')
@@ -58,7 +50,7 @@ export const ChatComposer = ({ variant = 'compact', autoFocus = false }) => {
 
   return (
     <div className="w-full">
-      <div className="rounded-2xl border bg-card text-card-foreground shadow-sm transition-colors focus-within:border-ring/60">
+      <PromptInput>
         <textarea
           ref={textareaRef}
           value={value}
@@ -69,7 +61,7 @@ export const ChatComposer = ({ variant = 'compact', autoFocus = false }) => {
           placeholder={isHero ? 'Describe what you want to create…' : 'Ask Resonance anything…'}
           className="w-full resize-none bg-transparent px-4 pb-1 pt-4 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
         />
-        <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
+        <PromptInputToolbar>
           <div className="flex items-center gap-1.5">
             <Button
               type="button"
@@ -80,70 +72,16 @@ export const ChatComposer = ({ variant = 'compact', autoFocus = false }) => {
             >
               <Plus className="h-4 w-4" />
             </Button>
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                  {model.name}
-                  <ChevronDown className="h-3 w-3" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" side="top" className="w-56">
-                {MODELS.map((m) => (
-                  <DropdownMenuItem
-                    key={m.id}
-                    disabled={m.disabled}
-                    onSelect={() => setModel(m)}
-                    className="justify-between"
-                  >
-                    <span className="flex items-center gap-2">
-                      {m.id === model.id && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
-                      {m.name}
-                    </span>
-                    {m.badge && (
-                      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground">
-                        {m.badge}
-                      </span>
-                    )}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <ModelSelector value={model} onChange={setModel} />
           </div>
-
-          <div className="flex items-center gap-2.5">
-            {isStreaming ? (
-              <Button
-                type="button"
-                variant="secondary"
-                size="icon"
-                onClick={stopStreaming}
-                title="Stop generating"
-                className="h-9 w-9 rounded-xl"
-              >
-                <Square size={12} fill="currentColor" />
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                size="icon"
-                onClick={submit}
-                disabled={!value.trim()}
-                title="Send (Enter)"
-                className="h-9 w-9 rounded-xl"
-              >
-                <ArrowUp size={17} strokeWidth={2.5} />
-              </Button>
-            )}
-          </div>
-        </div>
-      </div>
+          <PromptInputSubmit
+            streaming={isStreaming}
+            disabled={!value.trim()}
+            onSubmit={submit}
+            onStop={stopStreaming}
+          />
+        </PromptInputToolbar>
+      </PromptInput>
     </div>
   )
 }

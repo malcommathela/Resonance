@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { CodeBlock } from '@/components/ai-elements'
 
 export const MarkdownRenderer = ({ content }) => (
   <ReactMarkdown
@@ -34,11 +35,10 @@ export const MarkdownRenderer = ({ content }) => (
           </code>
         )
       },
-      pre: ({ children }) => (
-        <pre className="mb-3 overflow-x-auto rounded-xl border bg-card p-4">
-          {children}
-        </pre>
-      ),
+      pre: ({ children }) => {
+        const raw = React.isValidElement(children) ? children.props.children : ''
+        return <CodeBlock code={String(raw ?? '').replace(/\n$/, '')}>{children}</CodeBlock>
+      },
       table: ({ children }) => (
         <div className="mb-3 overflow-x-auto rounded-xl border">
           <table className="w-full border-collapse text-sm">{children}</table>

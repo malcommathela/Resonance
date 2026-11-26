@@ -1,6 +1,6 @@
 import React from 'react'
 import { BookOpen, DollarSign, Scale, Search, ShieldAlert, Sparkles, TrendingUp } from 'lucide-react'
-import { Button } from '@/components/ui/Button'
+import { Suggestion, Suggestions } from '@/components/ai-elements'
 import { useChatStore } from '@/stores/chatStore'
 
 const LANDING_CHIPS = [
@@ -36,20 +36,12 @@ export const QuickActionChips = ({ variant = 'landing' }) => {
   }
 
   return (
-    <div className={`flex flex-wrap gap-2 ${variant === 'landing' ? 'justify-center' : ''}`}>
+    <Suggestions className={variant === 'landing' ? 'justify-center' : ''}>
       {CHIPS[variant].map(({ icon: Icon, label, prompt }) => (
-        <Button
-          key={label}
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => onClick(prompt)}
-          className="gap-1.5 rounded-full text-[13px] font-normal text-muted-foreground hover:text-foreground"
-        >
-          <Icon size={13} className="text-primary" />
+        <Suggestion key={label} icon={Icon} onClick={() => onClick(prompt)}>
           {label}
-        </Button>
+        </Suggestion>
       ))}
-    </div>
+    </Suggestions>
   )
 }

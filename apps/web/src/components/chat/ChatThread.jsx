@@ -1,8 +1,9 @@
-import React, { useEffect, useRef } from 'react'
+import React from 'react'
 import { useChatStore } from '@/stores/chatStore'
 import { ChatMessage } from '@/components/chat/ChatMessage'
 import { QuickActionChips } from '@/components/chat/QuickActionChips'
 import { ShimmerBar } from '@/components/ui/skeletons'
+import { Chat, ChatContent, ChatEmptyState } from '@/components/ai-elements'
 
 const NO_MESSAGES = []
 
@@ -15,28 +16,14 @@ export const ChatThread = () => {
     !!s._loadingSession && !(s.messagesBySession[s.activeSessionId]?.length > 0)
   )
   const designContext = useChatStore((s) => s.designContext)
-  const scrollRef = useRef(null)
-  const stickToBottom = useRef(true)
-
-  useEffect(() => {
-    if (stickToBottom.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [messages])
-
-  const onScroll = () => {
-    const el = scrollRef.current
-    if (!el) return
-    stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120
-  }
 
   const lastMessage = messages[messages.length - 1]
   const showDesignChips =
     !!designContext && messages.length > 0 && !isStreamingMessage(lastMessage)
 
   return (
-    <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
+    <Chat>
+      <ChatContent>
         {isLoadingSession ? (
           <LoadingThread />
         ) : messages.length === 0 ? (
@@ -48,8 +35,8 @@ export const ChatThread = () => {
         {showDesignChips && <QuickActionChips variant="design" />}
 
         <div className="h-2" />
-      </div>
-    </div>
+      </ChatContent>
+    </Chat>
   )
 }
 
@@ -76,22 +63,12 @@ const isStreamingMessage = (m) => !!m?.streaming || !!m?.thinking
 
 function EmptyThread() {
   return (
-    <div className="flex animate-fade-in flex-col items-center pb-12 pt-[min(18vh,9rem)] text-center">
-      <img
-        src="/logo.png"
-        alt="Resonance logo"
-        className="mb-5 h-12 w-12 rounded-2xl object-cover"
-      />
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-        Resonance workspace
-      </p>
-      <h2 className="mt-3 text-2xl font-semibold tracking-tight text-foreground">Design with clarity.</h2>
-      <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-        Explore architecture trade-offs, inspect an existing design, or describe a system to create a focused starting point.
-      </p>
-      <div className="mt-6">
-        <QuickActionChips variant="thread" />
-      </div>
-    </div>
+    <ChatEmptyState
+      icon={<img src="/logo.png" alt="Resonance logo" className="h-12 w-12 rounded-2xl object-cover" />}
+      title="Design with clarity."
+      description="Explore architecture trade-offs, inspect an existing design, or describe a system to create a focused starting point."
+    >
+      <QuickActionChips variant="thread" />
+    </ChatEmptyState>
   )
 }

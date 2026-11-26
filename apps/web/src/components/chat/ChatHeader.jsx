@@ -1,8 +1,9 @@
 import React from 'react'
-import { ExternalLink, Network } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/Button'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
+import { ContextBadge } from '@/components/ai-elements'
 import { useChatStore } from '@/stores/chatStore'
 
 export const ChatHeader = () => {
@@ -18,10 +19,12 @@ export const ChatHeader = () => {
             {session?.title || 'New Chat'}
           </h1>
           {designContext && (
-            <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground">
-              <Network size={10} className="text-primary" />
-              Discussing {designContext.name}
-            </p>
+            <div className="mt-1">
+              <ContextBadge
+                name={designContext.name}
+                onClick={() => navigate(`/designs/${designContext.id}`)}
+              />
+            </div>
           )}
         </div>
       </div>
